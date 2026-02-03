@@ -1,0 +1,24 @@
+# Claude AI SDK
+anthropic>=0.18.0
+
+# Google APIs
+google-auth>=2.27.0
+google-auth-oauthlib>=1.2.0
+google-auth-httplib2>=0.2.0
+google-api-python-client>=2.116.0
+
+# Email handling
+email-validator>=2.1.0
+python-dotenv>=1.0.0
+
+# Scheduling and automation
+schedule>=1.2.0
+python-dateutil>=2.8.2
+
+# Notifications
+twilio>=8.13.0  # For SMS notifications
+requests>=2.31.0  # For webhook notifications
+
+# Utilities
+pytz>=2024.1
+pyyaml>=6.0.1
