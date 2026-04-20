@@ -1,0 +1,8 @@
+node_modules/
+.env
+yelp-auth.json
+leads-responded.json
+debug-*.png
+/tmp/
+npm-debug.log*
+.DS_Store
