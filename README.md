@@ -62,8 +62,11 @@ required after initial setup.
 ```
 ~/hey-spotless/
   yelp-lead-responder.js     # main script
+  scripts/gmail-oauth.js     # one-time OAuth helper (localhost callback)
+  test/unit.test.js          # zero-dep tests for parser + pricing
   yelp-auth.json             # saved Playwright session (gitignored)
   leads-responded.json       # log of responded leads
+  debug/                     # screenshots + HTML dumps on failure (gitignored)
   .env                       # secrets (gitignored)
 ```
 
@@ -94,9 +97,13 @@ GMAIL_CLIENT_SECRET=...
 GMAIL_REFRESH_TOKEN=...
 GMAIL_TARGET_ADDRESS=hey@heyspotless.com
 
+# Yelp business ID (the UUID-ish string in biz.yelp.com/leads_center/<ID>/leads)
+YELP_BIZ_ID=
+
 # Paths
 LEADS_LOG=./leads-responded.json
 YELP_AUTH_STATE=./yelp-auth.json
+DEBUG_DIR=./debug
 ```
 
 ### 4. Gmail OAuth2 setup (one-time)
@@ -105,35 +112,20 @@ You need a refresh token that gives the script read/modify access to the inbox t
 receives Yelp notification emails.
 
 1. Go to console.cloud.google.com → create a project → enable the Gmail API
-2. Create an OAuth2 credential (Desktop app type) → download the JSON
-3. Run the OAuth consent flow once to get a refresh token:
+2. Create an OAuth2 credential of type **Web application**. Add
+   `http://localhost:8765/oauth2callback` as an authorized redirect URI.
+3. Put the client ID and secret in `.env`, then run:
 
 ```bash
-node -e "
-const {google} = require('googleapis');
-const oauth2Client = new google.auth.OAuth2(
-  process.env.GMAIL_CLIENT_ID,
-  process.env.GMAIL_CLIENT_SECRET,
-  'urn:ietf:wg:oauth:2.0:oob'
-);
-console.log(oauth2Client.generateAuthUrl({
-  access_type: 'offline',
-  scope: ['https://www.googleapis.com/auth/gmail.modify']
-}));
-"
+node scripts/gmail-oauth.js
 ```
 
-Visit the URL, approve, paste the code back:
+It prints a URL. Open it, approve, and the script prints the refresh token. Paste that
+into `GMAIL_REFRESH_TOKEN` in `.env`.
 
-```bash
-node -e "
-const {google} = require('googleapis');
-const oauth2Client = new google.auth.OAuth2(...);
-oauth2Client.getToken('PASTE_CODE_HERE').then(r => console.log(r.tokens.refresh_token));
-"
-```
-
-Paste the refresh token into `.env`.
+> The old "OOB" flow (`urn:ietf:wg:oauth:2.0:oob`) that many tutorials show was
+> deprecated by Google in 2022 and no longer works for new OAuth clients. The helper
+> above uses a real localhost redirect instead.
 
 ### 5. Yelp session bootstrap (one-time, run locally then copy to server)
 
@@ -148,6 +140,44 @@ The session cookies are saved to `yelp-auth.json`. Copy this file to the remote 
 Re-run this step if Yelp logs you out (typically every 30–90 days).
 
 ---
+
+## Troubleshooting Without a Live Lead
+
+The script has four modes you can use before any real customer email arrives:
+
+```bash
+# 1. Verify every dependency independently (env vars, Anthropic, Gmail, Yelp session).
+#    Prints a pass/fail table and exits non-zero if anything is broken.
+node yelp-lead-responder.js --doctor
+
+# 2. Run the parser + Claude call against a built-in sample email. No Gmail, no Yelp.
+#    Good for validating tone and the pricing calculation end-to-end.
+node yelp-lead-responder.js --sample
+
+# 3. Dump the most recent unread Yelp-matching email from Gmail, without marking read.
+#    Shows the parsed fields so you can see what the parser is picking up.
+node yelp-lead-responder.js --dump-email
+
+# 4. Full pipeline but stops one click short of pressing Send. Drops a pre-send
+#    screenshot into ./debug/ so you can eyeball the composed reply in Yelp's UI.
+node yelp-lead-responder.js --dry-run
+
+# Unit tests (zero deps beyond node).
+node test/unit.test.js
+```
+
+**Failure diagnostics.** Any Playwright failure drops three files into `./debug/`:
+`<label>-<timestamp>.png` (screenshot), `.html` (page source), and `.url` (landing URL).
+That's usually enough to update selectors without rerunning.
+
+**Known failure modes and what they mean:**
+
+| Error | Cause | Fix |
+|---|---|---|
+| `Yelp session expired or blocked` | `yelp-auth.json` cookies rotated, or headless Chromium flagged | Re-run `playwright codegen` on a workstation, copy the fresh `yelp-auth.json` over |
+| `Could not find any lead in the inbox list` | Selectors drifted or you landed on a non-leads page | Open the screenshot, grab the new selector, prepend to the array in `firstMatch` |
+| `Could not find message input field` | Yelp changed the compose UI | Same — inspect the HTML dump, add the new selector |
+| Gmail returns 0 emails but you know one exists | Subject/from filter too narrow | Loosen `q` in `getNewYelpLeadEmails`, or use `--dump-email` to see what Gmail returns |
 
 ## Running as a Claude Code Agent
 

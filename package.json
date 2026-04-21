@@ -4,7 +4,13 @@
   "description": "Claude Code agent routine that detects Yelp leads via Gmail and responds via headless Playwright on biz.yelp.com.",
   "main": "yelp-lead-responder.js",
   "scripts": {
-    "start": "node yelp-lead-responder.js"
+    "start": "node yelp-lead-responder.js",
+    "test": "node test/unit.test.js",
+    "doctor": "node yelp-lead-responder.js --doctor",
+    "sample": "node yelp-lead-responder.js --sample",
+    "dump-email": "node yelp-lead-responder.js --dump-email",
+    "dry-run": "node yelp-lead-responder.js --dry-run",
+    "oauth": "node scripts/gmail-oauth.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",

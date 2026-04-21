@@ -3,6 +3,7 @@ node_modules/
 yelp-auth.json
 leads-responded.json
 debug-*.png
+debug/
 /tmp/
 npm-debug.log*
 .DS_Store
