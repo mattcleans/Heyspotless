@@ -14,6 +14,16 @@ sudo -u postgres createdb "$DB"
 # environment. This stub exists only for verification and is not a migration.
 sudo -u postgres $PSQL -d "$DB" <<'SQL'
 create schema if not exists auth;
+
+-- Minimal stand-in for Supabase's auth.users, enough for the FK and the signup
+-- trigger in 0004 to be exercised. The real table has many more columns.
+create table if not exists auth.users (
+  id                 uuid primary key default gen_random_uuid(),
+  email              text unique,
+  raw_user_meta_data jsonb not null default '{}'::jsonb,
+  created_at         timestamptz not null default now()
+);
+
 create or replace function auth.uid() returns uuid language sql stable as $f$
   select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
 $f$;

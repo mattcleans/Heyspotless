@@ -1,5 +1,6 @@
 import { PageHeader, Callout, Pill } from "@/components/ui";
-import { DEMO_JOBS, DEMO_NOW, ZIP_CENTROIDS } from "@/lib/demo/fixtures";
+import { ZIP_CENTROIDS } from "@/lib/config";
+import { getRepository } from "@/lib/data";
 import { clusterDay, zipCentroidEstimator } from "@/lib/dispatch/route";
 import { OPENING_RATE_CENTS_PER_HOUR, payoutForRate } from "@/lib/dispatch/ladder";
 import { formatCents, formatHours } from "@/lib/money";
@@ -8,10 +9,20 @@ export const metadata = { title: "Today — Spotless Ops" };
 
 const estimate = zipCentroidEstimator(ZIP_CENTROIDS);
 
-export default function CleanerPage() {
+export default async function CleanerPage() {
+  const repo = await getRepository();
+  const profile = await repo.getCurrentProfile();
+  const cleaner = profile ? await repo.getCleanerByProfile(profile.id) : null;
+
+  const jobs = await repo.listJobs(cleaner ? { cleanerId: cleaner.id } : {});
+
   // Today's route, ordered to minimise driving rather than by booking time.
-  const today = DEMO_JOBS.filter((j) => j.scheduledStart !== null).slice(0, 4);
-  const { ordered, totalDriveMinutes } = clusterDay(today, "75024", estimate);
+  const today = jobs.filter((j) => j.scheduledStart !== null).slice(0, 4);
+  const { ordered, totalDriveMinutes } = clusterDay(
+    today,
+    cleaner?.lastStopZip ?? "75024",
+    estimate,
+  );
 
   return (
     <>

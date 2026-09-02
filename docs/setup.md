@@ -30,8 +30,16 @@ order:
 
 ```bash
 supabase link --project-ref <ref>
-supabase db push          # applies supabase/migrations/*.sql
+supabase db push                                  # applies supabase/migrations/*.sql
+psql "$DATABASE_URL" -f supabase/seed.sql         # optional starter data
 ```
+
+Migrations `0004` and `0005` bind `profiles` to `auth.users` and add the
+`cleaner_week_load` view that dispatch reads. Enable **Email** as a sign-in
+provider in Authentication → Providers; the app uses magic links, so no password
+policy is needed. Add `https://app.heyspotless.com/auth/callback` (and
+`http://localhost:3000/auth/callback` for local work) to the allowed redirect
+URLs.
 
 Needed: project URL, anon key, service role key. The service role key bypasses
 row-level security — server-side only, never in the browser.

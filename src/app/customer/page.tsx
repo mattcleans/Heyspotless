@@ -1,12 +1,21 @@
 import { PageHeader, Callout } from "@/components/ui";
-import { DEMO_JOBS } from "@/lib/demo/fixtures";
+import { getRepository } from "@/lib/data";
 import { FREQUENCY_LABELS, SERVICE_LABELS } from "@/lib/pricing/price-book";
 import { formatCents } from "@/lib/money";
 
 export const metadata = { title: "Your cleans — Spotless Ops" };
 
-export default function CustomerPage() {
-  const mine = DEMO_JOBS.slice(0, 3);
+export default async function CustomerPage() {
+  const repo = await getRepository();
+  const profile = await repo.getCurrentProfile();
+  const customer = profile ? await repo.getCustomerByProfile(profile.id) : null;
+
+  // RLS already restricts this to the signed-in customer; the filter is for
+  // demo mode, where there is no session to scope by.
+  const mine = await repo.listJobs({
+    ...(customer ? { customerId: customer.id } : {}),
+    limit: 3,
+  });
 
   return (
     <>

@@ -25,16 +25,6 @@ export interface DemoJob extends DispatchJob {
 /** Fixed "now" so the demo board is stable across reloads. */
 export const DEMO_NOW = new Date("2026-09-01T14:00:00Z");
 
-const ZIP_CENTROIDS: Record<string, { latitude: number; longitude: number }> = {
-  "75024": { latitude: 33.0751, longitude: -96.8236 }, // Plano
-  "75034": { latitude: 33.1507, longitude: -96.8236 }, // Frisco
-  "75002": { latitude: 33.1032, longitude: -96.6706 }, // Allen
-  "75080": { latitude: 32.9754, longitude: -96.7297 }, // Richardson
-  "76102": { latitude: 32.7555, longitude: -97.3308 }, // Fort Worth
-};
-
-export { ZIP_CENTROIDS };
-
 function make(
   id: string,
   customerName: string,
@@ -111,8 +101,4 @@ export const DEMO_CLEANERS: Cleaner[] = [
   }),
 ];
 
-export const AVERAGE_TICKET_CENTS = 17000;
-
-export function isDemoMode(): boolean {
-  return process.env.DEMO_MODE !== "0" && !process.env.NEXT_PUBLIC_SUPABASE_URL;
-}
+// isDemoMode lives in lib/supabase/env.ts, next to the config it inspects.

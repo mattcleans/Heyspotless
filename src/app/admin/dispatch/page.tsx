@@ -1,12 +1,7 @@
 import { PageHeader, Pill, Stat, Callout } from "@/components/ui";
-import {
-  AVERAGE_TICKET_CENTS,
-  DEMO_CLEANERS,
-  DEMO_JOBS,
-  DEMO_NOW,
-  ZIP_CENTROIDS,
-  type DemoJob,
-} from "@/lib/demo/fixtures";
+import { AVERAGE_TICKET_CENTS, ZIP_CENTROIDS } from "@/lib/config";
+import { getRepository } from "@/lib/data";
+import type { Job } from "@/lib/data/types";
 import {
   dispatchBoard,
   hoursUntil,
@@ -24,13 +19,15 @@ export const metadata = { title: "Dispatch — Spotless Ops" };
 
 const estimate = zipCentroidEstimator(ZIP_CENTROIDS);
 
-const DISPATCH_CONTEXT = {
-  now: DEMO_NOW,
-  cleaners: DEMO_CLEANERS,
-  driveFor: (c: Cleaner, j: DemoJob | { zip: string }) => estimate(c.lastStopZip, j.zip),
-  // Deterministic so the demo board does not reshuffle on every render.
-  rng: () => 0.5,
-};
+function buildContext(cleaners: Cleaner[], now: Date) {
+  return {
+    now,
+    cleaners,
+    driveFor: (c: Cleaner, j: { zip: string }) => estimate(c.lastStopZip, j.zip),
+    // Deterministic so the board does not reshuffle between renders.
+    rng: () => 0.5,
+  };
+}
 
 function DecisionSummary({ decision }: { decision: DispatchDecision }) {
   switch (decision.kind) {
@@ -99,8 +96,8 @@ function DecisionSummary({ decision }: { decision: DispatchDecision }) {
   }
 }
 
-function JobCard({ job, decision }: { job: DemoJob; decision: DispatchDecision }) {
-  const hours = hoursUntil(job, DEMO_NOW);
+function JobCard({ job, decision, now }: { job: Job; decision: DispatchDecision; now: Date }) {
+  const hours = hoursUntil(job, now);
 
   return (
     <li className="card p-5">
@@ -127,11 +124,20 @@ function JobCard({ job, decision }: { job: DemoJob; decision: DispatchDecision }
   );
 }
 
-function CleanerRow({ cleaner, unspent }: { cleaner: Cleaner; unspent: number }) {
-  // Show why an ineligible cleaner is invisible to dispatch, using a
-  // representative job so the reason is concrete.
-  const probe = DEMO_JOBS[0]!;
-  const eligibility = checkEligibility(cleaner, probe);
+function CleanerRow({
+  cleaner,
+  unspent,
+  probe,
+}: {
+  cleaner: Cleaner;
+  unspent: number;
+  probe: Job | undefined;
+}) {
+  // Show why an ineligible cleaner is invisible to dispatch, using a real job so
+  // the reason is concrete rather than hypothetical.
+  const eligibility = probe
+    ? checkEligibility(cleaner, probe)
+    : { eligible: true, reasons: [] as const };
 
   return (
     <tr className="border-b border-line-soft last:border-0">
@@ -162,37 +168,53 @@ function CleanerRow({ cleaner, unspent }: { cleaner: Cleaner; unspent: number })
   );
 }
 
-export default function DispatchPage() {
-  const shonda = DEMO_CLEANERS.find((c) => c.id === "shonda")!;
+export default async function DispatchPage() {
+  const repo = await getRepository();
+  const [jobs, cleaners] = await Promise.all([
+    repo.listJobs({ needingCleaner: true }),
+    repo.listCleaners(),
+  ]);
+
+  const now = new Date();
+  const context = buildContext(cleaners, now);
 
   // Plan the whole board at once. Deciding each job independently would tell
   // every job the same guaranteed hours are free, and six jobs would each claim
-  // the same 8.5 unspent hours. Capacity is consumed as it is allocated.
-  const board = dispatchBoard(DEMO_JOBS, DISPATCH_CONTEXT);
-  const residual = residualGuaranteedHours(board, DISPATCH_CONTEXT);
+  // the same unspent hours. Capacity is consumed as it is allocated.
+  const board = dispatchBoard(jobs, context);
+  const residual = residualGuaranteedHours(board, context);
 
-  // Hours still unspent AFTER this board is allocated — the honest figure.
-  const idleHours = residual.get(shonda.id) ?? 0;
-  const idleCents = unspentGuaranteedCents({
-    ...shonda,
-    hoursScheduledThisWeek: (shonda.terms?.guaranteedHoursPerWeek ?? 0) - idleHours,
-  });
+  // The cleaner with a weekly guarantee is the one whose idle hours cost money.
+  const guaranteed = cleaners.find((c) => (c.terms?.guaranteedHoursPerWeek ?? 0) > 0);
+
+  const idleHours = guaranteed ? (residual.get(guaranteed.id) ?? 0) : 0;
+  const idleCents = guaranteed
+    ? unspentGuaranteedCents({
+        ...guaranteed,
+        hoursScheduledThisWeek: (guaranteed.terms?.guaranteedHoursPerWeek ?? 0) - idleHours,
+      })
+    : 0;
 
   // What the week looks like if every unassigned job lands on Shonda.
-  const assignedToShonda = board.filter(
-    (e) =>
-      (e.decision.kind === "assign_guaranteed" || e.decision.kind === "assign_w2") &&
-      e.decision.cleaner.id === shonda.id,
-  );
-  const forecast = forecastWeek(
-    shonda,
-    assignedToShonda.map((e) => ({
-      cleanMinutes: e.job.estimatedCleanMinutes,
-      driveMinutes: DISPATCH_CONTEXT.driveFor(shonda, e.job).minutes,
-    })),
-    AVERAGE_TICKET_CENTS,
-    shonda.hoursScheduledThisWeek * 60, // already on her schedule
-  );
+  const assignedToGuaranteed = guaranteed
+    ? board.filter(
+        (e) =>
+          (e.decision.kind === "assign_guaranteed" || e.decision.kind === "assign_w2") &&
+          e.decision.cleaner.id === guaranteed.id,
+      )
+    : [];
+
+  const forecast = guaranteed
+    ? forecastWeek(
+        guaranteed,
+        assignedToGuaranteed.map((e) => ({
+          cleanMinutes: e.job.estimatedCleanMinutes,
+          driveMinutes: context.driveFor(guaranteed, e.job).minutes,
+        })),
+        AVERAGE_TICKET_CENTS,
+        guaranteed.hoursScheduledThisWeek * 60, // already on the schedule
+      )
+    : null;
 
   const needMarket = board.filter(
     (e) => e.decision.kind === "waterfall" || e.decision.kind === "open_board",
@@ -212,7 +234,7 @@ export default function DispatchPage() {
           note={`${formatCents(idleCents)} already spent, currently earning nothing`}
           tone={idleHours > 0 ? "warn" : "good"}
         />
-        <Stat label="Jobs needing a cleaner" value={String(DEMO_JOBS.length)} />
+        <Stat label="Jobs needing a cleaner" value={String(jobs.length)} />
         <Stat
           label="Going to market"
           value={String(needMarket)}
@@ -220,23 +242,28 @@ export default function DispatchPage() {
         />
         <Stat
           label="Forecast week"
-          value={`${forecast.totalHours.toFixed(1)}h`}
-          note={`${forecast.overtimeHours.toFixed(1)}h overtime · ${formatCents(forecast.weeklyCostCents)}`}
-          tone={forecast.overtimeHours > 0 ? "warn" : "good"}
+          value={forecast ? `${forecast.totalHours.toFixed(1)}h` : "—"}
+          note={
+            forecast
+              ? `${forecast.overtimeHours.toFixed(1)}h overtime · ${formatCents(forecast.weeklyCostCents)}`
+              : "No cleaner on guaranteed hours"
+          }
+          tone={forecast && forecast.overtimeHours > 0 ? "warn" : "good"}
         />
       </div>
 
-      {idleHours > 0 ? (
+      {guaranteed && idleHours > 0 ? (
         <div className="mt-4">
           <Callout tone="warn" label="Idle guaranteed hours">
-            Shonda has <strong>{idleHours.toFixed(1)} unfilled guaranteed hours</strong> this week —{" "}
+            {guaranteed.name} has <strong>{idleHours.toFixed(1)} unfilled guaranteed hours</strong>{" "}
+            this week —{" "}
             {formatCents(idleCents)} already committed to payroll and currently earning nothing.
             Fill these before any job goes to the marketplace.
           </Callout>
         </div>
       ) : null}
 
-      {forecast.overtimeHours > 0 ? (
+      {forecast && forecast.overtimeHours > 0 ? (
         <div className="mt-3">
           <Callout tone="bad" label="Overtime before you commit the week">
             This schedule is {forecast.totalHours.toFixed(1)} hours, not 40 — it carries{" "}
@@ -252,7 +279,7 @@ export default function DispatchPage() {
       </h2>
       <ul className="grid gap-3 md:grid-cols-2">
         {board.map(({ job, decision }) => (
-          <JobCard key={job.id} job={job} decision={decision} />
+          <JobCard key={job.id} job={job} decision={decision} now={now} />
         ))}
       </ul>
 
@@ -274,8 +301,13 @@ export default function DispatchPage() {
             </tr>
           </thead>
           <tbody>
-            {DEMO_CLEANERS.map((c) => (
-              <CleanerRow key={c.id} cleaner={c} unspent={residual.get(c.id) ?? 0} />
+            {cleaners.map((c) => (
+              <CleanerRow
+                key={c.id}
+                cleaner={c}
+                unspent={residual.get(c.id) ?? 0}
+                probe={jobs[0]}
+              />
             ))}
           </tbody>
         </table>
