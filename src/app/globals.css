@@ -1,0 +1,70 @@
+@import "tailwindcss";
+
+/*
+ * Spotless Ops design system. Palette carried over from the build plan artifact
+ * so the app and the document read as one thing: deep navy, sky blue, and a
+ * cream accent, on a cool off-white ground.
+ */
+@theme {
+  --color-ground: #f6f9fb;
+  --color-surface: #ffffff;
+  --color-surface-2: #eef4f8;
+  --color-sunk: #e3ecf2;
+
+  --color-ink: #1b2830;
+  --color-ink-2: #4a5b67;
+  --color-ink-3: #7c8d99;
+
+  --color-navy: #245478;
+  --color-navy-deep: #173c58;
+  --color-sky: #90cce4;
+  --color-sky-deep: #4e9bbe;
+  --color-cream: #e8c63b;
+  --color-cream-soft: #f7eebe;
+
+  --color-good: #2e7d5b;
+  --color-warn: #a96c05;
+  --color-bad: #ae3d2c;
+
+  --color-line: #d6e2ea;
+  --color-line-soft: #e7eff4;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+
+  body {
+    background: var(--color-ground);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Tabular figures everywhere money or duration appears — columns must line up. */
+  .nums {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer components {
+  .card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: 0.75rem;
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-ink-3);
+  }
+}
