@@ -10,7 +10,17 @@
 
 import type { Frequency, ServiceType } from "../pricing/price-book";
 import type { Cleaner, W2Terms } from "../dispatch/types";
-import type { Customer, Job, Profile, Property, UserRole } from "./types";
+import type { InvoiceStatus, PaymentStatus } from "../billing/types";
+import type {
+  Customer,
+  Invoice,
+  Job,
+  Payment,
+  PaymentMethod,
+  Profile,
+  Property,
+  UserRole,
+} from "./types";
 
 type Row = Record<string, unknown>;
 
@@ -83,6 +93,9 @@ export function toCustomer(row: Row): Customer {
     email: strOrNull(row, "email"),
     phone: strOrNull(row, "phone"),
     lifetimeValueCents: num(row, "lifetime_value_cents", 0),
+    stripeCustomerId: strOrNull(row, "stripe_customer_id"),
+    autopayEnabled: bool(row, "autopay_enabled"),
+    autopayAuthorizedAt: dateOrNull(row, "autopay_authorized_at"),
   };
 }
 
@@ -168,5 +181,61 @@ export function toCleaner(row: Row): Cleaner {
     serviceZips: strArray(row, "service_zips"),
     terms: toTerms(row),
     hoursScheduledThisWeek: num(row, "hours_scheduled_this_week", 0),
+  };
+}
+
+/**
+ * `balance_cents` is a generated column (0006). It is read, never derived here,
+ * so that the number on the screen is the number the database will act on when
+ * the auto-charge sweep runs.
+ */
+export function toInvoice(row: Row): Invoice {
+  return {
+    id: str(row, "id"),
+    customerId: str(row, "customer_id"),
+    jobId: strOrNull(row, "job_id"),
+    status: str(row, "status") as InvoiceStatus,
+    amounts: {
+      subtotalCents: num(row, "subtotal_cents", 0),
+      tipCents: num(row, "tip_cents", 0),
+      totalCents: num(row, "total_cents", 0),
+      amountPaidCents: num(row, "amount_paid_cents", 0),
+      refundedCents: num(row, "refunded_cents", 0),
+    },
+    balanceCents: num(row, "balance_cents", 0),
+    dueOn: dateOrNull(row, "due_on"),
+    issuedAt: dateOrNull(row, "issued_at"),
+    voidedAt: dateOrNull(row, "voided_at"),
+    attemptCount: num(row, "attempt_count", 0),
+    nextAttemptAt: dateOrNull(row, "next_attempt_at"),
+    lastError: strOrNull(row, "last_error"),
+    createdAt: dateOrNull(row, "created_at") ?? new Date(0),
+  };
+}
+
+export function toPayment(row: Row): Payment {
+  return {
+    id: str(row, "id"),
+    invoiceId: str(row, "invoice_id"),
+    amountCents: num(row, "amount_cents", 0),
+    status: str(row, "status") as PaymentStatus,
+    method: strOrNull(row, "method"),
+    isAutocharge: bool(row, "is_autocharge"),
+    failureMessage: strOrNull(row, "failure_message"),
+    succeededAt: dateOrNull(row, "succeeded_at"),
+    createdAt: dateOrNull(row, "created_at") ?? new Date(0),
+  };
+}
+
+export function toPaymentMethod(row: Row): PaymentMethod {
+  return {
+    id: str(row, "id"),
+    customerId: str(row, "customer_id"),
+    stripePaymentMethodId: str(row, "stripe_payment_method_id"),
+    brand: strOrNull(row, "brand"),
+    last4: strOrNull(row, "last4"),
+    expMonth: numOrNull(row, "exp_month"),
+    expYear: numOrNull(row, "exp_year"),
+    isDefault: bool(row, "is_default"),
   };
 }

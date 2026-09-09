@@ -23,6 +23,53 @@ a day and blocks only card-on-file and auto-charge.
 
 Needed: publishable key + secret key. Test mode is fine to start.
 
+The billing code is built and tested; it is switched off until you set
+`STRIPE_SECRET_KEY`, and `BILLING_ENABLED=0` keeps it off even with keys present.
+Until then the customer screen shows real balances and says plainly that payments
+are not live, rather than offering a button that fails.
+
+**Add the webhook before taking a single payment.** Nothing settles an invoice
+except the webhook — a customer closing the tab on the Stripe page must not leave
+an invoice marked paid that never was.
+
+1. Dashboard → Developers → Webhooks → *Add endpoint*, pointing at
+   `https://app.heyspotless.com/api/stripe/webhook`.
+2. Subscribe to exactly these events:
+   `checkout.session.completed`, `payment_intent.succeeded`,
+   `payment_intent.payment_failed`, `payment_method.attached`,
+   `payment_method.detached`, `charge.refunded`.
+   Anything else is answered with "ignored" rather than an error, so a stray
+   event will not cause a retry storm — but there is no reason to send one.
+3. Copy the signing secret into `STRIPE_WEBHOOK_SECRET`.
+
+Locally, `stripe listen --forward-to localhost:3000/api/stripe/webhook` prints a
+signing secret to use instead.
+
+Test the money paths in test mode before going live: card `4242 4242 4242 4242`
+succeeds, `4000 0000 0000 0341` attaches fine and then fails when charged
+off-session, which is the case auto-charge retries actually have to survive.
+
+## 2a. Auto-charge
+
+Auto-charge is opt-in per customer and needs two things that are deliberately
+separate: a saved card, and recorded consent. A card on file is not permission to
+charge it — the database refuses a customer marked `autopay_enabled` with no
+`autopay_authorized_at` timestamp, because that timestamp is the evidence if a
+charge is ever disputed.
+
+The sweep runs at `POST /api/billing/autocharge`, guarded by `CRON_SECRET` rather
+than a session because it runs with no user. Generate one with
+`openssl rand -hex 32`. Unset, the endpoint refuses everything.
+
+Four attempts, spread 1 / 3 / 7 days, then it stops and leaves the invoice for a
+person. Scheduling it is phase 04 (`vercel.json`); until then it can be run by
+hand:
+
+```bash
+curl -X POST https://app.heyspotless.com/api/billing/autocharge \
+  -H "x-cron-secret: $CRON_SECRET"
+```
+
 ## 3. Supabase
 
 Create a project on the free tier, US-Central region. Then apply the migrations in

@@ -2,8 +2,28 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Repository } from "./repository";
-import type { Cleaner, Customer, Job, JobFilter, Profile, Property } from "./types";
-import { toCleaner, toCustomer, toJob, toProfile, toProperty } from "./mappers";
+import type {
+  Cleaner,
+  Customer,
+  Invoice,
+  InvoiceFilter,
+  Job,
+  JobFilter,
+  Payment,
+  PaymentMethod,
+  Profile,
+  Property,
+} from "./types";
+import {
+  toCleaner,
+  toCustomer,
+  toInvoice,
+  toJob,
+  toPayment,
+  toPaymentMethod,
+  toProfile,
+  toProperty,
+} from "./mappers";
 
 /** Jobs in these states still need a cleaner — the dispatch board's working set. */
 const NEEDS_CLEANER = ["unscheduled", "scheduled", "dispatching"];
@@ -20,6 +40,23 @@ const JOB_SELECT = `
  * assigned to drop out rather than coming back unfiltered.
  */
 const JOB_SELECT_FOR_CLEANER = `${JOB_SELECT}, job_assignments!inner ( cleaner_id )`;
+
+const CUSTOMER_SELECT = `
+  id, first_name, last_name, email, phone, lifetime_value_cents,
+  stripe_customer_id, autopay_enabled, autopay_authorized_at
+`;
+
+/** `balance_cents` is generated in the database; it is selected, never computed. */
+const INVOICE_SELECT = `
+  id, customer_id, job_id, status, subtotal_cents, tip_cents, total_cents,
+  amount_paid_cents, refunded_cents, balance_cents, due_on, issued_at,
+  voided_at, attempt_count, next_attempt_at, last_error, created_at
+`;
+
+const PAYMENT_METHOD_SELECT = `
+  id, customer_id, stripe_payment_method_id, brand, last4,
+  exp_month, exp_year, is_default
+`;
 
 const CLEANER_SELECT = `
   id, full_name, type, status, rating, acceptance_rate,
@@ -129,7 +166,7 @@ export class SupabaseRepository implements Repository {
   async listCustomers(limit = 100): Promise<Customer[]> {
     const { data, error } = await this.db
       .from("customers")
-      .select("id, first_name, last_name, email, phone, lifetime_value_cents")
+      .select(CUSTOMER_SELECT)
       .order("last_name")
       .limit(limit);
     if (error) throw new Error(`listCustomers: ${error.message}`);
@@ -139,7 +176,7 @@ export class SupabaseRepository implements Repository {
   async getCustomer(id: string): Promise<Customer | null> {
     const { data, error } = await this.db
       .from("customers")
-      .select("id, first_name, last_name, email, phone, lifetime_value_cents")
+      .select(CUSTOMER_SELECT)
       .eq("id", id)
       .maybeSingle();
     if (error) throw new Error(`getCustomer: ${error.message}`);
@@ -149,7 +186,7 @@ export class SupabaseRepository implements Repository {
   async getCustomerByProfile(profileId: string): Promise<Customer | null> {
     const { data, error } = await this.db
       .from("customers")
-      .select("id, first_name, last_name, email, phone, lifetime_value_cents")
+      .select(CUSTOMER_SELECT)
       .eq("profile_id", profileId)
       .maybeSingle();
     if (error) throw new Error(`getCustomerByProfile: ${error.message}`);
@@ -168,6 +205,60 @@ export class SupabaseRepository implements Repository {
       .maybeSingle();
     if (error) throw new Error(`getProperty: ${error.message}`);
     return data ? toProperty(data as unknown as Row) : null;
+  }
+
+  async listInvoices(filter: InvoiceFilter = {}): Promise<Invoice[]> {
+    let query = this.db.from("invoices").select(INVOICE_SELECT);
+
+    if (filter.customerId) query = query.eq("customer_id", filter.customerId);
+    // Outstanding is asked of the generated column, so "what is owed" means the
+    // same thing here, in the auto-charge sweep, and on the customer's screen.
+    if (filter.outstanding) query = query.gt("balance_cents", 0).is("voided_at", null);
+    if (filter.limit !== undefined) query = query.limit(filter.limit);
+
+    const { data, error } = await query.order("created_at", { ascending: false });
+    if (error) throw new Error(`listInvoices: ${error.message}`);
+    return rows(data).map(toInvoice);
+  }
+
+  async getInvoice(id: string): Promise<Invoice | null> {
+    const { data, error } = await this.db
+      .from("invoices")
+      .select(INVOICE_SELECT)
+      .eq("id", id)
+      .maybeSingle();
+    if (error) throw new Error(`getInvoice: ${error.message}`);
+    return data ? toInvoice(data as unknown as Row) : null;
+  }
+
+  async listPayments(invoiceId: string): Promise<Payment[]> {
+    const { data, error } = await this.db
+      .from("payments")
+      .select(
+        "id, invoice_id, amount_cents, status, method, is_autocharge, " +
+          "failure_message, succeeded_at, created_at",
+      )
+      .eq("invoice_id", invoiceId)
+      .order("created_at", { ascending: false });
+    if (error) throw new Error(`listPayments: ${error.message}`);
+    return rows(data).map(toPayment);
+  }
+
+  /** Detached cards are excluded: they are kept for history, not for charging. */
+  async listPaymentMethods(customerId: string): Promise<PaymentMethod[]> {
+    const { data, error } = await this.db
+      .from("payment_methods")
+      .select(PAYMENT_METHOD_SELECT)
+      .eq("customer_id", customerId)
+      .is("detached_at", null)
+      .order("is_default", { ascending: false })
+      .order("created_at", { ascending: false });
+    if (error) throw new Error(`listPaymentMethods: ${error.message}`);
+    return rows(data).map(toPaymentMethod);
+  }
+
+  async getDefaultPaymentMethod(customerId: string): Promise<PaymentMethod | null> {
+    return (await this.listPaymentMethods(customerId)).find((m) => m.isDefault) ?? null;
   }
 
   async getCurrentProfile(): Promise<Profile | null> {

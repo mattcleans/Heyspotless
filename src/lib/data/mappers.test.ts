@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { toCleaner, toCustomer, toJob, toProfile, toProperty } from "./mappers";
+import {
+  toCleaner,
+  toCustomer,
+  toInvoice,
+  toJob,
+  toPayment,
+  toPaymentMethod,
+  toProfile,
+  toProperty,
+} from "./mappers";
 
 /**
  * The mapper layer is where a schema change shows up. These fixtures are shaped
@@ -191,5 +200,133 @@ describe("toCustomer and toProfile", () => {
       phone: null,
     });
     expect(p.role).toBe("admin");
+  });
+});
+
+describe("billing mappers", () => {
+  /**
+   * `balance_cents` is a generated column, and PostgREST hands numerics back as
+   * strings. The mapper must read it rather than recompute it — the number on
+   * the screen has to be the number the auto-charge sweep will act on.
+   */
+  const invoiceRow = {
+    id: "inv-1",
+    customer_id: "cust-1",
+    job_id: "job-1",
+    status: "overdue",
+    subtotal_cents: 17000,
+    tip_cents: 2000,
+    total_cents: 19000,
+    amount_paid_cents: "5000",
+    refunded_cents: 0,
+    balance_cents: "14000",
+    due_on: "2026-09-01",
+    issued_at: "2026-08-25T12:00:00+00:00",
+    voided_at: null,
+    attempt_count: 2,
+    next_attempt_at: "2026-09-12T12:00:00+00:00",
+    last_error: "Your card was declined.",
+    created_at: "2026-08-25T12:00:00+00:00",
+  };
+
+  it("gathers the amounts into the shape the money rules take", () => {
+    const invoice = toInvoice(invoiceRow);
+    expect(invoice.amounts).toEqual({
+      subtotalCents: 17000,
+      tipCents: 2000,
+      totalCents: 19000,
+      amountPaidCents: 5000,
+      refundedCents: 0,
+    });
+    expect(invoice.balanceCents).toBe(14000);
+    expect(invoice.status).toBe("overdue");
+    expect(invoice.attemptCount).toBe(2);
+    expect(invoice.lastError).toBe("Your card was declined.");
+  });
+
+  it("parses the dates and tolerates the absent ones", () => {
+    const invoice = toInvoice(invoiceRow);
+    expect(invoice.dueOn?.getUTCFullYear()).toBe(2026);
+    expect(invoice.nextAttemptAt?.toISOString()).toBe("2026-09-12T12:00:00.000Z");
+    expect(invoice.voidedAt).toBeNull();
+  });
+
+  it("defaults a bare invoice row to zeroes rather than NaN", () => {
+    const invoice = toInvoice({ id: "inv-2", customer_id: "cust-1", status: "draft" });
+    expect(invoice.amounts.totalCents).toBe(0);
+    expect(invoice.balanceCents).toBe(0);
+    expect(invoice.jobId).toBeNull();
+    expect(invoice.attemptCount).toBe(0);
+  });
+
+  it("maps a payment", () => {
+    const payment = toPayment({
+      id: "pay-1",
+      invoice_id: "inv-1",
+      amount_cents: 19000,
+      status: "succeeded",
+      method: "card",
+      is_autocharge: true,
+      failure_message: null,
+      succeeded_at: "2026-09-02T12:00:00+00:00",
+      created_at: "2026-09-02T12:00:00+00:00",
+    });
+    expect(payment.amountCents).toBe(19000);
+    expect(payment.isAutocharge).toBe(true);
+    expect(payment.succeededAt).toBeInstanceOf(Date);
+  });
+
+  it("maps a saved card, and carries no card data beyond the last four", () => {
+    const card = toPaymentMethod({
+      id: "pm-1",
+      customer_id: "cust-1",
+      stripe_payment_method_id: "pm_123",
+      brand: "visa",
+      last4: "4242",
+      exp_month: 4,
+      exp_year: 2030,
+      is_default: true,
+    });
+    expect(card).toEqual({
+      id: "pm-1",
+      customerId: "cust-1",
+      stripePaymentMethodId: "pm_123",
+      brand: "visa",
+      last4: "4242",
+      expMonth: 4,
+      expYear: 2030,
+      isDefault: true,
+    });
+  });
+
+  it("reads autopay consent as a pair", () => {
+    const customer = toCustomer({
+      id: "cust-1",
+      first_name: "Bonnie",
+      last_name: "Cornell",
+      email: null,
+      phone: null,
+      lifetime_value_cents: 51000,
+      stripe_customer_id: "cus_123",
+      autopay_enabled: true,
+      autopay_authorized_at: "2026-06-01T00:00:00+00:00",
+    });
+    expect(customer.autopayEnabled).toBe(true);
+    expect(customer.autopayAuthorizedAt).toBeInstanceOf(Date);
+    expect(customer.stripeCustomerId).toBe("cus_123");
+  });
+
+  it("treats a customer with no Stripe history as not consented", () => {
+    const customer = toCustomer({
+      id: "cust-2",
+      first_name: "Ann",
+      last_name: "Lutich",
+      email: null,
+      phone: null,
+      lifetime_value_cents: 0,
+    });
+    expect(customer.autopayEnabled).toBe(false);
+    expect(customer.autopayAuthorizedAt).toBeNull();
+    expect(customer.stripeCustomerId).toBeNull();
   });
 });
