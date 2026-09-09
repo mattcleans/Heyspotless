@@ -23,6 +23,8 @@ export interface Repository {
   getCustomer(id: string): Promise<Customer | null>;
   getCustomerByProfile(profileId: string): Promise<Customer | null>;
   getProperty(id: string): Promise<Property | null>;
+  /** Every property belonging to one customer. */
+  listProperties(customerId: string): Promise<Property[]>;
 
   /** The signed-in user, or null in demo mode / when signed out. */
   getCurrentProfile(): Promise<Profile | null>;

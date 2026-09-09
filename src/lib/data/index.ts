@@ -5,6 +5,7 @@ import { createClient } from "../supabase/server";
 import { createAdminClient } from "../supabase/admin";
 import { DemoRepository } from "./demo-repository";
 import { SupabaseRepository } from "./supabase-repository";
+import { DemoOpsStore, SupabaseOpsStore, type OpsStore } from "./ops-store";
 import type { Repository } from "./repository";
 
 /**
@@ -28,5 +29,19 @@ export function getAdminRepository(): Repository {
   return new SupabaseRepository(createAdminClient());
 }
 
-export type { Repository };
+/**
+ * The write counterpart to getRepository().
+ *
+ * Note what this does NOT do: it never reaches for the admin client. These
+ * writes always happen because a signed-in admin asked for them, so row-level
+ * security is the enforcement and the request-scoped client is what applies it.
+ * Service-role is reserved for the contexts that genuinely have no user —
+ * the Stripe webhook and the cron sweep, which use BillingStore.
+ */
+export async function getOpsStore(): Promise<OpsStore> {
+  if (isDemoMode()) return new DemoOpsStore();
+  return new SupabaseOpsStore(await createClient());
+}
+
+export type { Repository, OpsStore };
 export * from "./types";

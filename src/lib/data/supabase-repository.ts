@@ -170,6 +170,20 @@ export class SupabaseRepository implements Repository {
     return data ? toProperty(data as unknown as Row) : null;
   }
 
+  async listProperties(customerId: string): Promise<Property[]> {
+    const { data, error } = await this.db
+      .from("properties")
+      .select(
+        "id, customer_id, street, city, state, zip, bedrooms, bathrooms, " +
+          "half_baths, kitchens, living_rooms, utility_rooms, gate_code, " +
+          "access_notes, parking_notes, pets",
+      )
+      .eq("customer_id", customerId)
+      .order("street");
+    if (error) throw new Error(`listProperties: ${error.message}`);
+    return rows(data).map(toProperty);
+  }
+
   async getCurrentProfile(): Promise<Profile | null> {
     const { data: auth } = await this.db.auth.getUser();
     if (!auth.user) return null;
