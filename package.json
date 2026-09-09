@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "description": "Hey Spotless field-service operations platform — booking, dispatch, billing, communications.",
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",

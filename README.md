@@ -10,13 +10,25 @@ specific job** — something no off-the-shelf field-service tool does.
 
 ## Running it
 
+**Node 20.9 or newer** — Next 16 requires it, and on an older Node the failure does
+not name the version as the cause. `package.json` declares the floor, so `npm install`
+will warn you.
+
 No credentials are needed. In demo mode the whole admin UI runs off in-memory
 fixtures with no Supabase, Stripe, or Twilio connection.
 
 ```bash
+node -v              # expect v20.9+
 npm install
-npm run dev          # http://localhost:3000
+npm run dev          # http://localhost:3000/admin/customers
 ```
+
+The first request to each route compiles it, so the very first page load takes a few
+seconds even after the server says `Ready`. That is Turbopack doing its job, not a
+hang.
+
+Records you create in demo mode live in memory and are gone when the server restarts.
+The fixtures are not — they are a fixed set the engine tests rely on.
 
 | Command | What it does |
 |---|---|
