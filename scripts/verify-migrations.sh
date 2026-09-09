@@ -87,7 +87,7 @@ echo "  price book verified"
 # The money rules that lib/billing/amounts.ts assumes. If these and the
 # TypeScript ever disagree, the database is right and the tests are wrong.
 echo "  checking billing invariants"
-sudo -u postgres $PSQL -d "$DB" <<'SQL'
+as_super $PSQL -d "$DB" <<'SQL'
 do $$
 declare
   v_cust uuid; v_inv uuid; v_bal integer; v_fail integer := 0;
@@ -153,7 +153,7 @@ echo "  billing verified"
 # that move money, and both of their callers can fire twice for the same event.
 # These assertions are the proof that the second call is a no-op.
 echo "  checking money mutations"
-sudo -u postgres $PSQL -d "$DB" <<'SQL'
+as_super $PSQL -d "$DB" <<'SQL'
 do $$
 declare
   v_cust uuid; v_inv uuid; v_pay uuid; v_again uuid;
