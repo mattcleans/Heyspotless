@@ -1,18 +1,29 @@
 #!/usr/bin/env bash
 # Applies every migration to a throwaway database and checks quote_price()
-# against the published pricelist totals. Requires a local Postgres.
+# against the published pricelist totals. Requires Postgres — a local
+# cluster, or a service container reachable through the PG* environment.
 set -euo pipefail
 
 DB="${1:-spotless_verify}"
 PSQL="psql -v ON_ERROR_STOP=1 -q"
 
-sudo -u postgres dropdb --if-exists "$DB"
-sudo -u postgres createdb "$DB"
+# Two ways to reach a superuser. On a developer machine Postgres runs locally
+# and the way in is the `postgres` system account. In CI it is a service
+# container over TCP, where no such account exists to sudo to — so PGHOST being
+# set means "the PG* environment already points at a superuser, just run psql".
+if [ -n "${PGHOST:-}" ]; then
+  as_super() { "$@"; }
+else
+  as_super() { sudo -u postgres "$@"; }
+fi
+
+as_super dropdb --if-exists "$DB"
+as_super createdb "$DB"
 
 # Supabase provides auth.uid() at runtime. Stub it so RLS policies compile
 # locally; the real thing is supplied by Supabase in every deployed
 # environment. This stub exists only for verification and is not a migration.
-sudo -u postgres $PSQL -d "$DB" <<'SQL'
+as_super $PSQL -d "$DB" <<'SQL'
 create schema if not exists auth;
 
 -- Minimal stand-in for Supabase's auth.users, enough for the FK and the signup
@@ -31,13 +42,13 @@ SQL
 
 for f in supabase/migrations/*.sql; do
   echo "  applying $(basename "$f")"
-  sudo -u postgres $PSQL -d "$DB" -f "$f"
+  as_super $PSQL -d "$DB" -f "$f"
 done
 echo "  all migrations applied"
 
 # --- golden check: quote_price() must reproduce the published pricelist ------
 echo "  checking quote_price() against the 9 Aug 2026 pricelist"
-sudo -u postgres $PSQL -d "$DB" <<'SQL'
+as_super $PSQL -d "$DB" <<'SQL'
 do $$
 declare
   r record; v_actual integer; v_fail integer := 0; v_ok integer := 0;
