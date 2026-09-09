@@ -6,9 +6,25 @@
  */
 
 import { demoCustomers, demoProperties } from "../demo/added";
-import { DEMO_CLEANERS, DEMO_JOBS } from "../demo/fixtures";
+import {
+  DEMO_CLEANERS,
+  DEMO_INVOICES,
+  DEMO_JOBS,
+  DEMO_PAYMENT_METHODS,
+} from "../demo/fixtures";
 import type { Repository } from "./repository";
-import type { Cleaner, Customer, Job, JobFilter, Profile, Property } from "./types";
+import type {
+  Cleaner,
+  Customer,
+  Invoice,
+  InvoiceFilter,
+  Job,
+  JobFilter,
+  Payment,
+  PaymentMethod,
+  Profile,
+  Property,
+} from "./types";
 
 function toJob(demo: (typeof DEMO_JOBS)[number]): Job {
   return {
@@ -28,6 +44,11 @@ function toCustomer(demo: (typeof DEMO_JOBS)[number]): Customer {
     email: null,
     phone: null,
     lifetimeValueCents: demo.priceCents,
+    stripeCustomerId: null,
+    // Demo mode has consent recorded so the customer screen renders the
+    // card-on-file state; there is no Stripe account behind it to charge.
+    autopayEnabled: true,
+    autopayAuthorizedAt: new Date("2026-06-01T00:00:00Z"),
   };
 }
 
@@ -111,6 +132,33 @@ export class DemoRepository implements Repository {
     if (added) return added;
     const demo = DEMO_JOBS.find((j) => `prop-${j.id}` === id);
     return demo ? jobProperty(demo) : null;
+  }
+
+  async listInvoices(filter: InvoiceFilter = {}): Promise<Invoice[]> {
+    let invoices = [...DEMO_INVOICES];
+    if (filter.customerId) invoices = invoices.filter((i) => i.customerId === filter.customerId);
+    if (filter.outstanding) invoices = invoices.filter((i) => i.balanceCents > 0 && !i.voidedAt);
+    if (filter.limit !== undefined) invoices = invoices.slice(0, filter.limit);
+    return invoices;
+  }
+
+  async getInvoice(id: string): Promise<Invoice | null> {
+    return DEMO_INVOICES.find((i) => i.id === id) ?? null;
+  }
+
+  async listPayments(invoiceId: string): Promise<Payment[]> {
+    // The fixtures carry settled totals rather than a payment ledger; there is
+    // nothing a demo can show here that the invoice does not already say.
+    void invoiceId;
+    return [];
+  }
+
+  async listPaymentMethods(customerId: string): Promise<PaymentMethod[]> {
+    return DEMO_PAYMENT_METHODS.map((m) => ({ ...m, customerId }));
+  }
+
+  async getDefaultPaymentMethod(customerId: string): Promise<PaymentMethod | null> {
+    return (await this.listPaymentMethods(customerId)).find((m) => m.isDefault) ?? null;
   }
 
   async getCurrentProfile(): Promise<Profile | null> {

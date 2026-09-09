@@ -85,6 +85,62 @@ The plan specifies a 3.9 floor but not what to do with a null rating. New cleane
 get a provisional rating during onboarding, so a null here is a data problem — and
 the safe reading of a data problem is ineligible, not "above the floor by default".
 
+### A refund restores the balance rather than shrinking the invoice
+
+An invoice carries three numbers — `amount_paid_cents`, `refunded_cents`, and a
+generated `balance_cents` equal to `total - paid + refunded`. A refunded $170 clean
+therefore still reports $170 of revenue, with $170 outstanding.
+
+The tempting alternative — netting the refund off the total — makes the invoice
+disappear from the books, and with it the job it belonged to. That is exactly the
+job costing the plan says Housecall Pro famously does not do: revenue minus actual
+labour, per job. A refund is an event with a date and an author, so it is a row in
+`refunds`, not a smaller number written over the original.
+
+### Money moves in SQL, not in TypeScript
+
+Applying a payment is read-modify-write, and there are two writers: the Stripe
+webhook and the auto-charge sweep. They can land on the same invoice in the same
+moment. Doing the arithmetic in TypeScript means one read's total overwriting the
+other's, and a customer either charged twice or credited for free.
+
+So `record_payment`, `record_refund` and `record_autocharge_failure` are `plpgsql`
+functions that take a row lock and increment. The routes only call them. Both
+functions return `NULL` — not an error — when the capture has already been
+recorded, because a replayed webhook is a normal Tuesday, not a fault.
+
+### Three defences against charging a card twice
+
+Stripe delivers webhooks **at least once** and retries for three days, so every
+handler is eventually invoked twice for the same event. Auto-charge adds a second
+way to double up: a sweep that dies after Stripe returns but before we write.
+
+1. `stripe_events.id` is the primary key, and the webhook inserts it *first*. A
+   duplicate delivery loses that race with a unique violation and is acknowledged
+   without being applied. When a handler genuinely fails, the claim is **released**
+   before returning 500 — holding it would make Stripe's retry look like a
+   duplicate and the payment would never land.
+2. `idempotencyKeyFor(invoice, attempt)` is deterministic, and `payments
+   .idempotency_key` is `UNIQUE`. The same attempt replayed is the same key, so
+   Stripe collapses it to one charge and the local insert refuses a second row.
+3. The sweep only ever charges the outstanding balance. A charge that succeeded but
+   whose webhook has not arrived yet leaves nothing to take.
+
+A **successful** charge never increments `attempt_count` — only a failure does.
+That is what makes a crash between Stripe returning and our write safe to simply
+retry with the same key.
+
+### The auto-charge decision is a pure function
+
+`lib/billing/autocharge.ts` returns `charge` / `skip` / `escalate`; the route
+executes it and decides nothing. Consent is checked before anything that could look
+like a reason to charge, so no combination of state reaches the charge branch
+without it — there is a test that asserts exactly that.
+
+Four attempts at 1 / 3 / 7 days, then a person looks at it. Card failures are
+overwhelmingly either instantly retryable or not retryable at all; a fifth
+automated attempt mostly buys issuer friction and a fifth "payment failed" email.
+
 ## Enforced in the database, not the UI
 
 Two rules live in Postgres because a UI bug must not be able to route around them:
@@ -95,6 +151,10 @@ Two rules live in Postgres because a UI bug must not be able to route around the
   `offers` table, so an offer to someone who has not cleared a background check
   cannot be written at all — not by the engine, not by a manual override, not by an
   admin running SQL directly.
+- **Autopay consent.** `autopay_enabled` without `autopay_authorized_at` is a
+  `CHECK` violation, so a customer cannot be put into a chargeable state without the
+  timestamp that evidences they agreed. One default card per customer is a partial
+  unique index, so two "make this my default" clicks racing cannot leave two.
 
 The TypeScript in `lib/dispatch/eligibility.ts` mirrors the SQL so the UI can explain
 *why* someone is ineligible without a round trip. The database remains the authority.

@@ -34,6 +34,12 @@ export function addDemoCustomer(input: CustomerInput, id?: string): Customer {
     // Lifetime value is recomputed from real invoices, never entered; a new
     // customer has not paid for anything yet.
     lifetimeValueCents: existing?.lifetimeValueCents ?? 0,
+    // No Stripe customer until something is charged, and autopay off with no
+    // consent timestamp — the pair 0006 requires, and the only honest default
+    // for someone who has not authorised anything.
+    stripeCustomerId: existing?.stripeCustomerId ?? null,
+    autopayEnabled: existing?.autopayEnabled ?? false,
+    autopayAuthorizedAt: existing?.autopayAuthorizedAt ?? null,
   };
 
   if (existing) customers[customers.indexOf(existing)] = customer;

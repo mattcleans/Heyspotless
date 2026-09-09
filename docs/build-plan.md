@@ -203,7 +203,7 @@ travel, per job, per cleaner, per customer, per channel.
 | 00 | Accounts and keys | `docs/setup.md`. Gates everything. |
 | 01 | Foundation | Repo, scaffold, schema, RLS, auth, design system, PWA shell, deploy. **Built.** |
 | 02 | Core operations | Customers, properties, price book, jobs, calendar, recurring plans. **Price book and quoting built.** |
-| 03 | Money | Quote builder, Stripe Checkout, saved cards, auto-charge, tips, refunds. **Quote engine built; Stripe pending.** |
+| 03 | Money | Quote builder, Stripe Checkout, saved cards, auto-charge, tips, refunds. **Built.** Live behind `BILLING_ENABLED` until underwriting clears. |
 | 04 | Cleaner app | Today's schedule, on-my-way, clock in/out, checklists, offline photo queue, push. |
 | 05 | Dispatch engine | Marginal cost, clustering, overtime forecast, gate, tiers, board, waterfall, offer ledger. **Built.** |
 | 06 | Communications | Twilio two-way inbox, reminders, review requests, automation engine. |
