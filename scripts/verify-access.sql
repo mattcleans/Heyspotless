@@ -1,0 +1,155 @@
+-- Run only in the throwaway database created by verify-migrations.sh.
+-- Use ordinary roles and deliberately broad table grants to test RLS, not
+-- just a superuser whose queries bypass the policies. Roll fixtures back.
+begin;
+grant usage on schema public, auth to anon, authenticated, service_role;
+grant all on all tables in schema public to anon, authenticated, service_role;
+grant execute on function auth.uid() to anon, authenticated, service_role;
+
+create schema verify_access;
+grant usage on schema verify_access to anon, authenticated, service_role;
+create function verify_access.expect_billing_denied() returns void
+language plpgsql as $$
+declare statement text;
+begin
+  foreach statement in array array[
+    $q$select record_payment('10000000-0000-0000-0000-000000000001', 100)$q$,
+    $q$select record_refund('pi_access_test', 100)$q$,
+    $q$select record_autocharge_failure('10000000-0000-0000-0000-000000000001', 'test')$q$,
+    $q$select resettle_invoice('10000000-0000-0000-0000-000000000001')$q$
+  ] loop
+    begin
+      execute statement;
+      raise exception 'privileged billing call was allowed for %: %', current_user, statement;
+    exception when insufficient_privilege then null;
+    end;
+  end loop;
+end $$;
+
+-- Client-supplied role requests must not grant staff access at signup.
+insert into auth.users (id, email, raw_user_meta_data) values
+  ('20000000-0000-0000-0000-000000000001', 'customer-a@example.invalid', '{}'),
+  ('20000000-0000-0000-0000-000000000002', 'customer-b@example.invalid', '{}'),
+  ('20000000-0000-0000-0000-000000000003', 'cleaner@example.invalid', '{"role":"cleaner"}'),
+  ('20000000-0000-0000-0000-000000000004', 'admin@example.invalid', '{"role":"admin"}');
+do $$
+begin
+  if exists (select 1 from profiles where id in (
+    '20000000-0000-0000-0000-000000000003', '20000000-0000-0000-0000-000000000004'
+  ) and role <> 'customer') then
+    raise exception 'signup metadata granted a staff role';
+  end if;
+end $$;
+
+-- Deliberate, privileged staff provisioning for the rest of the tests.
+update profiles set role = 'cleaner' where id = '20000000-0000-0000-0000-000000000003';
+update profiles set role = 'admin' where id = '20000000-0000-0000-0000-000000000004';
+insert into customers (id, profile_id, first_name, last_name) values
+  ('30000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000001', 'Test', 'A'),
+  ('30000000-0000-0000-0000-000000000002', '20000000-0000-0000-0000-000000000002', 'Test', 'B');
+insert into properties (id, customer_id, street, city, zip) values
+  ('40000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001', 'Test A', 'Test', '75024'),
+  ('40000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000002', 'Test B', 'Test', '75024');
+insert into jobs (id, customer_id, property_id, service, freq, price_cents,
+                  estimated_clean_minutes, dispatch_channel) values
+  ('50000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001',
+   '40000000-0000-0000-0000-000000000001', 'standard', 'one_time', 17000, 120, 'direct_assign'),
+  ('50000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000002',
+   '40000000-0000-0000-0000-000000000002', 'standard', 'one_time', 17000, 120, 'open_board');
+insert into cleaners (id, profile_id, full_name, type, status, rating, background_check_cleared)
+values ('60000000-0000-0000-0000-000000000001', '20000000-0000-0000-0000-000000000003',
+        'Test Cleaner', 'contractor_1099', 'active', 4.9, true);
+insert into offers (id, job_id, cleaner_id, channel, hourly_rate_cents,
+                    payout_cents, payout_pct, estimated_minutes, expires_at)
+values ('70000000-0000-0000-0000-000000000001', '50000000-0000-0000-0000-000000000002',
+        '60000000-0000-0000-0000-000000000001', 'open_board', 2500, 5000, 0.2941, 120,
+        now() + interval '1 hour');
+insert into invoices (id, customer_id, status, subtotal_cents, total_cents)
+values ('10000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001',
+        'sent', 17000, 17000);
+
+set local role anon;
+select verify_access.expect_billing_denied();
+do $$
+begin
+  if exists (select 1 from jobs where id = '50000000-0000-0000-0000-000000000002') then
+    raise exception 'anonymous user saw an open-board job';
+  end if;
+end $$;
+reset role;
+
+set local role authenticated;
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000001', true);
+select verify_access.expect_billing_denied();
+do $$
+begin
+  if not exists (select 1 from jobs where id = '50000000-0000-0000-0000-000000000001') then
+    raise exception 'customer cannot see their own job';
+  end if;
+  if exists (select 1 from jobs where id = '50000000-0000-0000-0000-000000000002') then
+    raise exception 'customer saw another customer''s open-board job';
+  end if;
+end $$;
+
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000003', true);
+select verify_access.expect_billing_denied();
+do $$
+declare changed integer;
+begin
+  if not exists (select 1 from jobs where id = '50000000-0000-0000-0000-000000000002') then
+    raise exception 'provisioned cleaner cannot see open-board work';
+  end if;
+  if not exists (select 1 from offers where id = '70000000-0000-0000-0000-000000000001') then
+    raise exception 'cleaner cannot see their offer';
+  end if;
+  update offers set payout_cents = 99999, status = 'accepted'
+    where id = '70000000-0000-0000-0000-000000000001';
+  get diagnostics changed = row_count;
+  if changed <> 0 then raise exception 'cleaner changed their offer directly'; end if;
+  if exists (select 1 from offers where id = '70000000-0000-0000-0000-000000000001'
+             and (payout_cents <> 5000 or status <> 'sent')) then
+    raise exception 'cleaner offer changed despite the write restriction';
+  end if;
+end $$;
+
+-- Even an admin browser session uses the authenticated role. These privileged
+-- routines must go through authenticated server routes using service_role.
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000004', true);
+select verify_access.expect_billing_denied();
+do $$
+declare changed integer;
+begin
+  update offers set payout_cents = 5100
+    where id = '70000000-0000-0000-0000-000000000001';
+  get diagnostics changed = row_count;
+  if changed <> 1 then raise exception 'admin cannot update an offer'; end if;
+end $$;
+reset role;
+
+-- The server still has all four required permissions and can actually record
+-- a payment. This guards against a migration that disables billing entirely.
+set local role service_role;
+select set_config('request.jwt.claim.sub', '', true);
+do $$
+declare signature text; payment_id uuid;
+begin
+  foreach signature in array array[
+    'record_payment(uuid,integer,integer,text,text,text,boolean,text)',
+    'record_refund(text,integer,text,uuid,text)',
+    'record_autocharge_failure(uuid,text,timestamptz)',
+    'resettle_invoice(uuid)'
+  ] loop
+    if not has_function_privilege(current_user, signature, 'execute') then
+      raise exception 'server lost execution privilege on %', signature;
+    end if;
+  end loop;
+  payment_id := record_payment('10000000-0000-0000-0000-000000000001', 17000,
+                               0, 'pi_access_test');
+  if payment_id is null or not exists (
+    select 1 from invoices where id = '10000000-0000-0000-0000-000000000001'
+      and amount_paid_cents = 17000 and status = 'paid'
+  ) then raise exception 'server payment did not settle the invoice'; end if;
+end $$;
+reset role;
+
+rollback;

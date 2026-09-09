@@ -26,6 +26,26 @@ as_super createdb "$DB"
 as_super $PSQL -d "$DB" <<'SQL'
 create schema if not exists auth;
 
+-- Exercise access controls with Supabase-like client and server roles. These
+-- are cluster roles, so a second verification run must reuse them.
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'anon') then
+    create role anon nologin;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'authenticated') then
+    create role authenticated nologin;
+  end if;
+  if not exists (select 1 from pg_roles where rolname = 'service_role') then
+    create role service_role nologin bypassrls;
+  end if;
+end $$;
+
+-- Model both PUBLIC's default EXECUTE and explicit client-role defaults.
+-- Migration 0007 must revoke both sources of privilege.
+alter default privileges in schema public
+  grant execute on functions to anon, authenticated, service_role;
+
 -- Minimal stand-in for Supabase's auth.users, enough for the FK and the signup
 -- trigger in 0004 to be exercised. The real table has many more columns.
 create table if not exists auth.users (
@@ -228,3 +248,7 @@ begin
 end $$;
 SQL
 echo "  money paths verified"
+
+echo "  checking customer, cleaner and server access"
+as_super $PSQL -d "$DB" -f scripts/verify-access.sql
+echo "  access controls verified"
