@@ -11,6 +11,7 @@ import { buildQuote } from "../pricing/quote";
 import { contractor, iggy, shonda } from "../dispatch/fixtures";
 import type { Cleaner, DispatchJob } from "../dispatch/types";
 import type { Frequency, ServiceType } from "../pricing/price-book";
+import type { Invoice, PaymentMethod } from "../data/types";
 
 export interface DemoJob extends DispatchJob {
   customerName: string;
@@ -99,6 +100,91 @@ export const DEMO_CLEANERS: Cleaner[] = [
     id: "c-janelle", name: "Janelle B.", rating: 4.9, acceptanceRate: 0.55,
     backgroundCheckCleared: false, serviceZips: [], lastStopZip: "75024",
   }),
+];
+
+/**
+ * Billing fixtures, one per state the customer screen has to render: settled,
+ * outstanding, tipped, and one that auto-charge has already failed on once.
+ * The last is the one worth having — an invoice mid-retry is the state that
+ * looks fine in isolation and wrong on screen.
+ */
+function days(n: number): Date {
+  return new Date(DEMO_NOW.getTime() + n * 86_400_000);
+}
+
+function invoice(
+  id: string,
+  subtotalCents: number,
+  overrides: Partial<Invoice> = {},
+): Invoice {
+  const tipCents = overrides.amounts?.tipCents ?? 0;
+  const amountPaidCents = overrides.amounts?.amountPaidCents ?? 0;
+  const refundedCents = overrides.amounts?.refundedCents ?? 0;
+  const totalCents = subtotalCents + tipCents;
+
+  return {
+    id,
+    // All of Bonnie's: she is the bi-weekly customer in DEMO_JOBS, and a
+    // recurring customer accumulating invoices visit after visit is the shape
+    // the customer screen actually has to render.
+    customerId: "cust-j-1",
+    jobId: "j-1",
+    status: "sent",
+    dueOn: days(-1),
+    issuedAt: days(-8),
+    voidedAt: null,
+    attemptCount: 0,
+    nextAttemptAt: null,
+    lastError: null,
+    createdAt: days(-8),
+    ...overrides,
+    amounts: { subtotalCents, tipCents, totalCents, amountPaidCents, refundedCents },
+    balanceCents: totalCents - amountPaidCents + refundedCents,
+  };
+}
+
+export const DEMO_INVOICES: Invoice[] = [
+  // Paid, with a tip — the happy path and the invoice-history row.
+  invoice("inv-1", 17000, {
+    status: "paid",
+    amounts: {
+      subtotalCents: 17000,
+      tipCents: 2000,
+      totalCents: 19000,
+      amountPaidCents: 19000,
+      refundedCents: 0,
+    },
+    dueOn: days(-15),
+    issuedAt: days(-22),
+    createdAt: days(-22),
+  }),
+  // Outstanding and not yet due — what "Pay now" acts on.
+  invoice("inv-2", 17000, { status: "sent", dueOn: days(2) }),
+  // Overdue, one failed auto-charge behind it, next attempt scheduled. This is
+  // the state that looks fine in isolation and wrong on screen.
+  invoice("inv-3", 17000, {
+    status: "overdue",
+    dueOn: days(-6),
+    issuedAt: days(-13),
+    createdAt: days(-13),
+    attemptCount: 1,
+    nextAttemptAt: days(1),
+    lastError: "Your card was declined.",
+  }),
+];
+
+/** One saved card, so the screen renders the card-on-file state rather than the empty one. */
+export const DEMO_PAYMENT_METHODS: PaymentMethod[] = [
+  {
+    id: "pm-1",
+    customerId: "cust-j-1",
+    stripePaymentMethodId: "pm_demo_visa",
+    brand: "visa",
+    last4: "4242",
+    expMonth: 4,
+    expYear: 2030,
+    isDefault: true,
+  },
 ];
 
 // isDemoMode lives in lib/supabase/env.ts, next to the config it inspects.

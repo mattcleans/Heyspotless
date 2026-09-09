@@ -10,6 +10,7 @@
 import type { Frequency, ServiceType } from "../pricing/price-book";
 import type { Cleaner, DispatchJob } from "../dispatch/types";
 import type { RoomCounts } from "../pricing/quote";
+import type { InvoiceAmounts, InvoiceStatus, PaymentStatus } from "../billing/types";
 
 export type UserRole = "admin" | "cleaner" | "customer";
 
@@ -28,6 +29,15 @@ export interface Customer {
   email: string | null;
   phone: string | null;
   lifetimeValueCents: number;
+  /** Null until their first Stripe interaction creates the customer object. */
+  stripeCustomerId: string | null;
+  /**
+   * Autopay consent, both halves. `autopayEnabled` without
+   * `autopayAuthorizedAt` is rejected by a CHECK constraint in 0006 — the
+   * timestamp is the evidence, and a card on file is not consent to use it.
+   */
+  autopayEnabled: boolean;
+  autopayAuthorizedAt: Date | null;
 }
 
 export interface Property {
@@ -62,6 +72,64 @@ export interface Job extends DispatchJob {
 }
 
 export type { Cleaner };
+
+/**
+ * An invoice as the app means it. `amounts` is the shape lib/billing/amounts.ts
+ * operates on, so an invoice can be handed straight to the money rules;
+ * `balanceCents` is read back from the generated column rather than recomputed,
+ * so the row and the UI can never disagree about what is owed.
+ */
+export interface Invoice {
+  id: string;
+  customerId: string;
+  jobId: string | null;
+  status: InvoiceStatus;
+  amounts: InvoiceAmounts;
+  balanceCents: number;
+  dueOn: Date | null;
+  issuedAt: Date | null;
+  voidedAt: Date | null;
+  /** Auto-charge state. Zero attempts means it has never been tried. */
+  attemptCount: number;
+  nextAttemptAt: Date | null;
+  lastError: string | null;
+  createdAt: Date;
+}
+
+export interface Payment {
+  id: string;
+  invoiceId: string;
+  amountCents: number;
+  status: PaymentStatus;
+  method: string | null;
+  isAutocharge: boolean;
+  failureMessage: string | null;
+  succeededAt: Date | null;
+  createdAt: Date;
+}
+
+/**
+ * A saved card, as metadata only. The card itself never leaves Stripe — this
+ * is what the customer sees on their account page, and nothing here is card
+ * data under PCI.
+ */
+export interface PaymentMethod {
+  id: string;
+  customerId: string;
+  stripePaymentMethodId: string;
+  brand: string | null;
+  last4: string | null;
+  expMonth: number | null;
+  expYear: number | null;
+  isDefault: boolean;
+}
+
+export interface InvoiceFilter {
+  customerId?: string;
+  /** Only invoices with something still owed. */
+  outstanding?: boolean;
+  limit?: number;
+}
 
 export interface JobFilter {
   /** Jobs with no cleaner assigned yet — the dispatch board's default view. */

@@ -82,3 +82,149 @@ begin
 end $$;
 SQL
 echo "  price book verified"
+
+# --- billing invariants (0006) ----------------------------------------------
+# The money rules that lib/billing/amounts.ts assumes. If these and the
+# TypeScript ever disagree, the database is right and the tests are wrong.
+echo "  checking billing invariants"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_inv uuid; v_bal integer; v_fail integer := 0;
+begin
+  insert into customers (first_name, last_name) values ('Verify','Only')
+    returning id into v_cust;
+  insert into invoices (customer_id, subtotal_cents, tip_cents, total_cents)
+    values (v_cust, 17000, 2000, 19000) returning id into v_inv;
+
+  -- balance_cents = total - paid + refunded, generated, never hand-written
+  select balance_cents into v_bal from invoices where id = v_inv;
+  if v_bal <> 19000 then v_fail := v_fail+1;
+    raise warning 'unpaid balance: got %, want 19000', v_bal; end if;
+
+  update invoices set amount_paid_cents = 19000 where id = v_inv;
+  select balance_cents into v_bal from invoices where id = v_inv;
+  if v_bal <> 0 then v_fail := v_fail+1;
+    raise warning 'paid balance: got %, want 0', v_bal; end if;
+
+  -- a refund RESTORES balance rather than shrinking the invoice
+  update invoices set refunded_cents = 19000 where id = v_inv;
+  select balance_cents into v_bal from invoices where id = v_inv;
+  if v_bal <> 19000 then v_fail := v_fail+1;
+    raise warning 'refunded balance: got %, want 19000', v_bal; end if;
+
+  begin
+    update invoices set refunded_cents = 19001 where id = v_inv;
+    v_fail := v_fail+1; raise warning 'refund beyond captured was accepted';
+  exception when check_violation then null; end;
+
+  -- autopay cannot be enabled without recorded consent
+  begin
+    update customers set autopay_enabled = true where id = v_cust;
+    v_fail := v_fail+1; raise warning 'autopay without consent was accepted';
+  exception when check_violation then null; end;
+  update customers set autopay_enabled = true, autopay_authorized_at = now()
+    where id = v_cust;
+
+  -- one default card per customer, enforced against the click race
+  insert into payment_methods (customer_id, stripe_payment_method_id, last4, is_default)
+    values (v_cust, 'pm_verify_a', '4242', true);
+  begin
+    insert into payment_methods (customer_id, stripe_payment_method_id, last4, is_default)
+      values (v_cust, 'pm_verify_b', '1881', true);
+    v_fail := v_fail+1; raise warning 'second default card was accepted';
+  exception when unique_violation then null; end;
+
+  -- the webhook dedupe guarantee
+  insert into stripe_events (id, type) values ('evt_verify', 'checkout.session.completed');
+  begin
+    insert into stripe_events (id, type) values ('evt_verify', 'checkout.session.completed');
+    v_fail := v_fail+1; raise warning 'duplicate webhook event was accepted';
+  exception when unique_violation then null; end;
+
+  if v_fail > 0 then raise exception '% billing assertions failed', v_fail; end if;
+  raise notice 'billing invariants passed';
+end $$;
+SQL
+echo "  billing verified"
+
+# --- money mutations (0006) --------------------------------------------------
+# record_payment / record_refund / record_autocharge_failure are the only paths
+# that move money, and both of their callers can fire twice for the same event.
+# These assertions are the proof that the second call is a no-op.
+echo "  checking money mutations"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_inv uuid; v_pay uuid; v_again uuid;
+  v_paid integer; v_tip integer; v_total integer; v_bal integer;
+  v_status invoice_status; v_attempts integer; v_fail integer := 0;
+begin
+  insert into customers (first_name, last_name) values ('Money','Path')
+    returning id into v_cust;
+  insert into invoices (customer_id, status, subtotal_cents, total_cents, due_on)
+    values (v_cust, 'sent', 17000, 17000, current_date - 1) returning id into v_inv;
+
+  -- a capture with a tip settles the invoice and folds the tip into the total
+  v_pay := record_payment(v_inv, 19000, 2000, 'pi_money_1', 'ch_money_1', null, false, 'card');
+  if v_pay is null then v_fail := v_fail+1; raise warning 'first capture returned null'; end if;
+
+  select amount_paid_cents, tip_cents, total_cents, balance_cents, status
+    into v_paid, v_tip, v_total, v_bal, v_status from invoices where id = v_inv;
+  if v_paid <> 19000 then v_fail := v_fail+1; raise warning 'paid: got %, want 19000', v_paid; end if;
+  if v_tip  <> 2000  then v_fail := v_fail+1; raise warning 'tip: got %, want 2000', v_tip; end if;
+  if v_total<> 19000 then v_fail := v_fail+1; raise warning 'total: got %, want 19000', v_total; end if;
+  if v_bal  <> 0     then v_fail := v_fail+1; raise warning 'balance: got %, want 0', v_bal; end if;
+  if v_status <> 'paid' then v_fail := v_fail+1; raise warning 'status: got %, want paid', v_status; end if;
+
+  -- THE REPLAY: the same payment_intent must not be applied twice
+  v_again := record_payment(v_inv, 19000, 2000, 'pi_money_1', 'ch_money_1', null, false, 'card');
+  if v_again is not null then v_fail := v_fail+1; raise warning 'replayed webhook created a second payment'; end if;
+  select amount_paid_cents, tip_cents into v_paid, v_tip from invoices where id = v_inv;
+  if v_paid <> 19000 or v_tip <> 2000 then
+    v_fail := v_fail+1; raise warning 'replay moved the money: paid %, tip %', v_paid, v_tip; end if;
+
+  -- the same idempotency key must not be applied twice either
+  perform record_payment(v_inv, 100, 0, null, null, 'autocharge:x:1', true, 'card');
+  v_again := record_payment(v_inv, 100, 0, null, null, 'autocharge:x:1', true, 'card');
+  if v_again is not null then v_fail := v_fail+1; raise warning 'replayed idempotency key created a second payment'; end if;
+
+  -- a partial refund restores balance and reopens the invoice
+  perform record_refund('pi_money_1', 5000, 're_money_1', null, 'goodwill');
+  select refunded_cents, balance_cents, status into v_paid, v_bal, v_status
+    from invoices where id = v_inv;
+  if v_paid <> 5000 then v_fail := v_fail+1; raise warning 'refunded: got %, want 5000', v_paid; end if;
+  if v_bal  <> 4900 then v_fail := v_fail+1; raise warning 'balance after refund: got %, want 4900', v_bal; end if;
+  if v_status <> 'overdue' then v_fail := v_fail+1; raise warning 'status after refund: got %, want overdue', v_status; end if;
+
+  -- refunds are idempotent on the Stripe refund id
+  v_again := record_refund('pi_money_1', 5000, 're_money_1', null, null);
+  if v_again is not null then v_fail := v_fail+1; raise warning 'replayed refund applied twice'; end if;
+
+  -- and cannot exceed what that payment captured
+  begin
+    perform record_refund('pi_money_1', 14001, 're_money_2', null, null);
+    v_fail := v_fail+1; raise warning 'over-refund of a payment was accepted';
+  exception when others then null; end;
+
+  -- a failed auto-charge spends exactly one attempt
+  select attempt_count into v_attempts from invoices where id = v_inv;
+  perform record_autocharge_failure(v_inv, 'Your card was declined.', now() + interval '1 day');
+  select attempt_count into v_attempts from invoices where id = v_inv;
+  if v_attempts <> 1 then v_fail := v_fail+1; raise warning 'attempts: got %, want 1', v_attempts; end if;
+
+  -- a draft is never resettled into 'sent' by a money movement
+  declare v_draft uuid;
+  begin
+    insert into invoices (customer_id, status, subtotal_cents, total_cents)
+      values (v_cust, 'draft', 5000, 5000) returning id into v_draft;
+    perform resettle_invoice(v_draft);
+    select status into v_status from invoices where id = v_draft;
+    if v_status <> 'draft' then v_fail := v_fail+1; raise warning 'draft was resettled to %', v_status; end if;
+  end;
+
+  if v_fail > 0 then raise exception '% money-path assertions failed', v_fail; end if;
+  raise notice 'money mutations passed';
+end $$;
+SQL
+echo "  money paths verified"
