@@ -1,10 +1,10 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { addDemoCustomer, addDemoProperty } from "../demo/added";
+import { addDemoCustomer, addDemoJob, addDemoProperty } from "../demo/added";
 import { toCustomer, toProperty } from "./mappers";
 import type { Customer, Property } from "./types";
-import type { CustomerInput, PropertyInput } from "./validate";
+import type { CustomerInput, JobInput, PropertyInput } from "./validate";
 
 /**
  * Operator-driven writes — the counterpart to Repository, which reads.
@@ -24,6 +24,26 @@ export interface OpsStore {
   createCustomer(input: CustomerInput): Promise<Customer>;
   updateCustomer(id: string, input: CustomerInput): Promise<Customer>;
   createProperty(input: PropertyInput): Promise<Property>;
+  /**
+   * Book a clean. The caller supplies the priced job because pricing needs the
+   * property's rooms, which is a read — see bookJob() in the action.
+   */
+  createJob(input: PricedJob): Promise<void>;
+}
+
+/**
+ * A booking with its price resolved.
+ *
+ * The price is not part of JobInput and never comes from the form: it is
+ * computed from the price book and the property's stored room counts, so a
+ * browser cannot post its own total. Keeping the priced shape separate from the
+ * parsed shape is what makes that impossible to forget.
+ */
+export interface PricedJob {
+  input: JobInput;
+  customerId: string;
+  priceCents: number;
+  estimatedCleanMinutes: number;
 }
 
 /** The domain shape as columns. One place to keep the mapping honest. */
@@ -95,6 +115,23 @@ export class SupabaseOpsStore implements OpsStore {
     if (error) throw new Error(`createProperty: ${error.message}`);
     return toProperty(data as unknown as Record<string, unknown>);
   }
+
+  async createJob(job: PricedJob): Promise<void> {
+    const { error } = await this.db.from("jobs").insert({
+      customer_id: job.customerId,
+      property_id: job.input.propertyId,
+      // A job with no slot yet is 'unscheduled', which is what the dispatch
+      // board's working set filters on — not a placeholder for a missing date.
+      status: job.input.scheduledStart ? "scheduled" : "unscheduled",
+      service: job.input.service,
+      freq: job.input.frequency,
+      scheduled_start: job.input.scheduledStart?.toISOString() ?? null,
+      price_cents: job.priceCents,
+      estimated_clean_minutes: job.estimatedCleanMinutes,
+      notes: job.input.notes,
+    });
+    if (error) throw new Error(`createJob: ${error.message}`);
+  }
 }
 
 /**
@@ -116,5 +153,9 @@ export class DemoOpsStore implements OpsStore {
 
   async createProperty(input: PropertyInput): Promise<Property> {
     return addDemoProperty(input);
+  }
+
+  async createJob(job: PricedJob): Promise<void> {
+    addDemoJob(job);
   }
 }

@@ -12,6 +12,15 @@
  * nobody fills in twice.
  */
 
+import {
+  FREQUENCIES,
+  FREQUENCY_LABELS,
+  SERVICE_LABELS,
+  SERVICE_TYPES,
+  frequenciesForService,
+  type Frequency,
+  type ServiceType,
+} from "../pricing/price-book";
 import type { RoomCounts } from "../pricing/quote";
 
 export type Fields = Record<string, string | undefined>;
@@ -39,6 +48,15 @@ export interface PropertyInput {
   accessNotes: string | null;
   parkingNotes: string | null;
   pets: string | null;
+}
+
+export interface JobInput {
+  propertyId: string;
+  service: ServiceType;
+  frequency: Frequency;
+  /** Null books the job onto the board unscheduled, which is a real state. */
+  scheduledStart: Date | null;
+  notes: string | null;
 }
 
 /** Long enough for any real value, short enough to reject a paste of a novel. */
@@ -183,4 +201,75 @@ export function parseProperty(fields: Fields): Validated<PropertyInput> {
       pets: optionalText(fields, "pets"),
     },
   };
+}
+
+/**
+ * A booking.
+ *
+ * The service/frequency pair is checked against the price book rather than
+ * against a list written here: Deep is one-time/monthly only and Move In/Out is
+ * one-time only, and `frequenciesForService` is the same function the quote
+ * builder uses to populate its dropdown. One source for the rule means the form
+ * and the server cannot drift into disagreeing about what is sellable.
+ *
+ * Note what is NOT here: the price. It is computed server-side from the price
+ * book and the property's stored room counts, never accepted from the form.
+ */
+export function parseJob(fields: Fields): Validated<JobInput> {
+  const errors: Record<string, string> = {};
+
+  const propertyId = text(fields, "propertyId");
+  if (propertyId === "") errors["propertyId"] = "Choose a property.";
+
+  const serviceRaw = text(fields, "service");
+  const service = SERVICE_TYPES.find((s) => s === serviceRaw);
+  if (!service) errors["service"] = "Choose a service.";
+
+  const frequencyRaw = text(fields, "frequency");
+  const frequency = FREQUENCIES.find((f) => f === frequencyRaw);
+  if (!frequency) errors["frequency"] = "Choose a frequency.";
+
+  if (service && frequency && !frequenciesForService(service).includes(frequency)) {
+    errors["frequency"] = `${SERVICE_LABELS[service]} is not sold ${FREQUENCY_LABELS[
+      frequency
+    ].toLowerCase()}.`;
+  }
+
+  const scheduledStart = parseWhen(fields, errors);
+
+  const notes = optionalText(fields, "notes");
+  if (notes !== null && notes.length > MAX_NOTE) errors["notes"] = "Too long.";
+
+  if (Object.keys(errors).length > 0) return { ok: false, errors };
+  return {
+    ok: true,
+    // The finds above are what narrow these; the guard is for the type checker.
+    value: {
+      propertyId,
+      service: service as ServiceType,
+      frequency: frequency as Frequency,
+      scheduledStart,
+      notes,
+    },
+  };
+}
+
+/**
+ * The scheduled start, from a datetime-local input.
+ *
+ * Empty is allowed and means unscheduled — a job can sit on the board before it
+ * has a slot, which is exactly what the dispatch board is for. A value that is
+ * present but unparseable is an error rather than a silent null, because
+ * silently unscheduling a job somebody just scheduled is worse than refusing.
+ */
+function parseWhen(fields: Fields, errors: Record<string, string>): Date | null {
+  const raw = text(fields, "scheduledStart");
+  if (raw === "") return null;
+
+  const when = new Date(raw);
+  if (Number.isNaN(when.getTime())) {
+    errors["scheduledStart"] = "That is not a valid date and time.";
+    return null;
+  }
+  return when;
 }

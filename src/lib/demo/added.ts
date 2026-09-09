@@ -1,4 +1,5 @@
-import type { Customer, Property } from "../data/types";
+import type { PricedJob } from "../data/ops-store";
+import type { Customer, Job, Property } from "../data/types";
 import type { CustomerInput, PropertyInput } from "../data/validate";
 
 /**
@@ -14,6 +15,7 @@ import type { CustomerInput, PropertyInput } from "../data/validate";
  */
 const customers: Customer[] = [];
 const properties: Property[] = [];
+const jobs: Job[] = [];
 
 let counter = 0;
 
@@ -65,8 +67,47 @@ export function addDemoProperty(input: PropertyInput): Property {
   return property;
 }
 
+/**
+ * A booked job, in the shape the dispatch board reads.
+ *
+ * The board works from Job (which extends DispatchJob), so a demo booking has
+ * to carry the same fields a real row would — the ZIP and the estimated minutes
+ * especially, since routing and the offer ladder are computed from them. Denormalising
+ * the address and customer name here mirrors what the Supabase repository does
+ * with its embedded selects.
+ */
+export function addDemoJob(priced: PricedJob): Job {
+  const property = properties.find((p) => p.id === priced.input.propertyId);
+  const customer = customers.find((c) => c.id === priced.customerId);
+
+  const job: Job = {
+    id: nextId("job"),
+    customerId: priced.customerId,
+    customerName: customer ? `${customer.firstName} ${customer.lastName}` : "Customer",
+    propertyId: priced.input.propertyId,
+    street: property?.street ?? "",
+    city: property?.city ?? "",
+    zip: property?.zip ?? "",
+    service: priced.input.service,
+    frequency: priced.input.frequency,
+    bedrooms: property?.rooms.bedrooms ?? 0,
+    bathrooms: property?.rooms.bathrooms ?? 0,
+    status: priced.input.scheduledStart ? "scheduled" : "unscheduled",
+    scheduledStart: priced.input.scheduledStart,
+    priceCents: priced.priceCents,
+    estimatedCleanMinutes: priced.estimatedCleanMinutes,
+  };
+
+  jobs.push(job);
+  return job;
+}
+
 export function demoCustomers(): readonly Customer[] {
   return customers;
+}
+
+export function demoJobs(): readonly Job[] {
+  return jobs;
 }
 
 export function demoProperties(): readonly Property[] {

@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getOpsStore, getRepository } from "@/lib/data";
-import { parseCustomer, parseProperty, type Fields } from "@/lib/data/validate";
+import { parseCustomer, parseJob, parseProperty, type Fields } from "@/lib/data/validate";
+import { PriceBookError, buildQuote } from "@/lib/pricing/quote";
 
 /**
  * Server actions for the customer surfaces.
@@ -116,6 +117,68 @@ export async function createProperty(
 
   revalidatePath(`/admin/customers/${customerId}`);
   return { message: "Property added." };
+}
+
+/**
+ * Book a clean.
+ *
+ * The price is computed here, not accepted from the form. buildQuote is given
+ * the property's STORED room counts, so what the customer is charged comes from
+ * the price book and the record — a total posted by the browser is a total the
+ * browser could have edited. It also means the ticket price and the estimated
+ * minutes the dispatch engine reasons about come from the same call, and cannot
+ * disagree.
+ */
+export async function bookJob(
+  customerId: string,
+  _prev: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
+  const fields = fieldsOf(form);
+  const parsed = parseJob(fields);
+  if (!parsed.ok) return { errors: parsed.errors, values: fields };
+
+  const repo = await getRepository();
+  const property = await repo.getProperty(parsed.value.propertyId);
+  // RLS returns nothing for a property that is not readable, so this covers
+  // both "no such property" and "not yours".
+  if (!property || property.customerId !== customerId) {
+    return { errors: { propertyId: "That property could not be found." }, values: fields };
+  }
+
+  let priceCents: number;
+  let estimatedCleanMinutes: number;
+  try {
+    const quote = buildQuote(parsed.value.service, parsed.value.frequency, property.rooms);
+    priceCents = quote.totalCents;
+    estimatedCleanMinutes = quote.estimatedMinutes;
+  } catch (error) {
+    // parseJob already rejects a pair the price book does not sell; this is the
+    // backstop for anything else the price book refuses to quote, and it must
+    // never fall through to booking a job at $0.
+    if (error instanceof PriceBookError) {
+      return { errors: { frequency: error.message }, values: fields };
+    }
+    return { message: messageOf(error), values: fields };
+  }
+
+  try {
+    await (await getOpsStore()).createJob({
+      input: parsed.value,
+      customerId,
+      priceCents,
+      estimatedCleanMinutes,
+    });
+  } catch (error) {
+    return { message: messageOf(error), values: fields };
+  }
+
+  revalidatePath(`/admin/customers/${customerId}`);
+  revalidatePath("/admin/dispatch");
+  return { message: "Clean booked." };
 }
 
 /**

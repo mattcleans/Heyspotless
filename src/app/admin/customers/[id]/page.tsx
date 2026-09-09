@@ -4,6 +4,8 @@ import { PageHeader, Pill, Stat } from "@/components/ui";
 import { getRepository } from "@/lib/data";
 import { formatPhone, formatRooms } from "@/lib/format";
 import { formatCents } from "@/lib/money";
+import { FREQUENCY_LABELS, SERVICE_LABELS } from "@/lib/pricing/price-book";
+import { BookingForm } from "../booking-form";
 import { CustomerForm } from "../customer-form";
 import { PropertyForm } from "../property-form";
 
@@ -16,7 +18,10 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
   const customer = await repo.getCustomer(id);
   if (!customer) notFound();
 
-  const properties = await repo.listProperties(id);
+  const [properties, jobs] = await Promise.all([
+    repo.listProperties(id),
+    repo.listJobs({ customerId: id }),
+  ]);
 
   return (
     <>
@@ -35,6 +40,11 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
           label="Properties"
           value={String(properties.length)}
           note={properties.length === 0 ? "Add one before quoting." : "Quotable addresses."}
+        />
+        <Stat
+          label="Cleans booked"
+          value={String(jobs.length)}
+          note={jobs.length === 0 ? "Nothing on the board yet." : "Visible on dispatch."}
         />
       </div>
 
@@ -74,6 +84,55 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
           </ul>
         )}
       </section>
+
+      <section className="mb-8">
+        <h2 className="mb-3 text-sm font-semibold text-ink">Cleans</h2>
+
+        {jobs.length === 0 ? (
+          <div className="card p-6 text-center text-sm text-ink-3">
+            Nothing booked yet.
+          </div>
+        ) : (
+          <ul className="space-y-2">
+            {jobs.map((job) => (
+              <li key={job.id} className="card flex items-center justify-between gap-4 p-4">
+                <div>
+                  <p className="font-medium text-ink">
+                    {SERVICE_LABELS[job.service]} · {FREQUENCY_LABELS[job.frequency]}
+                  </p>
+                  <p className="mt-0.5 text-sm text-ink-3">
+                    {job.street}
+                    {job.scheduledStart
+                      ? ` · ${job.scheduledStart.toLocaleString("en-US", {
+                          weekday: "short",
+                          month: "short",
+                          day: "numeric",
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })}`
+                      : " · unscheduled"}
+                  </p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Pill tone={job.status === "unscheduled" ? "warn" : "sky"}>{job.status}</Pill>
+                  <span className="nums font-semibold text-navy">
+                    {formatCents(job.priceCents)}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {properties.length > 0 ? (
+        <section className="mb-8">
+          <h2 className="mb-3 text-sm font-semibold text-ink">Book a clean</h2>
+          <div className="card p-5">
+            <BookingForm customerId={customer.id} properties={properties} />
+          </div>
+        </section>
+      ) : null}
 
       <section className="mb-8">
         <h2 className="mb-3 text-sm font-semibold text-ink">Add a property</h2>

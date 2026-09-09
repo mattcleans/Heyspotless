@@ -99,6 +99,56 @@ export function TextArea({
   );
 }
 
+export function Select({
+  name,
+  label,
+  options,
+  errors,
+  hint,
+  value,
+  onChange,
+  defaultValue,
+}: {
+  name: string;
+  label: string;
+  options: readonly { value: string; label: string }[];
+  errors?: Errors;
+  hint?: string;
+  /** Controlled when given — the service picker narrows the frequency picker. */
+  value?: string;
+  onChange?: (value: string) => void;
+  defaultValue?: string;
+}) {
+  const error = errors?.[name];
+  return (
+    <label className="block">
+      <span className="text-xs text-ink-2">{label}</span>
+      <select
+        name={name}
+        value={value}
+        defaultValue={value === undefined ? defaultValue : undefined}
+        onChange={onChange ? (e) => onChange(e.target.value) : undefined}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? `${name}-error` : undefined}
+        className={`${INPUT} ${error ? "border-bad" : "border-line"}`}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+      {error ? (
+        <span id={`${name}-error`} className="mt-1 block text-xs text-bad">
+          {error}
+        </span>
+      ) : hint ? (
+        <span className="mt-1 block text-xs text-ink-3">{hint}</span>
+      ) : null}
+    </label>
+  );
+}
+
 export function SubmitButton({ children }: { children: ReactNode }) {
   return (
     <button

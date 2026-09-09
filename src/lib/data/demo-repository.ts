@@ -5,7 +5,7 @@
  * reviewable and demoable, and it is what the 148 engine tests exercise.
  */
 
-import { demoCustomers, demoProperties } from "../demo/added";
+import { demoCustomers, demoJobs, demoProperties } from "../demo/added";
 import {
   DEMO_CLEANERS,
   DEMO_INVOICES,
@@ -73,7 +73,9 @@ export class DemoRepository implements Repository {
   readonly isDemo = true;
 
   async listJobs(filter: JobFilter = {}): Promise<Job[]> {
-    let jobs = DEMO_JOBS.map(toJob);
+    // Booked first, so a job someone has just created is visible without
+    // scrolling past the fixtures.
+    let jobs = [...demoJobs()].reverse().concat(DEMO_JOBS.map(toJob));
     if (filter.customerId) jobs = jobs.filter((j) => j.customerId === filter.customerId);
     // Demo mode has no assignments table; every job is visible to the one
     // cleaner the demo signs in as.
