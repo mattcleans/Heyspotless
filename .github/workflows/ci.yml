@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to a PR makes the first run irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Typecheck, lint, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm run lint
+
+      # The pricing and dispatch suites. These assert against figures published
+      # independently of this code, so a failure here means the code and the
+      # pricelist have drifted apart.
+      - run: npm test
+
+      # Demo mode is already the default with no Supabase config, but say it
+      # explicitly so the build cannot start depending on real credentials.
+      - run: npm run build
+        env:
+          DEMO_MODE: "1"
+
+  migrations:
+    name: Migrations and SQL price book
+    runs-on: ubuntu-latest
+
+    # The other half of the drift check: all 27 quote totals are asserted in
+    # SQL as well as in TypeScript, so the two implementations cannot diverge
+    # silently. See docs/decisions.md.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The runner image ships a psql client, but not necessarily one matching
+      # the server. Install the v16 client so migrations apply against 16.
+      - name: Install PostgreSQL 16 client
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql-client-16
+
+      - run: ./scripts/verify-migrations.sh
