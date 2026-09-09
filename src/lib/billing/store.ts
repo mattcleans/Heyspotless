@@ -6,6 +6,13 @@ import type { BillingTransition } from "./events";
 import { toInvoice } from "../data/mappers";
 
 /**
+ * How long an unfinished claim must sit before another delivery may take it
+ * over. Comfortably above the webhook route's `maxDuration` of 60s, so a
+ * handler that is merely slow is never treated as abandoned.
+ */
+const ABANDONED_CLAIM_MS = 5 * 60_000;
+
+/**
  * Every write to the money tables.
  *
  * Separate from Repository on purpose: that is a read boundary for rendering
@@ -28,6 +35,13 @@ export class BillingStore {
    * The insert IS the lock: `stripe_events.id` is the primary key, so a
    * concurrent duplicate delivery loses the race with a unique violation rather
    * than both handlers proceeding. Postgres reports that as 23505.
+   *
+   * A losing insert is not automatically a duplicate, though. `releaseEvent`
+   * gives the claim back when the handler THROWS, but a hard kill or a function
+   * timeout leaves the row behind with `processed_at` still null — and then
+   * every Stripe retry would be waved through as a duplicate and the payment
+   * never applied, while Stripe holds the money. So an unfinished claim old
+   * enough that no handler could still be running is taken over instead.
    */
   async claimEvent(id: string, type: string, payload: unknown): Promise<boolean> {
     const { error } = await this.db
@@ -35,8 +49,33 @@ export class BillingStore {
       .insert({ id, type, payload });
 
     if (!error) return true;
-    if (error.code === "23505") return false;
-    throw new Error(`claimEvent: ${error.message}`);
+    if (error.code !== "23505") throw new Error(`claimEvent: ${error.message}`);
+
+    return this.reclaimAbandonedEvent(id, type);
+  }
+
+  /**
+   * Take over a claim whose handler died before finishing it.
+   *
+   * Touching `received_at` is what makes this a claim rather than a read: the
+   * predicated UPDATE serialises, so a second delivery arriving alongside this
+   * one re-evaluates after it commits, sees a fresh timestamp, and correctly
+   * reports a duplicate. Two reclaims would be safe anyway — `record_payment`
+   * is idempotent on the payment intent — but one is the point.
+   */
+  private async reclaimAbandonedEvent(id: string, type: string): Promise<boolean> {
+    const cutoff = new Date(Date.now() - ABANDONED_CLAIM_MS).toISOString();
+
+    const { data, error } = await this.db
+      .from("stripe_events")
+      .update({ received_at: new Date().toISOString(), type })
+      .eq("id", id)
+      .is("processed_at", null)
+      .lt("received_at", cutoff)
+      .select("id");
+
+    if (error) throw new Error(`claimEvent reclaim: ${error.message}`);
+    return (data ?? []).length > 0;
   }
 
   /**
@@ -179,6 +218,14 @@ export class BillingStore {
    * Mirror a card Stripe has attached. The first card a customer saves becomes
    * their default, so someone who has just added a card and switched autopay on
    * is chargeable without a second, invisible step.
+   *
+   * "First" means first OTHER than this one. Stripe redelivers
+   * `setup_intent.succeeded`, so this runs again for cards already on file; a
+   * query that counted the card itself would conclude "not first" and the upsert
+   * below would write `is_default: false` over the customer's only default.
+   * They would still have a saved card, autopay would still read as on, and
+   * `listAutochargeCandidates` — which filters `is_default` — would quietly stop
+   * charging them.
    */
   async saveCard(
     customerId: string,
@@ -195,6 +242,7 @@ export class BillingStore {
       .select("id")
       .eq("customer_id", customerId)
       .is("detached_at", null)
+      .neq("stripe_payment_method_id", card.paymentMethodId)
       .limit(1);
     if (existing.error) throw new Error(`saveCard: ${existing.error.message}`);
 
