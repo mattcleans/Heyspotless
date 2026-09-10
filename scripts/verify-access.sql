@@ -86,7 +86,28 @@ values ('70000000-0000-0000-0000-000000000001', '50000000-0000-0000-0000-0000000
         now() + interval '1 hour');
 insert into invoices (id, customer_id, status, subtotal_cents, total_cents)
 values ('10000000-0000-0000-0000-000000000001', '30000000-0000-0000-0000-000000000001',
+        'sent', 17000, 17000),
+       ('10000000-0000-0000-0000-000000000002', '30000000-0000-0000-0000-000000000002',
         'sent', 17000, 17000);
+
+-- One of each new row per customer, so "sees their own" and "does not see
+-- the other's" are both real assertions rather than half of one.
+insert into invoice_adjustments (id, invoice_id, amount_cents, reason) values
+  ('80000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001',
+   2000, 'goodwill'),
+  ('80000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002',
+   2000, 'goodwill');
+-- Inserted directly for the fixed ids the visibility checks need, so the
+-- invoice's own total has to be kept in step by hand; record_invoice_credit
+-- is what does both in the application.
+update invoices set credit_cents = 2000
+where id in ('10000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000002');
+insert into payment_operations (id, invoice_id, channel, idempotency_key, amount_cents, expires_at)
+values
+  ('90000000-0000-0000-0000-000000000001', '10000000-0000-0000-0000-000000000001',
+   'checkout', 'verify-access-a', 17000, now() + interval '1 hour'),
+  ('90000000-0000-0000-0000-000000000002', '10000000-0000-0000-0000-000000000002',
+   'checkout', 'verify-access-b', 17000, now() + interval '1 hour');
 
 set local role anon;
 select verify_access.expect_billing_denied();
@@ -109,6 +130,40 @@ begin
   if exists (select 1 from jobs where id = '50000000-0000-0000-0000-000000000002') then
     raise exception 'customer saw another customer''s open-board job';
   end if;
+
+  -- The tables added since 0007 need the same treatment. A credit explains
+  -- why an invoice reads as settled, and a collection attempt explains why
+  -- the Pay button is refusing — both are the customer's own business and
+  -- nobody else's.
+  if not exists (select 1 from invoice_adjustments
+                 where id = '80000000-0000-0000-0000-000000000001') then
+    raise exception 'customer cannot see the credit on their own invoice';
+  end if;
+  if exists (select 1 from invoice_adjustments
+             where id = '80000000-0000-0000-0000-000000000002') then
+    raise exception 'customer saw a credit on another customer''s invoice';
+  end if;
+  if not exists (select 1 from payment_operations
+                 where id = '90000000-0000-0000-0000-000000000001') then
+    raise exception 'customer cannot see their own collection attempt';
+  end if;
+  if exists (select 1 from payment_operations
+             where id = '90000000-0000-0000-0000-000000000002') then
+    raise exception 'customer saw another customer''s collection attempt';
+  end if;
+
+  -- And writing them is a server act, never a client one: a customer who
+  -- could insert a credit could settle their own invoice for nothing.
+  begin
+    insert into invoice_adjustments (invoice_id, amount_cents)
+    values ('10000000-0000-0000-0000-000000000001', 17000);
+    raise exception 'customer wrote a credit against their own invoice';
+  exception when insufficient_privilege then null; end;
+  begin
+    update payment_operations set state = 'failed'
+    where id = '90000000-0000-0000-0000-000000000001';
+    if found then raise exception 'customer resolved their own collection attempt'; end if;
+  exception when insufficient_privilege then null; end;
 end $$;
 
 select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000003', true);
@@ -151,7 +206,8 @@ reset role;
 set local role service_role;
 select set_config('request.jwt.claim.sub', '', true);
 do $$
-declare signature text; payment_id uuid;
+declare signature text; payment_id uuid; v_owner uuid := gen_random_uuid();
+        v_outcome text;
 begin
   foreach signature in array array[
     'record_payment(uuid,integer,integer,text,text,text,boolean,text)',
@@ -179,8 +235,43 @@ begin
                                0, 'pi_access_test');
   if payment_id is null or not exists (
     select 1 from invoices where id = '10000000-0000-0000-0000-000000000001'
-      and amount_paid_cents = 17000 and status = 'paid'
+      and amount_paid_cents = 17000 and balance_cents = -2000
   ) then raise exception 'server payment did not settle the invoice'; end if;
+
+  -- Everything added since 0007 has to work for the server as well as be
+  -- shut to everyone else. Locking clients out of a routine the server then
+  -- cannot call is the same outage by a different route.
+  if record_refund('pi_access_test', 5000, 're_access_test', null, 'goodwill test',
+                   'goodwill') is null then
+    raise exception 'server could not record a refund';
+  end if;
+  if not exists (select 1 from invoices where id = '10000000-0000-0000-0000-000000000001'
+                 and refunded_cents = 5000 and credit_cents = 7000) then
+    raise exception 'the server refund did not raise its matching credit';
+  end if;
+
+  if save_payment_method('30000000-0000-0000-0000-000000000001', 'pm_access_ok',
+                         'visa', '4242', 1, 2030) is not true then
+    raise exception 'server could not save a first card as the default';
+  end if;
+  if detach_payment_method('pm_access_ok') is not null then
+    raise exception 'detaching the only card reported a successor';
+  end if;
+
+  if claim_stripe_event('evt_access_ok', 'payment_intent.succeeded', '{}'::jsonb,
+                        v_owner) <> 'claimed' then
+    raise exception 'server could not claim a webhook event';
+  end if;
+  if not finish_stripe_event('evt_access_ok', v_owner, 'applied') then
+    raise exception 'server could not finish the event it claimed';
+  end if;
+
+  select outcome into v_outcome
+  from begin_payment_operation('10000000-0000-0000-0000-000000000002', 'checkout',
+                               'verify-access-b', 17000);
+  if v_outcome <> 'existing' then
+    raise exception 'server saw % for an attempt already open, want existing', v_outcome;
+  end if;
 end $$;
 reset role;
 
