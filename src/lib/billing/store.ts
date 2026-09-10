@@ -312,6 +312,33 @@ export class BillingStore {
     return data === true;
   }
 
+  /**
+   * Close a failed attempt by the Stripe object it was made against.
+   *
+   * Only ever called when Stripe has told us the attempt is over. An attempt
+   * whose outcome we never learned must stay open — that is what stops the
+   * next collection taking the same money.
+   */
+  async resolvePaymentOperationByRef(
+    invoiceId: string,
+    ref: string,
+    errorMessage?: string | null,
+  ): Promise<boolean> {
+    const { data, error } = await this.db
+      .from("payment_operations")
+      .update({
+        state: "failed",
+        resolved_at: new Date().toISOString(),
+        last_error: errorMessage ?? null,
+      })
+      .eq("invoice_id", invoiceId)
+      .eq("stripe_object_id", ref)
+      .eq("state", "open")
+      .select("id");
+    if (error) throw new Error(`resolvePaymentOperationByRef: ${error.message}`);
+    return (data ?? []).length > 0;
+  }
+
   /** Close whatever attempt a settled payment belongs to, by Stripe object. */
   async settlePaymentOperationByRef(invoiceId: string, ref: string | null): Promise<boolean> {
     if (!ref) return false;

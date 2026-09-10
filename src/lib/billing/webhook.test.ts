@@ -35,6 +35,7 @@ interface Harness {
     refundKinds: string[];
     settlements: string[];
     settledOperations: string[];
+    failedOperations: string[];
   };
   /** Expire the lease on an event, as a dead handler's would. */
   expireLease(id: string): void;
@@ -49,6 +50,7 @@ function harness(
     refundKinds: [] as string[],
     settlements: [] as string[],
     settledOperations: [] as string[],
+    failedOperations: [] as string[],
   };
   const now = options.now ?? (() => Date.now());
   const LEASE_MS = 300_000;
@@ -117,6 +119,10 @@ function harness(
       return true;
     },
     async recordPaymentFailure(): Promise<void> {},
+    async resolvePaymentOperationByRef(_invoiceId: string, ref: string): Promise<boolean> {
+      recorded.failedOperations.push(ref);
+      return true;
+    },
     async findCustomerIdByStripeId(): Promise<string | null> {
       return "cus-1";
     },
@@ -380,5 +386,27 @@ describe("refunds arriving through the webhook", () => {
 
     expect(result.body).toEqual({ received: true, outcome: "refund_succeeded" });
     expect(h.recorded.settlements).toEqual(["succeeded"]);
+  });
+});
+
+describe("a declined payment", () => {
+  it("closes its attempt instead of holding the invoice until the lease runs out", async () => {
+    // Stripe has told us this one is over. That is an OUTCOME — the case
+    // that must stay open is the one where we never heard back at all.
+    const h = harness();
+    const result = await handleStripeEvent(h.store, {
+      id: "evt_fail",
+      type: "payment_intent.payment_failed",
+      data: {
+        object: {
+          id: "pi_1",
+          metadata: { invoice_id: "inv-1" },
+          last_payment_error: { code: "card_declined", message: "Your card was declined." },
+        },
+      },
+    });
+
+    expect(result.status).toBe(200);
+    expect(h.recorded.failedOperations).toEqual(["pi_1"]);
   });
 });

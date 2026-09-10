@@ -138,9 +138,21 @@ async function apply(store: BillingStore, transition: BillingTransition): Promis
       return paymentId ? "applied" : "already_recorded";
     }
 
-    case "payment_failed":
+    case "payment_failed": {
       await store.recordPaymentFailure(transition.invoiceId, transition.failureMessage);
+      // Stripe has told us this one is over, so close the attempt now rather
+      // than holding the invoice until the operation's TTL runs out. This IS
+      // an outcome — the case that must stay open is the one where we never
+      // heard back at all.
+      if (transition.paymentIntentId) {
+        await store.resolvePaymentOperationByRef(
+          transition.invoiceId,
+          transition.paymentIntentId,
+          transition.failureMessage,
+        );
+      }
       return "applied";
+    }
 
     case "card_saved": {
       const customerId = await store.findCustomerIdByStripeId(transition.stripeCustomerId);
