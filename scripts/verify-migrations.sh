@@ -313,6 +313,161 @@ end $$;
 SQL
 echo "  business calendar verified"
 
+# --- saved cards (0009) ------------------------------------------------------
+# The replay case that the first attempt at this fix got wrong: with TWO cards
+# on file, redelivering the DEFAULT card's attach event used to clear its own
+# default flag, leaving a customer with saved cards, autopay on, and nothing
+# for the sweep to charge.
+echo "  checking saved cards"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_other uuid; v_default text; v_fail integer := 0;
+  v_is_default boolean; v_count integer;
+begin
+  insert into customers (first_name, last_name, autopay_enabled, autopay_authorized_at)
+    values ('Cards','Onfile', true, now()) returning id into v_cust;
+
+  -- The first card becomes the default, so a customer who has just added one
+  -- and switched autopay on is chargeable with no second, invisible step.
+  if save_payment_method(v_cust, 'pm_a', 'visa', '4242', 12, 2030) is not true then
+    v_fail := v_fail+1; raise warning 'the first card did not become the default'; end if;
+
+  -- The second does not steal the position.
+  if save_payment_method(v_cust, 'pm_b', 'visa', '1881', 1, 2031) is not false then
+    v_fail := v_fail+1; raise warning 'the second card took the default'; end if;
+
+  -- THE BUG. Stripe redelivers A's attach event. A must stay default.
+  if save_payment_method(v_cust, 'pm_a', 'visa', '4242', 12, 2030) is not true then
+    v_fail := v_fail+1; raise warning 'replaying the default card cleared its default'; end if;
+  select is_default into v_is_default from payment_methods where stripe_payment_method_id = 'pm_a';
+  if not v_is_default then v_fail := v_fail+1;
+    raise warning 'card A is no longer the default after its own replay'; end if;
+
+  -- Replaying the NON-default card must not promote it either.
+  if save_payment_method(v_cust, 'pm_b', 'visa', '1881', 1, 2031) is not false then
+    v_fail := v_fail+1; raise warning 'replaying the non-default card promoted it'; end if;
+
+  -- Exactly one default, always.
+  select count(*) into v_count from payment_methods
+    where customer_id = v_cust and is_default and detached_at is null;
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'expected exactly one default card, found %', v_count; end if;
+
+  -- A metadata update (a card re-issued with a new expiry) keeps the default
+  -- and actually updates the metadata.
+  perform save_payment_method(v_cust, 'pm_a', 'visa', '4242', 6, 2032);
+  select is_default into v_is_default from payment_methods where stripe_payment_method_id = 'pm_a';
+  if not v_is_default then v_fail := v_fail+1;
+    raise warning 'a metadata update cleared the default'; end if;
+  if not exists (select 1 from payment_methods
+                 where stripe_payment_method_id = 'pm_a' and exp_year = 2032) then
+    v_fail := v_fail+1; raise warning 'the metadata update did not apply'; end if;
+
+  -- Detaching the default promotes the remaining card rather than leaving
+  -- the customer unchargeable.
+  v_default := detach_payment_method('pm_a');
+  if v_default is distinct from 'pm_b' then v_fail := v_fail+1;
+    raise warning 'detaching the default promoted % instead of pm_b', v_default; end if;
+  if exists (select 1 from payment_methods
+             where stripe_payment_method_id = 'pm_a' and detached_at is null) then
+    v_fail := v_fail+1; raise warning 'the detached card is still active'; end if;
+
+  -- Replacement: a new card arrives while B holds the default. B keeps it.
+  if save_payment_method(v_cust, 'pm_c', 'amex', '0005', 3, 2033) is not false then
+    v_fail := v_fail+1; raise warning 'a replacement card seized the default'; end if;
+
+  -- Re-attaching a previously detached card does not seize the default back.
+  if save_payment_method(v_cust, 'pm_a', 'visa', '4242', 6, 2032) is not false then
+    v_fail := v_fail+1; raise warning 're-attaching an old card seized the default'; end if;
+
+  -- Detaching a NON-default card leaves the default where it is.
+  v_default := detach_payment_method('pm_c');
+  if v_default is distinct from 'pm_b' then v_fail := v_fail+1;
+    raise warning 'detaching a non-default card moved the default to %', v_default; end if;
+
+  -- Detaching an unknown card is a no-op, not an error.
+  if detach_payment_method('pm_never_seen') is not null then
+    v_fail := v_fail+1; raise warning 'detaching an unmirrored card returned a default'; end if;
+
+  -- THE LAST CARD. Autopay is suspended and SAID SO, rather than silently
+  -- becoming unusable. Consent is deliberately kept.
+  perform detach_payment_method('pm_b');
+  perform detach_payment_method('pm_a');
+  if exists (select 1 from payment_methods
+             where customer_id = v_cust and detached_at is null) then
+    v_fail := v_fail+1; raise warning 'a card survived detaching them all'; end if;
+  if not exists (select 1 from customers where id = v_cust
+                 and autopay_suspended_at is not null
+                 and autopay_enabled and autopay_authorized_at is not null) then
+    v_fail := v_fail+1;
+    raise warning 'removing the last card did not suspend autopay, or dropped consent'; end if;
+
+  -- And saving a card resumes it without asking for consent again.
+  perform save_payment_method(v_cust, 'pm_d', 'visa', '4444', 9, 2034);
+  if exists (select 1 from customers where id = v_cust and autopay_suspended_at is not null) then
+    v_fail := v_fail+1; raise warning 'a new card did not lift the suspension'; end if;
+
+  -- A card moving to a different customer keeps that customer''s default
+  -- arrangement intact rather than inheriting the old one''s.
+  insert into customers (first_name, last_name) values ('Second','Customer')
+    returning id into v_other;
+  perform save_payment_method(v_other, 'pm_e', 'visa', '7777', 4, 2035);
+  select count(*) into v_count from payment_methods
+    where customer_id = v_other and is_default and detached_at is null;
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'a second customer ended up with % defaults', v_count; end if;
+
+  if v_fail > 0 then raise exception '% saved-card assertions failed', v_fail; end if;
+  raise notice 'saved cards passed';
+end $$;
+SQL
+echo "  saved cards verified"
+
+# --- saved cards under concurrency (0009) ------------------------------------
+# The single-session assertions above cannot show that the lock is doing
+# anything. This runs two real connections that overlap: the first holds a
+# transaction open after saving a card, the second saves a different card for
+# the same customer while it is held.
+#
+# With the lock, the second blocks, then sees a default already exists and
+# writes itself non-default. Without it, both read "no default yet", both
+# claim it, and one of two things happens — two defaults, or a unique
+# violation from payment_methods_one_default. Either is a failure here.
+echo "  checking saved cards under concurrent saves"
+CONCURRENT_CUSTOMER=$(as_super $PSQL -d "$DB" -tAc \
+  "insert into customers (first_name, last_name) values ('Concurrent','Save') returning id")
+
+as_super $PSQL -d "$DB" -c "begin;
+  select save_payment_method('$CONCURRENT_CUSTOMER', 'pm_race_a', 'visa', '1111', 1, 2030);
+  select pg_sleep(2);
+  commit;" >/dev/null &
+FIRST_SESSION=$!
+
+# Long enough that the first transaction is certainly holding the row.
+sleep 0.5
+as_super $PSQL -d "$DB" -c \
+  "select save_payment_method('$CONCURRENT_CUSTOMER', 'pm_race_b', 'visa', '2222', 1, 2030);" \
+  >/dev/null
+wait $FIRST_SESSION
+
+as_super $PSQL -d "$DB" <<SQL
+do \$\$
+declare v_defaults integer; v_cards integer;
+begin
+  select count(*) into v_defaults from payment_methods
+    where customer_id = '$CONCURRENT_CUSTOMER' and is_default and detached_at is null;
+  select count(*) into v_cards from payment_methods
+    where customer_id = '$CONCURRENT_CUSTOMER' and detached_at is null;
+  if v_cards <> 2 then
+    raise exception 'concurrent saves stored % cards, want 2', v_cards; end if;
+  if v_defaults <> 1 then
+    raise exception 'concurrent saves left % default cards, want 1', v_defaults; end if;
+  raise notice 'concurrent saves passed';
+end \$\$;
+SQL
+echo "  concurrent saves verified"
+
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql
 echo "  access controls verified"

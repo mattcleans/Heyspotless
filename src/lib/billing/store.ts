@@ -209,23 +209,32 @@ export class BillingStore {
       .update({
         autopay_enabled: enabled,
         autopay_authorized_at: enabled ? new Date().toISOString() : null,
+        // A suspension describes autopay that is on and cannot run. Switching
+        // it off resolves that; switching it on is a fresh start.
+        autopay_suspended_at: null,
+        autopay_suspended_reason: null,
       })
       .eq("id", customerId);
     if (error) throw new Error(`setAutopay: ${error.message}`);
   }
 
   /**
-   * Mirror a card Stripe has attached. The first card a customer saves becomes
-   * their default, so someone who has just added a card and switched autopay on
-   * is chargeable without a second, invisible step.
+   * Mirror a card Stripe has attached.
    *
-   * "First" means first OTHER than this one. Stripe redelivers
-   * `setup_intent.succeeded`, so this runs again for cards already on file; a
-   * query that counted the card itself would conclude "not first" and the upsert
-   * below would write `is_default: false` over the customer's only default.
-   * They would still have a saved card, autopay would still read as on, and
-   * `listAutochargeCandidates` — which filters `is_default` — would quietly stop
-   * charging them.
+   * The decision — whether this card becomes the default — is NOT made here.
+   * It is a read-modify-write across two rows that two webhook deliveries can
+   * enter at once, so it happens in `save_payment_method` (0009) under a lock
+   * on the customer row.
+   *
+   * The previous attempt made it here, by counting the customer's other cards
+   * and writing `is_default = (there are none)`. That is right with one card
+   * on file and wrong with two: replaying the DEFAULT card's attach event —
+   * which Stripe does routinely, for three days — found the other card, judged
+   * this one "not first", and wrote `is_default = false` over the customer's
+   * only default. Saved cards intact, autopay still on, and the sweep silently
+   * charging nobody.
+   *
+   * Returns whether this card is the default after the call.
    */
   async saveCard(
     customerId: string,
@@ -236,41 +245,33 @@ export class BillingStore {
       expMonth: number | null;
       expYear: number | null;
     },
-  ): Promise<void> {
-    const existing = await this.db
-      .from("payment_methods")
-      .select("id")
-      .eq("customer_id", customerId)
-      .is("detached_at", null)
-      .neq("stripe_payment_method_id", card.paymentMethodId)
-      .limit(1);
-    if (existing.error) throw new Error(`saveCard: ${existing.error.message}`);
-
-    const isFirst = (existing.data ?? []).length === 0;
-
-    const { error } = await this.db.from("payment_methods").upsert(
-      {
-        customer_id: customerId,
-        stripe_payment_method_id: card.paymentMethodId,
-        brand: card.brand,
-        last4: card.last4,
-        exp_month: card.expMonth,
-        exp_year: card.expYear,
-        is_default: isFirst,
-        detached_at: null,
-      },
-      { onConflict: "stripe_payment_method_id" },
-    );
+  ): Promise<boolean> {
+    const { data, error } = await this.db.rpc("save_payment_method", {
+      p_customer_id: customerId,
+      p_stripe_payment_method_id: card.paymentMethodId,
+      p_brand: card.brand,
+      p_last4: card.last4,
+      p_exp_month: card.expMonth,
+      p_exp_year: card.expYear,
+    });
     if (error) throw new Error(`saveCard: ${error.message}`);
+    return data === true;
   }
 
-  /** Detached, never deleted: a past payment must still be able to name its card. */
-  async detachCard(stripePaymentMethodId: string): Promise<void> {
-    const { error } = await this.db
-      .from("payment_methods")
-      .update({ detached_at: new Date().toISOString(), is_default: false })
-      .eq("stripe_payment_method_id", stripePaymentMethodId);
+  /**
+   * Detach a card. Detached, never deleted: a past payment must still be able
+   * to name the card it was taken on.
+   *
+   * Returns the Stripe id of whatever is the default afterwards, or null when
+   * the customer has no card left. Removing the last card SUSPENDS autopay
+   * rather than cancelling it — see the policy in 0009.
+   */
+  async detachCard(stripePaymentMethodId: string): Promise<string | null> {
+    const { data, error } = await this.db.rpc("detach_payment_method", {
+      p_stripe_payment_method_id: stripePaymentMethodId,
+    });
     if (error) throw new Error(`detachCard: ${error.message}`);
+    return typeof data === "string" ? data : null;
   }
 
   async setCheckoutSession(invoiceId: string, sessionId: string): Promise<void> {

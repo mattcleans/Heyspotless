@@ -38,6 +38,10 @@ export default async function CustomerPage() {
   const defaultCard = cards.find((c) => c.isDefault) ?? cards[0] ?? null;
   const billingLive = isBillingEnabled();
   const autopayOn = Boolean(customer?.autopayEnabled);
+  // Autopay switched on with nothing to charge. It is a real state — removing
+  // your last card gets you here — and the whole point of recording it is that
+  // the screen can say so instead of quietly showing "On" and charging nobody.
+  const autopaySuspended = autopayOn && customer?.autopaySuspendedAt != null;
 
   return (
     <>
@@ -45,6 +49,16 @@ export default async function CustomerPage() {
         Your upcoming visits, what you owe, and the card we keep on file. Rating a clean feeds
         straight back into who is eligible for future jobs.
       </PageHeader>
+
+      {autopaySuspended ? (
+        <Callout tone="warn" label="Autopay is paused">
+          {customer?.autopaySuspendedReason
+            ? `Autopay is on, but ${customer.autopaySuspendedReason}, so nothing can be charged.`
+            : "Autopay is on, but there is no card on file, so nothing can be charged."}{" "}
+          Save a card below and it resumes straight away — your existing authorisation still
+          stands, so there is nothing to agree to again.
+        </Callout>
+      ) : null}
 
       {!billingLive ? (
         <Callout tone="warn" label="Payments are not live yet">
@@ -72,9 +86,15 @@ export default async function CustomerPage() {
         />
         <Stat
           label="Autopay"
-          value={autopayOn ? "On" : "Off"}
-          tone={autopayOn ? "good" : "default"}
-          note={autopayOn ? "Charged when a clean is invoiced" : "You pay each invoice yourself"}
+          value={autopaySuspended ? "Paused" : autopayOn ? "On" : "Off"}
+          tone={autopaySuspended ? "warn" : autopayOn ? "good" : "default"}
+          note={
+            autopaySuspended
+              ? "Save a card to resume — you will not be asked to opt in again"
+              : autopayOn
+                ? "Charged when a clean is invoiced"
+                : "You pay each invoice yourself"
+          }
         />
       </div>
 

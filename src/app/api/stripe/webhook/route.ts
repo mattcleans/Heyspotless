@@ -92,19 +92,25 @@ async function apply(store: BillingStore, transition: BillingTransition): Promis
     case "card_saved": {
       const customerId = await store.findCustomerIdByStripeId(transition.stripeCustomerId);
       if (!customerId) return "ignored_unknown_customer";
-      await store.saveCard(customerId, {
+      const isDefault = await store.saveCard(customerId, {
         paymentMethodId: transition.paymentMethodId,
         brand: transition.brand,
         last4: transition.last4,
         expMonth: transition.expMonth,
         expYear: transition.expYear,
       });
-      return "applied";
+      // Recorded on the event so the outcome of a replay is legible in
+      // `stripe_events` — "applied_default" on the first delivery and on every
+      // redelivery of the default card, "applied_secondary" for the others.
+      return isDefault ? "applied_default" : "applied_secondary";
     }
 
-    case "card_detached":
-      await store.detachCard(transition.paymentMethodId);
-      return "applied";
+    case "card_detached": {
+      const promoted = await store.detachCard(transition.paymentMethodId);
+      // Whether a successor was found is the interesting half: no successor
+      // means autopay has been suspended, which someone may need to chase.
+      return promoted ? "applied_promoted" : "applied_no_card_left";
+    }
 
     case "refund_succeeded": {
       if (!transition.paymentIntentId) return "ignored_no_payment_intent";

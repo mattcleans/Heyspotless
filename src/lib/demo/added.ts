@@ -43,6 +43,8 @@ export function addDemoCustomer(input: CustomerInput, id?: string): Customer {
     stripeCustomerId: existing?.stripeCustomerId ?? null,
     autopayEnabled: existing?.autopayEnabled ?? false,
     autopayAuthorizedAt: existing?.autopayAuthorizedAt ?? null,
+    autopaySuspendedAt: existing?.autopaySuspendedAt ?? null,
+    autopaySuspendedReason: existing?.autopaySuspendedReason ?? null,
   };
 
   if (existing) customers[customers.indexOf(existing)] = customer;

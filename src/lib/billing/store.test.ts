@@ -132,113 +132,105 @@ describe("claimEvent", () => {
   });
 });
 
-// --- saveCard -------------------------------------------------------------
+// --- cards ----------------------------------------------------------------
 
-interface CardRow {
-  customer_id: string;
-  stripe_payment_method_id: string;
-  is_default: boolean;
-  detached_at: string | null;
+/**
+ * The default-card RULES now live in `save_payment_method` and
+ * `detach_payment_method` (0009), under a lock on the customer row, because
+ * they are a read-modify-write that two webhook deliveries can enter at once.
+ * They are asserted against real Postgres in scripts/verify-migrations.sh —
+ * including the two-card replay that broke the previous fix, detachment,
+ * replacement, and two genuinely concurrent connections.
+ *
+ * Re-implementing those rules in a fake here would only assert that the fake
+ * agrees with itself. What is left to check in TypeScript is the wiring: the
+ * right function, the right arguments, and an honest reading of the result.
+ */
+interface RpcCall {
+  fn: string;
+  args: Record<string, unknown>;
 }
 
-/** A `payment_methods` table with just the columns saveCard touches. */
-function fakeCardDb(rows: CardRow[]): SupabaseClient {
+function fakeRpc(
+  respond: (fn: string, args: Record<string, unknown>) => { data: unknown; error: unknown },
+): { db: SupabaseClient; calls: RpcCall[] } {
+  const calls: RpcCall[] = [];
   const db = {
-    from(table: string) {
-      if (table !== "payment_methods") throw new Error(`unexpected table: ${table}`);
-      return {
-        select() {
-          const filters: ((r: CardRow) => boolean)[] = [];
-          const builder = {
-            eq(col: keyof CardRow, v: unknown) {
-              filters.push((r) => r[col] === v);
-              return builder;
-            },
-            is(col: keyof CardRow, v: unknown) {
-              filters.push((r) => r[col] === v);
-              return builder;
-            },
-            neq(col: keyof CardRow, v: unknown) {
-              filters.push((r) => r[col] !== v);
-              return builder;
-            },
-            limit(n: number) {
-              const matched = rows.filter((r) => filters.every((f) => f(r))).slice(0, n);
-              return Promise.resolve({ data: matched, error: null });
-            },
-          };
-          return builder;
-        },
-
-        upsert(row: Record<string, unknown>) {
-          const pm = row["stripe_payment_method_id"];
-          const existing = rows.find((r) => r.stripe_payment_method_id === pm);
-          if (existing) Object.assign(existing, row);
-          else rows.push(row as unknown as CardRow);
-          return Promise.resolve({ error: null });
-        },
-      };
+    rpc(fn: string, args: Record<string, unknown>) {
+      calls.push({ fn, args });
+      return Promise.resolve(respond(fn, args));
     },
   };
-  return db as unknown as SupabaseClient;
-}
-
-const card = { brand: "visa", last4: "4242", expMonth: 1, expYear: 2030 };
-
-function cardRow(pm: string, isDefault: boolean): CardRow {
-  return {
-    customer_id: "cus-1",
-    stripe_payment_method_id: pm,
-    is_default: isDefault,
-    detached_at: null,
-  };
+  return { db: db as unknown as SupabaseClient, calls };
 }
 
 describe("saveCard", () => {
-  it("makes a customer's first card their default", async () => {
-    const rows: CardRow[] = [];
-    await new BillingStore(fakeCardDb(rows)).saveCard("cus-1", {
+  it("hands the card to save_payment_method with every field Stripe gave us", async () => {
+    const { db, calls } = fakeRpc(() => ({ data: true, error: null }));
+
+    const isDefault = await new BillingStore(db).saveCard("cus-1", {
       paymentMethodId: "pm_1",
-      ...card,
+      brand: "visa",
+      last4: "4242",
+      expMonth: 1,
+      expYear: 2030,
     });
 
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.is_default).toBe(true);
+    expect(isDefault).toBe(true);
+    expect(calls).toEqual([
+      {
+        fn: "save_payment_method",
+        args: {
+          p_customer_id: "cus-1",
+          p_stripe_payment_method_id: "pm_1",
+          p_brand: "visa",
+          p_last4: "4242",
+          p_exp_month: 1,
+          p_exp_year: 2030,
+        },
+      },
+    ]);
   });
 
-  it("keeps the default when Stripe redelivers a card already on file", async () => {
-    // The failure this guards: counting the card itself as "an existing card"
-    // concludes it is not the first, clears is_default, and autocharge — which
-    // filters on is_default — silently stops charging this customer.
-    const rows = [cardRow("pm_1", true)];
-    await new BillingStore(fakeCardDb(rows)).saveCard("cus-1", {
-      paymentMethodId: "pm_1",
-      ...card,
-    });
-
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.is_default).toBe(true);
+  it("reports a card that did not become the default", async () => {
+    const { db } = fakeRpc(() => ({ data: false, error: null }));
+    expect(
+      await new BillingStore(db).saveCard("cus-1", {
+        paymentMethodId: "pm_2",
+        brand: null,
+        last4: null,
+        expMonth: null,
+        expYear: null,
+      }),
+    ).toBe(false);
   });
 
-  it("does not make a genuinely new second card the default", async () => {
-    const rows = [cardRow("pm_1", true)];
-    await new BillingStore(fakeCardDb(rows)).saveCard("cus-1", {
-      paymentMethodId: "pm_2",
-      ...card,
-    });
+  it("raises rather than pretending a failed save worked", async () => {
+    const { db } = fakeRpc(() => ({ data: null, error: { message: "deadlock detected" } }));
+    await expect(
+      new BillingStore(db).saveCard("cus-1", {
+        paymentMethodId: "pm_1",
+        brand: null,
+        last4: null,
+        expMonth: null,
+        expYear: null,
+      }),
+    ).rejects.toThrow(/deadlock detected/);
+  });
+});
 
-    expect(rows.find((r) => r.stripe_payment_method_id === "pm_1")?.is_default).toBe(true);
-    expect(rows.find((r) => r.stripe_payment_method_id === "pm_2")?.is_default).toBe(false);
+describe("detachCard", () => {
+  it("returns the card that took over as default", async () => {
+    const { db, calls } = fakeRpc(() => ({ data: "pm_2", error: null }));
+
+    expect(await new BillingStore(db).detachCard("pm_1")).toBe("pm_2");
+    expect(calls).toEqual([
+      { fn: "detach_payment_method", args: { p_stripe_payment_method_id: "pm_1" } },
+    ]);
   });
 
-  it("does not let a redelivered second card steal the default", async () => {
-    const rows = [cardRow("pm_1", true), cardRow("pm_2", false)];
-    await new BillingStore(fakeCardDb(rows)).saveCard("cus-1", {
-      paymentMethodId: "pm_2",
-      ...card,
-    });
-
-    expect(rows.find((r) => r.stripe_payment_method_id === "pm_1")?.is_default).toBe(true);
-    expect(rows.find((r) => r.stripe_payment_method_id === "pm_2")?.is_default).toBe(false);
+  it("returns null when no card is left, which is how autopay gets suspended", async () => {
+    const { db } = fakeRpc(() => ({ data: null, error: null }));
+    expect(await new BillingStore(db).detachCard("pm_1")).toBeNull();
   });
 });

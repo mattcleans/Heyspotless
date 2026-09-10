@@ -108,6 +108,8 @@ export function toCustomer(row: Row): Customer {
     stripeCustomerId: strOrNull(row, "stripe_customer_id"),
     autopayEnabled: bool(row, "autopay_enabled"),
     autopayAuthorizedAt: dateOrNull(row, "autopay_authorized_at"),
+    autopaySuspendedAt: dateOrNull(row, "autopay_suspended_at"),
+    autopaySuspendedReason: strOrNull(row, "autopay_suspended_reason"),
   };
 }
 
