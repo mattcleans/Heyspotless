@@ -3,6 +3,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AutochargeCandidate } from "./autocharge";
 import type { BillingTransition } from "./events";
+import type { RefundKind, RefundStatus } from "./types";
 import { toInvoice } from "../data/mappers";
 
 /**
@@ -128,10 +129,23 @@ export class BillingStore {
     return typeof data === "string" ? data : null;
   }
 
-  /** Returns the new refund id, or null when this refund was already recorded. */
+  /**
+   * Record a refund. Returns the new refund id, or null when this Stripe
+   * refund id has already been recorded.
+   *
+   * `kind` is the decision that matters and it is required at the call site
+   * rather than defaulted here: it is what separates giving money back from
+   * deciding it is owed again. The SQL defaults it to `goodwill` for the one
+   * caller that genuinely cannot know — a refund issued from the Stripe
+   * dashboard — because a refund of unknown intent must never bill anyone.
+   *
+   * A refund recorded `pending` moves no money until `settleRefund`.
+   */
   async recordRefund(args: {
     stripePaymentIntentId: string;
     amountCents: number;
+    kind: RefundKind;
+    status?: RefundStatus;
     stripeRefundId?: string | null;
     requestedBy?: string | null;
     reason?: string | null;
@@ -142,9 +156,27 @@ export class BillingStore {
       p_stripe_refund_id: args.stripeRefundId ?? null,
       p_requested_by: args.requestedBy ?? null,
       p_reason: args.reason ?? null,
+      p_kind: args.kind,
+      p_status: args.status ?? "succeeded",
     });
     if (error) throw new Error(`recordRefund: ${error.message}`);
     return typeof data === "string" ? data : null;
+  }
+
+  /**
+   * Tell us how a refund ended. Stripe can fail a refund days after
+   * accepting it, and until this existed the money had already moved here.
+   *
+   * Returns what happened: the new status, "unchanged" for a replay, or
+   * "unknown" for a refund we never recorded.
+   */
+  async settleRefund(stripeRefundId: string, status: RefundStatus): Promise<string> {
+    const { data, error } = await this.db.rpc("settle_refund", {
+      p_stripe_refund_id: stripeRefundId,
+      p_status: status,
+    });
+    if (error) throw new Error(`settleRefund: ${error.message}`);
+    return typeof data === "string" ? data : "unknown";
   }
 
   async recordAutochargeFailure(
@@ -299,8 +331,9 @@ export class BillingStore {
       .from("invoices")
       .select(
         `id, customer_id, status, subtotal_cents, tip_cents, total_cents,
-         amount_paid_cents, refunded_cents, balance_cents, due_on, issued_at,
-         voided_at, attempt_count, next_attempt_at, last_error, created_at,
+         amount_paid_cents, refunded_cents, credit_cents, balance_cents, due_on,
+         issued_at, voided_at, attempt_count, next_attempt_at, last_error,
+         autocharge_paused_at, autocharge_paused_reason, created_at,
          customers!inner ( autopay_enabled, autopay_authorized_at )`,
       )
       .in("status", ["sent", "overdue"])

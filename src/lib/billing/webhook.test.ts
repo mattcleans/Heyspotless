@@ -30,7 +30,7 @@ interface EventRow {
 interface Harness {
   store: BillingStore;
   events: Map<string, EventRow>;
-  recorded: { paymentIntents: string[] };
+  recorded: { paymentIntents: string[]; refundKinds: string[]; settlements: string[] };
   /** Expire the lease on an event, as a dead handler's would. */
   expireLease(id: string): void;
 }
@@ -39,7 +39,11 @@ function harness(
   options: { now?: () => number; onRecordPayment?: () => Promise<string | null> } = {},
 ): Harness {
   const events = new Map<string, EventRow>();
-  const recorded = { paymentIntents: [] as string[] };
+  const recorded = {
+    paymentIntents: [] as string[],
+    refundKinds: [] as string[],
+    settlements: [] as string[],
+  };
   const now = options.now ?? (() => Date.now());
   const LEASE_MS = 300_000;
 
@@ -112,8 +116,13 @@ function harness(
     async detachCard(): Promise<string | null> {
       return "pm_2";
     },
-    async recordRefund(): Promise<string | null> {
+    async recordRefund(args: { kind?: string }): Promise<string | null> {
+      recorded.refundKinds.push(args.kind ?? "unstated");
       return "ref_1";
+    },
+    async settleRefund(_id: string, status: string): Promise<string> {
+      recorded.settlements.push(status);
+      return status;
     },
   } as unknown as BillingStore;
 
@@ -313,5 +322,53 @@ describe("the webhook's response to Stripe", () => {
     expect(second.status).toBe(200);
     expect(second.body).toEqual({ received: true, outcome: "already_recorded" });
     expect(h.recorded.paymentIntents).toEqual(["pi_1"]);
+  });
+});
+
+describe("refunds arriving through the webhook", () => {
+  it("records a dashboard refund as goodwill, so it cannot become a charge", async () => {
+    // A refund we did not initiate carries no stated intent. Reading it as a
+    // correction would restore the balance and — with autopay on — take the
+    // money straight back off the customer's card. An apology must not bill.
+    const h = harness();
+    const result = await handleStripeEvent(h.store, {
+      id: "evt_r",
+      type: "charge.refunded",
+      data: {
+        object: {
+          id: "ch_1",
+          payment_intent: "pi_1",
+          refunds: { data: [{ id: "re_1", amount: 5000 }] },
+        },
+      },
+    });
+
+    expect(result.status).toBe(200);
+    expect(h.recorded.refundKinds).toEqual(["goodwill"]);
+  });
+
+  it("passes a later failure through to settlement rather than ignoring it", async () => {
+    const h = harness();
+    const result = await handleStripeEvent(h.store, {
+      id: "evt_rf",
+      type: "refund.updated",
+      data: { object: { id: "re_1", status: "failed" } },
+    });
+
+    expect(result.status).toBe(200);
+    expect(result.body).toEqual({ received: true, outcome: "refund_failed" });
+    expect(h.recorded.settlements).toEqual(["failed"]);
+  });
+
+  it("applies a refund that succeeds after being pending", async () => {
+    const h = harness();
+    const result = await handleStripeEvent(h.store, {
+      id: "evt_rs",
+      type: "refund.updated",
+      data: { object: { id: "re_1", status: "succeeded" } },
+    });
+
+    expect(result.body).toEqual({ received: true, outcome: "refund_succeeded" });
+    expect(h.recorded.settlements).toEqual(["succeeded"]);
   });
 });

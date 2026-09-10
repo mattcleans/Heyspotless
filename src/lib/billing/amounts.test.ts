@@ -5,13 +5,14 @@ import {
   applyRefund,
   balanceCents,
   chargeableCents,
+  collectibleTotalCents,
   derivedStatus,
   isSettled,
   netPaidCents,
   refundableCents,
   withTip,
 } from "./amounts";
-import { BillingError, type InvoiceAmounts } from "./types";
+import { BillingError, restoresCollectibleBalance, type InvoiceAmounts } from "./types";
 import { toCalendarDate } from "../time/zone";
 
 /**
@@ -27,6 +28,7 @@ function invoice(overrides: Partial<InvoiceAmounts> = {}): InvoiceAmounts {
     totalCents: 17000,
     amountPaidCents: 0,
     refundedCents: 0,
+    creditCents: 0,
     ...overrides,
   };
 }
@@ -167,6 +169,87 @@ function day(iso: string) {
   if (!parsed) throw new Error(`not a calendar date: ${iso}`);
   return parsed;
 }
+
+/**
+ * The case the old single rule got wrong, in the numbers from the brief.
+ *
+ * With `balance = total - paid + refunded` and nothing else, handing $50 back
+ * as an apology made $50 collectible again — and with autopay on, the sweep
+ * took it. The credit is what stops that, without touching either gross
+ * figure that reporting depends on.
+ */
+describe("a goodwill refund", () => {
+  it("keeps $120 and leaves nothing outstanding on a $170 invoice", () => {
+    const paidInFull = invoice({ amountPaidCents: 17000 });
+    expect(balanceCents(paidInFull)).toBe(0);
+
+    // A goodwill refund is BOTH: cash back, and a decision not to collect it.
+    const afterGoodwill = { ...paidInFull, refundedCents: 5000, creditCents: 5000 };
+
+    expect(netPaidCents(afterGoodwill)).toBe(12000);
+    expect(balanceCents(afterGoodwill)).toBe(0);
+    expect(isSettled(afterGoodwill)).toBe(true);
+    // Gross revenue is untouched, which is what job costing reads.
+    expect(afterGoodwill.totalCents).toBe(17000);
+    expect(collectibleTotalCents(afterGoodwill)).toBe(12000);
+  });
+
+  it("would have made $50 collectible again without the credit", () => {
+    // The old behaviour, spelled out so the difference is not theoretical.
+    const withoutCredit = { ...invoice({ amountPaidCents: 17000 }), refundedCents: 5000 };
+    expect(balanceCents(withoutCredit)).toBe(5000);
+    expect(chargeableCents(withoutCredit)).toBe(5000);
+  });
+
+  it("leaves nothing for the auto-charge sweep to take", () => {
+    const afterGoodwill = { ...invoice({ amountPaidCents: 17000 }), refundedCents: 5000, creditCents: 5000 };
+    expect(() => chargeableCents(afterGoodwill)).toThrow(BillingError);
+  });
+
+  it("does not disturb what is owed when the invoice was only part paid", () => {
+    // $170 job, $100 paid, $50 back as a gesture. They owe $120 - $50 = $70.
+    const partPaid = { ...invoice({ amountPaidCents: 10000 }), refundedCents: 5000, creditCents: 5000 };
+    expect(balanceCents(partPaid)).toBe(7000);
+    expect(netPaidCents(partPaid)).toBe(5000);
+  });
+
+  it("settles a fully refunded invoice instead of reopening it", () => {
+    const fully = { ...invoice({ amountPaidCents: 17000 }), refundedCents: 17000, creditCents: 17000 };
+    expect(balanceCents(fully)).toBe(0);
+    expect(netPaidCents(fully)).toBe(0);
+    expect(isSettled(fully)).toBe(true);
+  });
+});
+
+describe("a refund that is not a gesture", () => {
+  it("restores the balance when it is a correction", () => {
+    // The money is still owed; it was taken the wrong way. No credit, and
+    // the invoice is collectible again on purpose.
+    const corrected = { ...invoice({ amountPaidCents: 17000 }), refundedCents: 17000 };
+    expect(balanceCents(corrected)).toBe(17000);
+    expect(chargeableCents(corrected)).toBe(17000);
+  });
+
+  it("brings an overpaid invoice back to zero rather than past it", () => {
+    // $200 paid on a $170 job, $30 returned.
+    const overpaid = invoice({ amountPaidCents: 20000 });
+    expect(balanceCents(overpaid)).toBe(-3000);
+    expect(isSettled(overpaid)).toBe(true);
+
+    const returned = { ...overpaid, refundedCents: 3000 };
+    expect(balanceCents(returned)).toBe(0);
+    expect(netPaidCents(returned)).toBe(17000);
+  });
+});
+
+describe("restoresCollectibleBalance", () => {
+  it("says which kinds make an invoice owed again", () => {
+    expect(restoresCollectibleBalance("goodwill")).toBe(false);
+    expect(restoresCollectibleBalance("overpayment")).toBe(false);
+    expect(restoresCollectibleBalance("correction")).toBe(true);
+    expect(restoresCollectibleBalance("dispute")).toBe(true);
+  });
+});
 
 describe("derived status", () => {
   const now = new Date("2026-09-09T12:00:00Z");

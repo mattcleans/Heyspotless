@@ -36,6 +36,7 @@ function candidate(overrides: Partial<AutochargeCandidate> = {}): AutochargeCand
       totalCents: 17000,
       amountPaidCents: 0,
       refundedCents: 0,
+      creditCents: 0,
     },
     dueOn: YESTERDAY,
     voidedAt: null,

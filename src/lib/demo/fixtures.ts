@@ -126,6 +126,7 @@ function invoice(
   const tipCents = overrides.amounts?.tipCents ?? 0;
   const amountPaidCents = overrides.amounts?.amountPaidCents ?? 0;
   const refundedCents = overrides.amounts?.refundedCents ?? 0;
+  const creditCents = overrides.amounts?.creditCents ?? 0;
   const totalCents = subtotalCents + tipCents;
 
   return {
@@ -144,8 +145,8 @@ function invoice(
     lastError: null,
     createdAt: days(-8),
     ...overrides,
-    amounts: { subtotalCents, tipCents, totalCents, amountPaidCents, refundedCents },
-    balanceCents: totalCents - amountPaidCents + refundedCents,
+    amounts: { subtotalCents, tipCents, totalCents, amountPaidCents, refundedCents, creditCents },
+    balanceCents: totalCents - creditCents - amountPaidCents + refundedCents,
   };
 }
 
@@ -159,6 +160,7 @@ export const DEMO_INVOICES: Invoice[] = [
       totalCents: 19000,
       amountPaidCents: 19000,
       refundedCents: 0,
+      creditCents: 0,
     },
     dueOn: dueDay(-15),
     issuedAt: days(-22),

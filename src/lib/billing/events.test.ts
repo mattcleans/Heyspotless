@@ -211,3 +211,60 @@ describe("events we do not handle", () => {
     expect(toTransition(event("payment_method.attached", pm)).kind).toBe("ignored");
   });
 });
+
+describe("a refund whose outcome changed later", () => {
+  /**
+   * Stripe accepts a refund and can fail it days afterwards when the issuer
+   * rejects it. Before `refund_settled` existed, the money had already moved
+   * on our side the moment the refund was created, and nothing ever put it
+   * back.
+   */
+  it("reads a succeeded refund.updated", () => {
+    expect(
+      toTransition({
+        id: "evt_1",
+        type: "refund.updated",
+        data: { object: { id: "re_1", status: "succeeded" } },
+      }),
+    ).toEqual({ kind: "refund_settled", stripeRefundId: "re_1", status: "succeeded" });
+  });
+
+  it("reads a failed refund", () => {
+    expect(
+      toTransition({
+        id: "evt_1",
+        type: "refund.failed",
+        data: { object: { id: "re_1", status: "failed" } },
+      }),
+    ).toEqual({ kind: "refund_settled", stripeRefundId: "re_1", status: "failed" });
+  });
+
+  it("reads the older charge.refund.updated name too", () => {
+    expect(
+      toTransition({
+        id: "evt_1",
+        type: "charge.refund.updated",
+        data: { object: { id: "re_1", status: "canceled" } },
+      }),
+    ).toEqual({ kind: "refund_settled", stripeRefundId: "re_1", status: "canceled" });
+  });
+
+  it("ignores a refund that has not finished yet", () => {
+    // `pending` is not an outcome. Applying it would move money on a guess.
+    const transition = toTransition({
+      id: "evt_1",
+      type: "refund.updated",
+      data: { object: { id: "re_1", status: "pending" } },
+    });
+    expect(transition.kind).toBe("ignored");
+  });
+
+  it("ignores an update with no refund id to tie it to anything", () => {
+    const transition = toTransition({
+      id: "evt_1",
+      type: "refund.updated",
+      data: { object: { status: "succeeded" } },
+    });
+    expect(transition.kind).toBe("ignored");
+  });
+});

@@ -50,8 +50,9 @@ const CUSTOMER_SELECT = `
 /** `balance_cents` is generated in the database; it is selected, never computed. */
 const INVOICE_SELECT = `
   id, customer_id, job_id, status, subtotal_cents, tip_cents, total_cents,
-  amount_paid_cents, refunded_cents, balance_cents, due_on, issued_at,
-  voided_at, attempt_count, next_attempt_at, last_error, created_at
+  amount_paid_cents, refunded_cents, credit_cents, balance_cents, due_on,
+  issued_at, voided_at, attempt_count, next_attempt_at, last_error,
+  autocharge_paused_at, autocharge_paused_reason, created_at
 `;
 
 const PAYMENT_METHOD_SELECT = `

@@ -177,7 +177,7 @@ as_super $PSQL -d "$DB" <<'SQL'
 do $$
 declare
   v_cust uuid; v_inv uuid; v_pay uuid; v_again uuid;
-  v_paid integer; v_tip integer; v_total integer; v_bal integer;
+  v_paid integer; v_tip integer; v_total integer; v_bal integer; v_credit integer;
   v_status invoice_status; v_attempts integer; v_fail integer := 0;
 begin
   insert into customers (first_name, last_name) values ('Money','Path')
@@ -209,17 +209,26 @@ begin
   v_again := record_payment(v_inv, 100, 0, null, null, 'autocharge:x:1', true, 'card');
   if v_again is not null then v_fail := v_fail+1; raise warning 'replayed idempotency key created a second payment'; end if;
 
-  -- a partial refund restores balance and reopens the invoice
-  perform record_refund('pi_money_1', 5000, 're_money_1', null, 'goodwill');
-  select refunded_cents, balance_cents, status into v_paid, v_bal, v_status
-    from invoices where id = v_inv;
+  -- a goodwill refund gives money back WITHOUT making it owed again. The
+  -- gross figures still move, so reporting is untouched; the matching credit
+  -- is what stops the sweep charging the customer for our own apology.
+  -- (This invoice is already 100 overpaid from the idempotency-key capture
+  -- above, so the balance stays at -100 rather than returning to 0.)
+  perform record_refund('pi_money_1', 5000, 're_money_1', null, 'sorry about the shower',
+                        'goodwill');
+  select refunded_cents, credit_cents, balance_cents, status
+    into v_paid, v_credit, v_bal, v_status from invoices where id = v_inv;
   if v_paid <> 5000 then v_fail := v_fail+1; raise warning 'refunded: got %, want 5000', v_paid; end if;
-  if v_bal  <> 4900 then v_fail := v_fail+1; raise warning 'balance after refund: got %, want 4900', v_bal; end if;
-  if v_status <> 'overdue' then v_fail := v_fail+1; raise warning 'status after refund: got %, want overdue', v_status; end if;
+  if v_credit <> 5000 then v_fail := v_fail+1; raise warning 'credit: got %, want 5000', v_credit; end if;
+  if v_bal <> -100 then v_fail := v_fail+1; raise warning 'balance after goodwill: got %, want -100', v_bal; end if;
+  if v_status <> 'paid' then v_fail := v_fail+1; raise warning 'status after goodwill: got %, want paid', v_status; end if;
 
   -- refunds are idempotent on the Stripe refund id
   v_again := record_refund('pi_money_1', 5000, 're_money_1', null, null);
   if v_again is not null then v_fail := v_fail+1; raise warning 'replayed refund applied twice'; end if;
+  select credit_cents into v_credit from invoices where id = v_inv;
+  if v_credit <> 5000 then v_fail := v_fail+1;
+    raise warning 'a replayed refund credited twice: %', v_credit; end if;
 
   -- and cannot exceed what that payment captured
   begin
@@ -593,6 +602,213 @@ if [ "$CLAIMED_COUNT" != "1" ] || [ "$HELD_COUNT" != "1" ]; then
   exit 1
 fi
 echo "  concurrent deliveries verified"
+
+# --- refund policy (0011) ----------------------------------------------------
+# The distinction 0006 did not make: giving money back is not the same as
+# deciding it is owed again. Under the old single rule a goodwill refund
+# restored the balance, and with autopay on the sweep took it straight back
+# off the customer's card — the apology became a second charge.
+echo "  checking the refund policy"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_inv uuid; v_refund uuid; v_fail integer := 0;
+  v_paid integer; v_ref integer; v_credit integer; v_bal integer; v_net integer;
+  v_status invoice_status; v_paused timestamptz; v_settled text;
+begin
+  ----------------------------------------------------------------------
+  -- THE REQUIRED CASE: $170 invoice, paid in full, $50 goodwill credit
+  -- and refund. $120 net retained, $0 outstanding, no new charge.
+  ----------------------------------------------------------------------
+  insert into customers (first_name, last_name, autopay_enabled, autopay_authorized_at)
+    values ('Goodwill','Case', true, now()) returning id into v_cust;
+  insert into invoices (customer_id, status, subtotal_cents, total_cents, due_on)
+    values (v_cust, 'sent', 17000, 17000, business_today()) returning id into v_inv;
+  perform record_payment(v_inv, 17000, 0, 'pi_goodwill', 'ch_goodwill', null, false, 'card');
+
+  select balance_cents, status into v_bal, v_status from invoices where id = v_inv;
+  if v_bal <> 0 or v_status <> 'paid' then v_fail := v_fail+1;
+    raise warning 'paid in full read as balance %, status %', v_bal, v_status; end if;
+
+  perform record_refund('pi_goodwill', 5000, 're_goodwill', null,
+                        'goodwill for the missed bathroom', 'goodwill');
+
+  select amount_paid_cents, refunded_cents, credit_cents, balance_cents, status
+    into v_paid, v_ref, v_credit, v_bal, v_status from invoices where id = v_inv;
+  v_net := v_paid - v_ref;
+
+  if v_net <> 12000 then v_fail := v_fail+1;
+    raise warning 'net retained: got %, want 12000', v_net; end if;
+  if v_bal <> 0 then v_fail := v_fail+1;
+    raise warning 'outstanding after a goodwill refund: got %, want 0', v_bal; end if;
+  if v_status <> 'paid' then v_fail := v_fail+1;
+    raise warning 'status after a goodwill refund: got %, want paid', v_status; end if;
+  if v_credit <> 5000 then v_fail := v_fail+1;
+    raise warning 'credit raised: got %, want 5000', v_credit; end if;
+  -- Gross figures survive: reporting still sees a 17000 job with 5000 given
+  -- back, which is what job costing needs.
+  if v_paid <> 17000 or v_ref <> 5000 then v_fail := v_fail+1;
+    raise warning 'gross figures moved: paid %, refunded %', v_paid, v_ref; end if;
+
+  -- And the sweep has nothing to find. This is the whole point.
+  if exists (select 1 from invoices where id = v_inv and balance_cents > 0) then
+    v_fail := v_fail+1; raise warning 'a goodwill refund left a collectible balance'; end if;
+
+  ----------------------------------------------------------------------
+  -- FULL goodwill refund: nothing retained, nothing owed.
+  ----------------------------------------------------------------------
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_inv;
+  perform record_payment(v_inv, 17000, 0, 'pi_full', null, null, false, 'card');
+  perform record_refund('pi_full', 17000, 're_full', null, 'clean redone elsewhere', 'goodwill');
+  select balance_cents, amount_paid_cents - refunded_cents into v_bal, v_net
+    from invoices where id = v_inv;
+  if v_bal <> 0 or v_net <> 0 then v_fail := v_fail+1;
+    raise warning 'full goodwill refund: balance %, net %', v_bal, v_net; end if;
+
+  ----------------------------------------------------------------------
+  -- PARTIAL PAYMENT then a goodwill refund. 17000 job, 10000 paid, 5000
+  -- back: they owe 12000 - 5000 = 7000, unchanged by the gesture.
+  ----------------------------------------------------------------------
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_inv;
+  perform record_payment(v_inv, 10000, 0, 'pi_partial', null, null, false, 'card');
+  perform record_refund('pi_partial', 5000, 're_partial', null, null, 'goodwill');
+  select balance_cents into v_bal from invoices where id = v_inv;
+  if v_bal <> 7000 then v_fail := v_fail+1;
+    raise warning 'partial payment then goodwill: balance %, want 7000', v_bal; end if;
+
+  ----------------------------------------------------------------------
+  -- A TIP refunded. The tip is in the total, so crediting it back leaves
+  -- the invoice settled rather than owing the tip again.
+  ----------------------------------------------------------------------
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_inv;
+  perform record_payment(v_inv, 19000, 2000, 'pi_tip', null, null, false, 'card');
+  perform record_refund('pi_tip', 2000, 're_tip', null, 'tip added by mistake', 'goodwill');
+  select balance_cents, amount_paid_cents - refunded_cents into v_bal, v_net
+    from invoices where id = v_inv;
+  if v_bal <> 0 then v_fail := v_fail+1;
+    raise warning 'refunding a tip left balance %, want 0', v_bal; end if;
+  if v_net <> 17000 then v_fail := v_fail+1;
+    raise warning 'refunding a tip left net %, want 17000', v_net; end if;
+
+  ----------------------------------------------------------------------
+  -- OVERPAYMENT returned. Balance was negative; returning the excess
+  -- brings it to zero, and no credit is raised because nothing was
+  -- written off.
+  ----------------------------------------------------------------------
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_inv;
+  perform record_payment(v_inv, 20000, 0, 'pi_over', null, null, false, 'card');
+  select balance_cents into v_bal from invoices where id = v_inv;
+  if v_bal <> -3000 then v_fail := v_fail+1;
+    raise warning 'overpaid invoice balance: got %, want -3000', v_bal; end if;
+
+  perform record_refund('pi_over', 3000, 're_over', null, 'returned overpayment', 'overpayment');
+  select balance_cents, credit_cents into v_bal, v_credit from invoices where id = v_inv;
+  if v_bal <> 0 then v_fail := v_fail+1;
+    raise warning 'returning an overpayment left balance %, want 0', v_bal; end if;
+  if v_credit <> 0 then v_fail := v_fail+1;
+    raise warning 'returning an overpayment raised a credit of %', v_credit; end if;
+
+  -- Returning more than was overpaid is refused: that is a goodwill refund
+  -- wearing the wrong label, and would silently make the invoice collectible.
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_inv;
+  perform record_payment(v_inv, 17000, 0, 'pi_notover', null, null, false, 'card');
+  begin
+    perform record_refund('pi_notover', 5000, 're_notover', null, null, 'overpayment');
+    v_fail := v_fail+1; raise warning 'a non-overpayment was returned as one';
+  exception when others then null; end;
+
+  ----------------------------------------------------------------------
+  -- CORRECTION. Deliberately collectible again — the money is still owed,
+  -- it was just taken the wrong way.
+  ----------------------------------------------------------------------
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_inv;
+  perform record_payment(v_inv, 17000, 0, 'pi_corr', null, null, false, 'card');
+  perform record_refund('pi_corr', 17000, 're_corr', null, 'charged the wrong card', 'correction');
+  select balance_cents, credit_cents, status into v_bal, v_credit, v_status
+    from invoices where id = v_inv;
+  if v_bal <> 17000 then v_fail := v_fail+1;
+    raise warning 'a correction left balance %, want 17000', v_bal; end if;
+  if v_credit <> 0 then v_fail := v_fail+1;
+    raise warning 'a correction raised a credit of %', v_credit; end if;
+
+  ----------------------------------------------------------------------
+  -- DISPUTE. Balance restored, automatic collection paused.
+  ----------------------------------------------------------------------
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_inv;
+  perform record_payment(v_inv, 17000, 0, 'pi_disp', null, null, false, 'card');
+  perform record_refund('pi_disp', 17000, 're_disp', null, 'customer disputed', 'dispute');
+  select balance_cents, autocharge_paused_at into v_bal, v_paused
+    from invoices where id = v_inv;
+  if v_bal <> 17000 then v_fail := v_fail+1;
+    raise warning 'a dispute refund left balance %, want 17000', v_bal; end if;
+  if v_paused is null then v_fail := v_fail+1;
+    raise warning 'a dispute refund did not pause automatic collection'; end if;
+  perform resume_invoice_autocharge(v_inv);
+  if exists (select 1 from invoices where id = v_inv and autocharge_paused_at is not null) then
+    v_fail := v_fail+1; raise warning 'a collection pause could not be lifted'; end if;
+
+  ----------------------------------------------------------------------
+  -- PENDING refunds touch nothing until Stripe says they succeeded.
+  ----------------------------------------------------------------------
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_inv;
+  perform record_payment(v_inv, 17000, 0, 'pi_pending', null, null, false, 'card');
+
+  v_refund := record_refund('pi_pending', 5000, 're_pending', null, null, 'goodwill', 'pending');
+  select refunded_cents, credit_cents into v_ref, v_credit from invoices where id = v_inv;
+  if v_ref <> 0 or v_credit <> 0 then v_fail := v_fail+1;
+    raise warning 'a pending refund moved money: refunded %, credit %', v_ref, v_credit; end if;
+
+  v_settled := settle_refund('re_pending', 'succeeded');
+  if v_settled <> 'succeeded' then v_fail := v_fail+1;
+    raise warning 'settling a pending refund reported %', v_settled; end if;
+  select refunded_cents, credit_cents into v_ref, v_credit from invoices where id = v_inv;
+  if v_ref <> 5000 or v_credit <> 5000 then v_fail := v_fail+1;
+    raise warning 'settling did not apply: refunded %, credit %', v_ref, v_credit; end if;
+
+  -- Settling twice is a webhook replay, and a no-op.
+  if settle_refund('re_pending', 'succeeded') <> 'unchanged' then v_fail := v_fail+1;
+    raise warning 'settling an already-settled refund was not a no-op'; end if;
+  select refunded_cents into v_ref from invoices where id = v_inv;
+  if v_ref <> 5000 then v_fail := v_fail+1;
+    raise warning 'a replayed settlement refunded twice: %', v_ref; end if;
+
+  ----------------------------------------------------------------------
+  -- FAILED refunds move nothing, and free the amount up again.
+  ----------------------------------------------------------------------
+  perform record_refund('pi_pending', 4000, 're_failing', null, null, 'goodwill', 'pending');
+  if settle_refund('re_failing', 'failed') <> 'failed' then v_fail := v_fail+1;
+    raise warning 'settling a refund as failed reported the wrong outcome'; end if;
+  select refunded_cents, credit_cents into v_ref, v_credit from invoices where id = v_inv;
+  if v_ref <> 5000 or v_credit <> 5000 then v_fail := v_fail+1;
+    raise warning 'a failed refund moved money: refunded %, credit %', v_ref, v_credit; end if;
+
+  -- A refund Stripe never heard of is reported, not invented.
+  if settle_refund('re_never_existed', 'succeeded') <> 'unknown' then v_fail := v_fail+1;
+    raise warning 'settling an unknown refund did not report unknown'; end if;
+
+  ----------------------------------------------------------------------
+  -- A credit on its own — a discount agreed after the fact.
+  ----------------------------------------------------------------------
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_inv;
+  perform record_invoice_credit(v_inv, 2000, 'agreed discount');
+  select balance_cents, status into v_bal, v_status from invoices where id = v_inv;
+  if v_bal <> 15000 then v_fail := v_fail+1;
+    raise warning 'a standalone credit left balance %, want 15000', v_bal; end if;
+
+  if v_fail > 0 then raise exception '% refund-policy assertions failed', v_fail; end if;
+  raise notice 'refund policy passed';
+end $$;
+SQL
+echo "  refund policy verified"
 
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql

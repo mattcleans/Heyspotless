@@ -1,4 +1,11 @@
 -- Run only in the throwaway database created by verify-migrations.sh.
+--
+-- Extended past the four routines Codex's 0007 covered: every privileged
+-- routine added since (cards in 0009, webhook leases in 0010, refunds and
+-- credits in 0011) is server-side too, and a new one that quietly forgot to
+-- revoke would be a client-writable money path. The list below is the
+-- enumeration, and the service_role block at the bottom is the other half —
+-- that locking the client out did not lock the server out as well.
 -- Use ordinary roles and deliberately broad table grants to test RLS, not
 -- just a superuser whose queries bypass the policies. Roll fixtures back.
 begin;
@@ -15,6 +22,14 @@ begin
   foreach statement in array array[
     $q$select record_payment('10000000-0000-0000-0000-000000000001', 100)$q$,
     $q$select record_refund('pi_access_test', 100)$q$,
+    $q$select record_invoice_credit('10000000-0000-0000-0000-000000000001', 100)$q$,
+    $q$select settle_refund('re_access_test', 'succeeded')$q$,
+    $q$select save_payment_method('30000000-0000-0000-0000-000000000001', 'pm_access_test')$q$,
+    $q$select detach_payment_method('pm_access_test')$q$,
+    $q$select claim_stripe_event('evt_access_test', 't', '{}'::jsonb, gen_random_uuid())$q$,
+    $q$select finish_stripe_event('evt_access_test', gen_random_uuid(), 'applied')$q$,
+    $q$select release_stripe_event('evt_access_test', gen_random_uuid())$q$,
+    $q$select business_today()$q$,
     $q$select record_autocharge_failure('10000000-0000-0000-0000-000000000001', 'test')$q$,
     $q$select resettle_invoice('10000000-0000-0000-0000-000000000001')$q$
   ] loop
@@ -135,7 +150,15 @@ declare signature text; payment_id uuid;
 begin
   foreach signature in array array[
     'record_payment(uuid,integer,integer,text,text,text,boolean,text)',
-    'record_refund(text,integer,text,uuid,text)',
+    'record_refund(text,integer,text,uuid,text,refund_kind,refund_status)',
+    'record_invoice_credit(uuid,integer,text,uuid,uuid)',
+    'settle_refund(text,refund_status)',
+    'save_payment_method(uuid,text,text,text,integer,integer)',
+    'detach_payment_method(text)',
+    'claim_stripe_event(text,text,jsonb,uuid,integer)',
+    'finish_stripe_event(text,uuid,text,text)',
+    'release_stripe_event(text,uuid,text)',
+    'business_today()',
     'record_autocharge_failure(uuid,text,timestamptz)',
     'resettle_invoice(uuid)'
   ] loop

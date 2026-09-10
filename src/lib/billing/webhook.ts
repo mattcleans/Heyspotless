@@ -164,8 +164,22 @@ async function apply(store: BillingStore, transition: BillingTransition): Promis
         stripePaymentIntentId: transition.paymentIntentId,
         amountCents: transition.amountCents,
         stripeRefundId: transition.stripeRefundId,
+        // A refund we did not initiate — someone pressed refund in the Stripe
+        // dashboard — arrives with no stated intent. `goodwill` is the only
+        // safe reading: it gives the money back without turning the invoice
+        // into something the auto-charge sweep will collect again. An admin
+        // who meant a correction records it through the refund route, which
+        // asks.
+        kind: "goodwill",
       });
       return refundId ? "applied" : "already_recorded";
+    }
+
+    case "refund_settled": {
+      // Stripe changed its mind about a refund. Only a succeeded one moves
+      // money; a failed one must leave the invoice exactly as it was.
+      const outcome = await store.settleRefund(transition.stripeRefundId, transition.status);
+      return `refund_${outcome}`;
     }
 
     case "ignored":

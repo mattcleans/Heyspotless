@@ -237,6 +237,7 @@ describe("billing mappers", () => {
       totalCents: 19000,
       amountPaidCents: 5000,
       refundedCents: 0,
+      creditCents: 0,
     });
     expect(invoice.balanceCents).toBe(14000);
     expect(invoice.status).toBe("overdue");

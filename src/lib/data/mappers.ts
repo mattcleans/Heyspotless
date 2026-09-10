@@ -215,6 +215,7 @@ export function toInvoice(row: Row): Invoice {
       totalCents: num(row, "total_cents", 0),
       amountPaidCents: num(row, "amount_paid_cents", 0),
       refundedCents: num(row, "refunded_cents", 0),
+      creditCents: num(row, "credit_cents", 0),
     },
     balanceCents: num(row, "balance_cents", 0),
     dueOn: calendarDateOrNull(row, "due_on"),
