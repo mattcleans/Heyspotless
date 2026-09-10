@@ -126,6 +126,13 @@ async function apply(store: BillingStore, transition: BillingTransition): Promis
         stripePaymentIntentId: transition.paymentIntentId,
         method: "card",
       });
+      // Close whatever collection attempt this was, by both references we
+      // might hold — a Checkout attempt is recorded against the session id,
+      // an auto-charge against the intent. An attempt left open blocks the
+      // invoice from ever being collected again.
+      await store.settlePaymentOperationByRef(transition.invoiceId, transition.collectionRef);
+      await store.settlePaymentOperationByRef(transition.invoiceId, transition.paymentIntentId);
+
       // A null id means the SQL function found this capture already recorded,
       // which is a normal outcome, not a failure.
       return paymentId ? "applied" : "already_recorded";

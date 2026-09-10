@@ -7,7 +7,7 @@
  * the decision is a pure function with no Stripe client in sight, and the
  * route in app/api/billing/autocharge does nothing but execute what it returns.
  *
- * Three defences against charging twice, in depth:
+ * Four defences against charging twice, in depth:
  *
  *   1. `idempotencyKeyFor` is deterministic in (invoice, attempt), so the same
  *      attempt replayed is the same key, and Stripe collapses it to one charge.
@@ -15,6 +15,11 @@
  *      cannot even record a second attempt locally.
  *   3. The sweep only ever charges the outstanding balance, so a charge that
  *      succeeded but whose webhook has not landed yet leaves nothing to take.
+ *   4. `collectionInFlight` — an open payment operation (0012). The first
+ *      three all key on the sweep's OWN attempt, and none of them sees a
+ *      customer sitting on a Checkout page for the same invoice. A different
+ *      channel means a different idempotency key, so as far as Stripe is
+ *      concerned the two charges are unrelated. They are not.
  */
 
 import { type InvoiceAmounts, BillingError } from "./types";
@@ -47,7 +52,11 @@ export type SkipReason =
   | "no_consent"
   | "no_card"
   | "not_yet_due"
-  | "backing_off";
+  | "backing_off"
+  /** A customer is mid-Checkout, or a previous charge has not resolved. */
+  | "collection_in_flight"
+  /** A person stopped automatic collection on this invoice — see 0011. */
+  | "collection_paused";
 
 export interface AutochargeCandidate {
   invoiceId: string;
@@ -64,6 +73,19 @@ export interface AutochargeCandidate {
   autopayAuthorizedAt: Date | null;
   /** The customer's default saved card, or null if they have none. */
   defaultPaymentMethodId: string | null;
+  /**
+   * A collection attempt is already open on this invoice — a Checkout page a
+   * customer has in front of them, or a charge whose outcome is not known
+   * yet. Charging alongside it takes the same money twice, and it is the one
+   * case the Stripe idempotency key cannot catch: a different channel means
+   * a different key.
+   */
+  collectionInFlight: boolean;
+  /**
+   * Automatic collection stopped by a person — currently, a refund recorded
+   * as a dispute. Charging a card mid-dispute turns one chargeback into two.
+   */
+  autochargePausedAt: Date | null;
 }
 
 export type AutochargeDecision =
@@ -130,6 +152,16 @@ export function decide(
   const owed = balanceCents(candidate.amounts);
   if (owed <= 0) {
     return { action: "skip", invoiceId, reason: "nothing_owed" };
+  }
+
+  // Checked before anything that looks like a reason to charge, for the same
+  // reason consent is: no combination of state should reach the charge branch
+  // while somebody else is already collecting, or while a person has said stop.
+  if (candidate.autochargePausedAt) {
+    return { action: "skip", invoiceId, reason: "collection_paused" };
+  }
+  if (candidate.collectionInFlight) {
+    return { action: "skip", invoiceId, reason: "collection_in_flight" };
   }
 
   if (candidate.attemptCount >= MAX_ATTEMPTS) {

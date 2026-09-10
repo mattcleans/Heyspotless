@@ -45,6 +45,8 @@ function candidate(overrides: Partial<AutochargeCandidate> = {}): AutochargeCand
     autopayEnabled: true,
     autopayAuthorizedAt: new Date("2026-01-01T00:00:00Z"),
     defaultPaymentMethodId: "pm_123",
+    collectionInFlight: false,
+    autochargePausedAt: null,
     ...overrides,
   };
 }
@@ -249,5 +251,49 @@ describe("the sweep", () => {
     const decisions = planSweep([candidate({ invoiceId: "a" }), candidate({ invoiceId: "b" })], NOW);
     const keys = decisions.flatMap((d) => (d.action === "charge" ? [d.idempotencyKey] : []));
     expect(new Set(keys).size).toBe(2);
+  });
+});
+
+describe("collecting once across channels", () => {
+  /**
+   * The sweep's other three defences all key on the sweep's OWN attempt.
+   * None of them sees a customer sitting on a Checkout page for the same
+   * invoice: a different channel means a different Stripe idempotency key,
+   * so as far as Stripe is concerned the two charges are unrelated. They are
+   * not — it is the same obligation, and collecting it twice is a refund
+   * and an apology.
+   */
+  it("does not charge alongside a Checkout page the customer has open", () => {
+    expect(decide(candidate({ collectionInFlight: true }), NOW)).toEqual({
+      action: "skip",
+      invoiceId: "inv-1",
+      reason: "collection_in_flight",
+    });
+  });
+
+  it("does not charge an invoice where collection has been paused", () => {
+    // Set by a refund recorded as a dispute. Charging a card mid-dispute is
+    // how one chargeback becomes two.
+    expect(
+      decide(candidate({ autochargePausedAt: new Date("2026-09-01T00:00:00Z") }), NOW),
+    ).toMatchObject({ action: "skip", reason: "collection_paused" });
+  });
+
+  it("checks both before anything that looks like a reason to charge", () => {
+    // Same ordering guarantee as consent: no combination of state reaches
+    // the charge branch while somebody else is collecting.
+    const overdueAndInFlight = candidate({
+      status: "overdue",
+      dueOn: day("2026-01-01"),
+      attemptCount: 0,
+      collectionInFlight: true,
+    });
+    expect(decide(overdueAndInFlight, NOW)).toMatchObject({ reason: "collection_in_flight" });
+  });
+
+  it("charges normally once the other attempt has cleared", () => {
+    expect(decide(candidate({ collectionInFlight: false }), NOW)).toMatchObject({
+      action: "charge",
+    });
   });
 });

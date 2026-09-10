@@ -810,6 +810,144 @@ end $$;
 SQL
 echo "  refund policy verified"
 
+# --- payment operations (0012) -----------------------------------------------
+# Nothing used to record that a collection attempt was in flight, so anything
+# that looked at the invoice saw an unpaid invoice and started another one:
+# two Checkout tabs, a repeated submission, or the nightly sweep landing on
+# an invoice a customer was in the middle of paying.
+echo "  checking payment operations"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_inv uuid; v_other uuid; v_fail integer := 0;
+  v_op record; v_count integer;
+begin
+  insert into customers (first_name, last_name) values ('Collect','Once')
+    returning id into v_cust;
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_inv;
+
+  -- TWO CHECKOUT TABS. Same invoice, same balance, same key: the second must
+  -- join the first, not open a second chargeable page.
+  select * into v_op from begin_payment_operation(v_inv, 'checkout', 'checkout:a:17000:0', 17000);
+  if v_op.outcome <> 'started' then v_fail := v_fail+1;
+    raise warning 'the first tab reported %', v_op.outcome; end if;
+  perform attach_payment_operation('checkout:a:17000:0', 'checkout_session', 'cs_1',
+                                   'https://checkout.test/cs_1');
+
+  select * into v_op from begin_payment_operation(v_inv, 'checkout', 'checkout:a:17000:0', 17000);
+  if v_op.outcome <> 'existing' then v_fail := v_fail+1;
+    raise warning 'the second tab reported %, want existing', v_op.outcome; end if;
+  if v_op.redirect_url is distinct from 'https://checkout.test/cs_1' then v_fail := v_fail+1;
+    raise warning 'the second tab was not sent to the existing session'; end if;
+
+  -- CHECKOUT OVERLAPPING AUTOCHARGE. Different channel, different Stripe
+  -- idempotency key — Stripe would see two unrelated charges. Refused here.
+  select * into v_op from begin_payment_operation(v_inv, 'autocharge', 'autocharge:x:1', 17000);
+  if v_op.outcome <> 'blocked' then v_fail := v_fail+1;
+    raise warning 'the sweep reported % while Checkout was open, want blocked', v_op.outcome; end if;
+  if v_op.channel <> 'checkout' then v_fail := v_fail+1;
+    raise warning 'the block named the wrong channel: %', v_op.channel; end if;
+
+  -- Exactly one attempt, whatever anyone asked for.
+  select count(*) into v_count from payment_operations
+    where invoice_id = v_inv and state = 'open';
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'expected one open attempt, found %', v_count; end if;
+
+  -- REPEATED SUBMISSION after the first finished. Not a fresh attempt.
+  perform resolve_payment_operation('checkout:a:17000:0', 'succeeded');
+  select * into v_op from begin_payment_operation(v_inv, 'checkout', 'checkout:a:17000:0', 17000);
+  if v_op.outcome <> 'existing' then v_fail := v_fail+1;
+    raise warning 'a resubmitted key started a new attempt (%)', v_op.outcome; end if;
+  select count(*) into v_count from payment_operations
+    where idempotency_key = 'checkout:a:17000:0';
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'a resubmitted key produced % rows', v_count; end if;
+
+  -- THE SWEEP GOES FIRST. Mirror image: Checkout must be refused while an
+  -- off-session charge is outstanding, because we cannot yet know it failed.
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_other;
+  perform begin_payment_operation(v_other, 'autocharge', 'autocharge:y:1', 17000);
+  select * into v_op from begin_payment_operation(v_other, 'checkout', 'checkout:y:17000:0', 17000);
+  if v_op.outcome <> 'blocked' then v_fail := v_fail+1;
+    raise warning 'Checkout was allowed alongside an off-session charge'; end if;
+
+  -- A DEAD PROCESS must not hold the invoice for ever.
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_other;
+  perform begin_payment_operation(v_other, 'checkout', 'checkout:z:17000:0', 17000, 1);
+  perform pg_sleep(1.2);
+  select * into v_op from begin_payment_operation(v_other, 'autocharge', 'autocharge:z:1', 17000);
+  if v_op.outcome <> 'started' then v_fail := v_fail+1;
+    raise warning 'an expired attempt still blocked the invoice (%)', v_op.outcome; end if;
+  if not exists (select 1 from payment_operations
+                 where idempotency_key = 'checkout:z:17000:0' and state = 'abandoned') then
+    v_fail := v_fail+1; raise warning 'the expired attempt was not marked abandoned'; end if;
+
+  -- The database, not just the code, enforces one open attempt per invoice.
+  begin
+    insert into payment_operations (invoice_id, channel, idempotency_key, amount_cents, expires_at)
+    values (v_other, 'checkout', 'checkout:z:sneak', 17000, now() + interval '1 hour');
+    v_fail := v_fail+1; raise warning 'a second open attempt was inserted directly';
+  exception when unique_violation then null; end;
+
+  -- A settled payment closes its attempt, by whichever reference we hold.
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_other;
+  perform begin_payment_operation(v_other, 'checkout', 'checkout:w:17000:0', 17000);
+  perform attach_payment_operation('checkout:w:17000:0', 'checkout_session', 'cs_w');
+  if not settle_payment_operation_by_ref(v_other, 'cs_w') then v_fail := v_fail+1;
+    raise warning 'settling by session reference did not close the attempt'; end if;
+  if exists (select 1 from payment_operations where idempotency_key = 'checkout:w:17000:0'
+             and state <> 'succeeded') then
+    v_fail := v_fail+1; raise warning 'the settled attempt is not succeeded'; end if;
+
+  -- Settling something with no attempt behind it is a no-op, not an error:
+  -- plenty of payments predate this table.
+  if settle_payment_operation_by_ref(v_other, 'cs_never_seen') then v_fail := v_fail+1;
+    raise warning 'settling an unknown reference reported success'; end if;
+
+  if v_fail > 0 then raise exception '% payment-operation assertions failed', v_fail; end if;
+  raise notice 'payment operations passed';
+end $$;
+SQL
+echo "  payment operations verified"
+
+# --- concurrent collection attempts (0012) -----------------------------------
+# Two connections asking to collect the same invoice at the same instant.
+# Exactly one may start; the other must be told to join or wait.
+echo "  checking concurrent collection attempts"
+COLLECT_INVOICE=$(as_super $PSQL -d "$DB" -tAc \
+  "with c as (insert into customers (first_name, last_name)
+              values ('Race','Collect') returning id)
+   insert into invoices (customer_id, status, subtotal_cents, total_cents)
+   select id, 'sent', 17000, 17000 from c returning id")
+
+as_super $PSQL -d "$DB" -tAc \
+  "select outcome from begin_payment_operation('$COLLECT_INVOICE', 'checkout',
+                                               'checkout:race:a', 17000)" \
+  > /tmp/spotless_collect_a.txt 2>&1 &
+RACE_A=$!
+as_super $PSQL -d "$DB" -tAc \
+  "select outcome from begin_payment_operation('$COLLECT_INVOICE', 'autocharge',
+                                               'autocharge:race:1', 17000)" \
+  > /tmp/spotless_collect_b.txt 2>&1 &
+RACE_B=$!
+wait $RACE_A
+wait $RACE_B
+
+STARTED=$(cat /tmp/spotless_collect_a.txt /tmp/spotless_collect_b.txt | grep -c '^started$' || true)
+BLOCKED=$(cat /tmp/spotless_collect_a.txt /tmp/spotless_collect_b.txt | grep -c '^blocked$' || true)
+rm -f /tmp/spotless_collect_a.txt /tmp/spotless_collect_b.txt
+
+if [ "$STARTED" != "1" ] || [ "$BLOCKED" != "1" ]; then
+  echo "  concurrent collection: $STARTED started, $BLOCKED blocked — want 1 and 1" >&2
+  exit 1
+fi
+echo "  concurrent collection verified"
+
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql
 echo "  access controls verified"

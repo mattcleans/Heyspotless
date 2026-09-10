@@ -21,10 +21,21 @@ async function startSession(path: string, body: unknown): Promise<string> {
   });
 
   const payload: unknown = await response.json().catch(() => ({}));
-  const data = (payload ?? {}) as { url?: unknown; error?: unknown };
+  const data = (payload ?? {}) as { url?: unknown; error?: unknown; message?: unknown };
 
   if (!response.ok) {
-    throw new Error(typeof data.error === "string" ? data.error : "Something went wrong.");
+    // The checkout route answers 409 when a payment for this invoice is
+    // already in flight, or when it turns out to have been paid already —
+    // both carry a sentence written for the customer rather than a code.
+    // Showing "Something went wrong" for either would be a lie, and the
+    // obvious response to it is to press the button again.
+    const message =
+      typeof data.message === "string"
+        ? data.message
+        : typeof data.error === "string"
+          ? data.error
+          : "Something went wrong.";
+    throw new Error(message);
   }
   if (typeof data.url !== "string") {
     throw new Error("Stripe did not return a payment page.");

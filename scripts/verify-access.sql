@@ -30,6 +30,11 @@ begin
     $q$select finish_stripe_event('evt_access_test', gen_random_uuid(), 'applied')$q$,
     $q$select release_stripe_event('evt_access_test', gen_random_uuid())$q$,
     $q$select business_today()$q$,
+    $q$select begin_payment_operation('10000000-0000-0000-0000-000000000001',
+                                      'checkout', 'access-test', 100)$q$,
+    $q$select attach_payment_operation('access-test', 'checkout_session', 'cs_x')$q$,
+    $q$select resolve_payment_operation('access-test', 'failed')$q$,
+    $q$select settle_payment_operation_by_ref('10000000-0000-0000-0000-000000000001', 'cs_x')$q$,
     $q$select record_autocharge_failure('10000000-0000-0000-0000-000000000001', 'test')$q$,
     $q$select resettle_invoice('10000000-0000-0000-0000-000000000001')$q$
   ] loop
@@ -159,6 +164,10 @@ begin
     'finish_stripe_event(text,uuid,text,text)',
     'release_stripe_event(text,uuid,text)',
     'business_today()',
+    'begin_payment_operation(uuid,payment_operation_channel,text,integer,integer)',
+    'attach_payment_operation(text,text,text,text,timestamptz)',
+    'resolve_payment_operation(text,payment_operation_state,text)',
+    'settle_payment_operation_by_ref(uuid,text)',
     'record_autocharge_failure(uuid,text,timestamptz)',
     'resettle_invoice(uuid)'
   ] loop

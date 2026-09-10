@@ -30,7 +30,12 @@ interface EventRow {
 interface Harness {
   store: BillingStore;
   events: Map<string, EventRow>;
-  recorded: { paymentIntents: string[]; refundKinds: string[]; settlements: string[] };
+  recorded: {
+    paymentIntents: string[];
+    refundKinds: string[];
+    settlements: string[];
+    settledOperations: string[];
+  };
   /** Expire the lease on an event, as a dead handler's would. */
   expireLease(id: string): void;
 }
@@ -43,6 +48,7 @@ function harness(
     paymentIntents: [] as string[],
     refundKinds: [] as string[],
     settlements: [] as string[],
+    settledOperations: [] as string[],
   };
   const now = options.now ?? (() => Date.now());
   const LEASE_MS = 300_000;
@@ -106,6 +112,10 @@ function harness(
       return `pay_${recorded.paymentIntents.length}`;
     },
 
+    async settlePaymentOperationByRef(_invoiceId: string, ref: string | null): Promise<boolean> {
+      if (ref) recorded.settledOperations.push(ref);
+      return true;
+    },
     async recordPaymentFailure(): Promise<void> {},
     async findCustomerIdByStripeId(): Promise<string | null> {
       return "cus-1";

@@ -29,6 +29,13 @@ export type BillingTransition =
       paymentIntentId: string | null;
       amountCents: number;
       tipCents: number;
+      /**
+       * The Stripe object the collection attempt was recorded against — a
+       * checkout session id, or the intent's own id. It is what closes the
+       * `payment_operations` row (0012), which otherwise stays open and
+       * blocks the invoice from being collected again.
+       */
+      collectionRef: string | null;
     }
   | {
       kind: "payment_failed";
@@ -84,6 +91,7 @@ export function toTransition(event: StripeEventLike): BillingTransition {
         paymentIntentId: str(o, "id"),
         amountCents: int(o, "amount_received") ?? int(o, "amount") ?? 0,
         tipCents: metadataInt(o, "tip_cents") ?? 0,
+        collectionRef: str(o, "id"),
       };
     }
 
@@ -174,6 +182,9 @@ function fromCheckoutSession(type: string, o: Obj): BillingTransition {
     paymentIntentId: str(o, "payment_intent"),
     amountCents: int(o, "amount_total") ?? 0,
     tipCents: metadataInt(o, "tip_cents") ?? 0,
+    // The session's own id: that is what the checkout route recorded the
+    // attempt against, before any payment intent existed.
+    collectionRef: str(o, "id"),
   };
 }
 

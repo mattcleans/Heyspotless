@@ -4,6 +4,45 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AutochargeCandidate } from "./autocharge";
 import type { BillingTransition } from "./events";
 import type { RefundKind, RefundStatus } from "./types";
+
+/** Which surface a collection attempt came from. */
+export type PaymentOperationChannel = "checkout" | "autocharge";
+
+/**
+ * A collection attempt, as `begin_payment_operation` reports it.
+ *
+ *   "started"  — ours; call Stripe.
+ *   "existing" — this exact key is already in play. Two identical tabs land
+ *                here and get the SAME Stripe session, not a second one.
+ *   "blocked"  — a different attempt is open on this invoice. Reconcile it
+ *                before collecting again.
+ */
+export interface PaymentOperation {
+  outcome: "started" | "existing" | "blocked";
+  id: string;
+  channel: PaymentOperationChannel;
+  idempotencyKey: string;
+  stripeObjectId: string | null;
+  stripeObjectKind: "checkout_session" | "payment_intent" | null;
+  redirectUrl: string | null;
+  amountCents: number;
+}
+
+function toPaymentOperation(row: Record<string, unknown>): PaymentOperation {
+  const text = (key: string): string | null =>
+    typeof row[key] === "string" ? (row[key] as string) : null;
+
+  return {
+    outcome: (text("outcome") ?? "started") as PaymentOperation["outcome"],
+    id: text("operation_id") ?? text("id") ?? "",
+    channel: (text("channel") ?? "checkout") as PaymentOperationChannel,
+    idempotencyKey: text("idempotency_key") ?? "",
+    stripeObjectId: text("stripe_object_id"),
+    stripeObjectKind: text("stripe_object_kind") as PaymentOperation["stripeObjectKind"],
+    redirectUrl: text("redirect_url"),
+    amountCents: typeof row["amount_cents"] === "number" ? row["amount_cents"] : 0,
+  };
+}
 import { toInvoice } from "../data/mappers";
 
 /**
@@ -200,6 +239,130 @@ export class BillingStore {
     if (error) throw new Error(`recordPaymentFailure: ${error.message}`);
   }
 
+  // --- collection attempts -------------------------------------------------
+
+  /**
+   * Start a collection attempt, or find out why we may not.
+   *
+   * Written BEFORE Stripe is called. Between "Stripe has been asked for
+   * money" and "we know what happened" there used to be no record at all, so
+   * anything that consulted the invoice saw an unpaid invoice and started
+   * again — a second Checkout tab, a repeated submission, the nightly sweep
+   * landing on an invoice a customer was in the middle of paying.
+   */
+  async beginPaymentOperation(args: {
+    invoiceId: string;
+    channel: PaymentOperationChannel;
+    idempotencyKey: string;
+    amountCents: number;
+    ttlSeconds?: number;
+  }): Promise<PaymentOperation> {
+    const { data, error } = await this.db.rpc("begin_payment_operation", {
+      p_invoice_id: args.invoiceId,
+      p_channel: args.channel,
+      p_idempotency_key: args.idempotencyKey,
+      p_amount_cents: args.amountCents,
+      p_ttl_seconds: args.ttlSeconds ?? null,
+    });
+    if (error) throw new Error(`beginPaymentOperation: ${error.message}`);
+
+    const row = Array.isArray(data) ? (data[0] as Record<string, unknown> | undefined) : null;
+    if (!row) throw new Error("beginPaymentOperation: no row returned");
+    return toPaymentOperation(row);
+  }
+
+  /** Record what Stripe object an attempt became, as soon as Stripe answers. */
+  async attachPaymentOperation(args: {
+    idempotencyKey: string;
+    stripeObjectKind: "checkout_session" | "payment_intent";
+    stripeObjectId: string;
+    redirectUrl?: string | null;
+    expiresAt?: Date | null;
+  }): Promise<boolean> {
+    const { data, error } = await this.db.rpc("attach_payment_operation", {
+      p_idempotency_key: args.idempotencyKey,
+      p_stripe_object_kind: args.stripeObjectKind,
+      p_stripe_object_id: args.stripeObjectId,
+      p_redirect_url: args.redirectUrl ?? null,
+      p_expires_at: args.expiresAt ? args.expiresAt.toISOString() : null,
+    });
+    if (error) throw new Error(`attachPaymentOperation: ${error.message}`);
+    return data === true;
+  }
+
+  /**
+   * Close a collection attempt.
+   *
+   * "failed" means Stripe SAID it failed. An attempt whose outcome we could
+   * not learn is "abandoned", and only after reconciling with Stripe — the
+   * difference is the whole point, because retrying an unknown outcome as
+   * though it were a decline is how the same money gets taken twice.
+   */
+  async resolvePaymentOperation(
+    idempotencyKey: string,
+    state: "succeeded" | "failed" | "abandoned",
+    errorMessage?: string,
+  ): Promise<boolean> {
+    const { data, error } = await this.db.rpc("resolve_payment_operation", {
+      p_idempotency_key: idempotencyKey,
+      p_state: state,
+      p_error: errorMessage ?? null,
+    });
+    if (error) throw new Error(`resolvePaymentOperation: ${error.message}`);
+    return data === true;
+  }
+
+  /** Close whatever attempt a settled payment belongs to, by Stripe object. */
+  async settlePaymentOperationByRef(invoiceId: string, ref: string | null): Promise<boolean> {
+    if (!ref) return false;
+    const { data, error } = await this.db.rpc("settle_payment_operation_by_ref", {
+      p_invoice_id: invoiceId,
+      p_ref: ref,
+    });
+    if (error) throw new Error(`settlePaymentOperationByRef: ${error.message}`);
+    return data === true;
+  }
+
+  /** The attempt currently open on an invoice, if any. */
+  async openPaymentOperation(invoiceId: string): Promise<PaymentOperation | null> {
+    const { data, error } = await this.db.rpc("open_payment_operation", {
+      p_invoice_id: invoiceId,
+    });
+    if (error) throw new Error(`openPaymentOperation: ${error.message}`);
+
+    const row = Array.isArray(data)
+      ? (data[0] as Record<string, unknown> | undefined)
+      : (data as Record<string, unknown> | null);
+    if (!row || typeof row["id"] !== "string") return null;
+    return toPaymentOperation({ ...row, operation_id: row["id"], outcome: "existing" });
+  }
+
+  /** Every invoice with a collection attempt open, for the sweep to avoid. */
+  async invoiceIdsWithOpenCollection(invoiceIds: readonly string[]): Promise<Set<string>> {
+    if (invoiceIds.length === 0) return new Set();
+
+    const { data, error } = await this.db
+      .from("payment_operations")
+      .select("invoice_id, expires_at")
+      .in("invoice_id", [...invoiceIds])
+      .eq("state", "open");
+    if (error) throw new Error(`invoiceIdsWithOpenCollection: ${error.message}`);
+
+    const now = Date.now();
+    const open = new Set<string>();
+    for (const row of (data ?? []) as Record<string, unknown>[]) {
+      const invoiceId = row["invoice_id"];
+      const expiresAt = row["expires_at"];
+      if (typeof invoiceId !== "string") continue;
+      // An expired attempt is not in flight. It still blocks a NEW attempt
+      // until reconciled (begin_payment_operation abandons it), but it must
+      // not make the sweep skip an invoice for ever.
+      if (typeof expiresAt === "string" && new Date(expiresAt).getTime() <= now) continue;
+      open.add(invoiceId);
+    }
+    return open;
+  }
+
   // --- customers and cards -------------------------------------------------
 
   async setStripeCustomerId(customerId: string, stripeCustomerId: string): Promise<void> {
@@ -363,6 +526,14 @@ export class BillingStore {
       if (typeof customerId === "string" && typeof pm === "string") defaultCard.set(customerId, pm);
     }
 
+    // Which of these a customer is already in the middle of paying. The
+    // sweep must not charge alongside a Checkout page, and this is the only
+    // signal that says so — Stripe's idempotency key is per-channel and sees
+    // the two attempts as unrelated.
+    const inFlight = await this.invoiceIdsWithOpenCollection(
+      invoiceRows.map((r) => String(r["id"])),
+    );
+
     return invoiceRows.map((row) => {
       const invoice = toInvoice(row);
       const customer = relation(row, "customers");
@@ -378,6 +549,8 @@ export class BillingStore {
         autopayEnabled: customer["autopay_enabled"] === true,
         autopayAuthorizedAt: parseDate(customer["autopay_authorized_at"]),
         defaultPaymentMethodId: defaultCard.get(invoice.customerId) ?? null,
+        collectionInFlight: inFlight.has(invoice.id),
+        autochargePausedAt: parseDate(row["autocharge_paused_at"]),
       };
     });
   }

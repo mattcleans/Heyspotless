@@ -28,6 +28,10 @@ describe("checkout.session.completed", () => {
       paymentIntentId: "pi_1",
       amountCents: 19000,
       tipCents: 2000,
+      // The session's own id, not the intent's: that is what the checkout
+      // route recorded the collection attempt against, before any payment
+      // intent existed to record it against.
+      collectionRef: "cs_1",
     });
   });
 
