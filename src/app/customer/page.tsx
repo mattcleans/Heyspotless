@@ -3,6 +3,7 @@ import { getRepository } from "@/lib/data";
 import type { Invoice, PaymentMethod } from "@/lib/data/types";
 import { FREQUENCY_LABELS, SERVICE_LABELS } from "@/lib/pricing/price-book";
 import { formatCents } from "@/lib/money";
+import { formatCalendarDate, formatDateInZone } from "@/lib/time/zone";
 import { isBillingEnabled } from "@/lib/stripe/env";
 import { PayInvoiceButton, SaveCardButton } from "./billing-actions";
 
@@ -37,6 +38,10 @@ export default async function CustomerPage() {
   const defaultCard = cards.find((c) => c.isDefault) ?? cards[0] ?? null;
   const billingLive = isBillingEnabled();
   const autopayOn = Boolean(customer?.autopayEnabled);
+  // Autopay switched on with nothing to charge. It is a real state — removing
+  // your last card gets you here — and the whole point of recording it is that
+  // the screen can say so instead of quietly showing "On" and charging nobody.
+  const autopaySuspended = autopayOn && customer?.autopaySuspendedAt != null;
 
   return (
     <>
@@ -44,6 +49,16 @@ export default async function CustomerPage() {
         Your upcoming visits, what you owe, and the card we keep on file. Rating a clean feeds
         straight back into who is eligible for future jobs.
       </PageHeader>
+
+      {autopaySuspended ? (
+        <Callout tone="warn" label="Autopay is paused">
+          {customer?.autopaySuspendedReason
+            ? `Autopay is on, but ${customer.autopaySuspendedReason}, so nothing can be charged.`
+            : "Autopay is on, but there is no card on file, so nothing can be charged."}{" "}
+          Save a card below and it resumes straight away — your existing authorisation still
+          stands, so there is nothing to agree to again.
+        </Callout>
+      ) : null}
 
       {!billingLive ? (
         <Callout tone="warn" label="Payments are not live yet">
@@ -71,9 +86,15 @@ export default async function CustomerPage() {
         />
         <Stat
           label="Autopay"
-          value={autopayOn ? "On" : "Off"}
-          tone={autopayOn ? "good" : "default"}
-          note={autopayOn ? "Charged when a clean is invoiced" : "You pay each invoice yourself"}
+          value={autopaySuspended ? "Paused" : autopayOn ? "On" : "Off"}
+          tone={autopaySuspended ? "warn" : autopayOn ? "good" : "default"}
+          note={
+            autopaySuspended
+              ? "Save a card to resume — you will not be asked to opt in again"
+              : autopayOn
+                ? "Charged when a clean is invoiced"
+                : "You pay each invoice yourself"
+          }
         />
       </div>
 
@@ -89,7 +110,7 @@ export default async function CustomerPage() {
                 <div>
                   <p className="font-medium text-ink">
                     {formatCents(invoice.balanceCents)} due
-                    {invoice.dueOn ? ` · ${formatDate(invoice.dueOn)}` : ""}
+                    {invoice.dueOn ? ` · ${formatCalendarDate(invoice.dueOn)}` : ""}
                   </p>
                   <p className="mt-1 flex items-center gap-2 text-sm text-ink-3">
                     <Pill tone={invoice.status === "overdue" ? "bad" : "neutral"}>
@@ -107,7 +128,7 @@ export default async function CustomerPage() {
                   {invoice.lastError ? (
                     <p className="mt-1.5 text-xs text-bad">
                       Last attempt failed: {invoice.lastError}
-                      {invoice.nextAttemptAt ? ` We will try again on ${formatDate(invoice.nextAttemptAt)}.` : ""}
+                      {invoice.nextAttemptAt ? ` We will try again on ${formatDateInZone(invoice.nextAttemptAt)}.` : ""}
                     </p>
                   ) : null}
                 </div>
@@ -158,7 +179,7 @@ export default async function CustomerPage() {
                 className="card flex items-center justify-between gap-4 px-4 py-3"
               >
                 <span className="text-sm text-ink-2">
-                  {invoice.issuedAt ? formatDate(invoice.issuedAt) : formatDate(invoice.createdAt)}
+                  {formatDateInZone(invoice.issuedAt ?? invoice.createdAt)}
                   {invoice.amounts.refundedCents > 0
                     ? ` · ${formatCents(invoice.amounts.refundedCents)} refunded`
                     : ""}
@@ -184,7 +205,7 @@ export default async function CustomerPage() {
                 </p>
                 <p className="mt-0.5 text-sm text-ink-3">
                   {job.street}, {job.city}
-                  {job.scheduledStart ? ` · ${formatDate(job.scheduledStart)}` : ""}
+                  {job.scheduledStart ? ` · ${formatDateInZone(job.scheduledStart)}` : ""}
                 </p>
               </div>
               <span className="nums font-semibold text-navy">{formatCents(job.priceCents)}</span>
@@ -201,6 +222,4 @@ function cardNote(card: PaymentMethod): string {
   return `expires ${String(card.expMonth).padStart(2, "0")}/${String(card.expYear).slice(-2)}`;
 }
 
-function formatDate(d: Invoice["createdAt"]): string {
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
+

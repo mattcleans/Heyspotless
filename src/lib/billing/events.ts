@@ -29,6 +29,13 @@ export type BillingTransition =
       paymentIntentId: string | null;
       amountCents: number;
       tipCents: number;
+      /**
+       * The Stripe object the collection attempt was recorded against — a
+       * checkout session id, or the intent's own id. It is what closes the
+       * `payment_operations` row (0012), which otherwise stays open and
+       * blocks the invoice from being collected again.
+       */
+      collectionRef: string | null;
     }
   | {
       kind: "payment_failed";
@@ -54,6 +61,16 @@ export type BillingTransition =
       amountCents: number;
       stripeRefundId: string | null;
     }
+  /**
+   * A refund whose outcome changed after the fact — Stripe can fail a refund
+   * days later when the issuer rejects it. Without this the money had already
+   * moved on our side and nothing ever put it back.
+   */
+  | {
+      kind: "refund_settled";
+      stripeRefundId: string;
+      status: "succeeded" | "failed" | "canceled";
+    }
   | { kind: "ignored"; type: string; reason: string };
 
 type Obj = Record<string, unknown>;
@@ -74,6 +91,7 @@ export function toTransition(event: StripeEventLike): BillingTransition {
         paymentIntentId: str(o, "id"),
         amountCents: int(o, "amount_received") ?? int(o, "amount") ?? 0,
         tipCents: metadataInt(o, "tip_cents") ?? 0,
+        collectionRef: str(o, "id"),
       };
     }
 
@@ -117,6 +135,24 @@ export function toTransition(event: StripeEventLike): BillingTransition {
     case "charge.refunded":
       return fromChargeRefunded(event.type, o);
 
+    // Stripe reports a refund's own lifecycle separately from the charge.
+    // `refund.updated` is the modern event; `charge.refund.updated` is the
+    // older name and still arrives on accounts configured for it.
+    case "refund.updated":
+    case "refund.failed":
+    case "charge.refund.updated": {
+      const stripeRefundId = str(o, "id");
+      if (!stripeRefundId) return ignored(event.type, "no refund id");
+
+      const status = str(o, "status");
+      if (status === "succeeded" || status === "failed" || status === "canceled") {
+        return { kind: "refund_settled", stripeRefundId, status };
+      }
+      // `pending` and `requires_action` are not outcomes; there is nothing to
+      // apply, and treating them as one would move money on a guess.
+      return ignored(event.type, `refund status is ${status ?? "absent"}`);
+    }
+
     default:
       return ignored(event.type, "unhandled event type");
   }
@@ -146,6 +182,9 @@ function fromCheckoutSession(type: string, o: Obj): BillingTransition {
     paymentIntentId: str(o, "payment_intent"),
     amountCents: int(o, "amount_total") ?? 0,
     tipCents: metadataInt(o, "tip_cents") ?? 0,
+    // The session's own id: that is what the checkout route recorded the
+    // attempt against, before any payment intent existed.
+    collectionRef: str(o, "id"),
   };
 }
 

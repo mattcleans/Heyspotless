@@ -11,6 +11,7 @@
 import type { Frequency, ServiceType } from "../pricing/price-book";
 import type { Cleaner, W2Terms } from "../dispatch/types";
 import type { InvoiceStatus, PaymentStatus } from "../billing/types";
+import { toCalendarDate, type CalendarDate } from "../time/zone";
 import type {
   Customer,
   Invoice,
@@ -62,6 +63,16 @@ function dateOrNull(row: Row, key: string): Date | null {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
+/**
+ * A Postgres `date` column. Kept as the day it is rather than parsed into a
+ * timestamp, because `new Date("2026-09-15")` is midnight UTC — which is the
+ * evening of the 14th in Dallas, and that one line is what made future-due
+ * invoices look overdue.
+ */
+function calendarDateOrNull(row: Row, key: string): CalendarDate | null {
+  return toCalendarDate(row[key]);
+}
+
 function strArray(row: Row, key: string): string[] {
   const v = row[key];
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
@@ -92,10 +103,13 @@ export function toCustomer(row: Row): Customer {
     lastName: str(row, "last_name"),
     email: strOrNull(row, "email"),
     phone: strOrNull(row, "phone"),
+    notes: strOrNull(row, "notes"),
     lifetimeValueCents: num(row, "lifetime_value_cents", 0),
     stripeCustomerId: strOrNull(row, "stripe_customer_id"),
     autopayEnabled: bool(row, "autopay_enabled"),
     autopayAuthorizedAt: dateOrNull(row, "autopay_authorized_at"),
+    autopaySuspendedAt: dateOrNull(row, "autopay_suspended_at"),
+    autopaySuspendedReason: strOrNull(row, "autopay_suspended_reason"),
   };
 }
 
@@ -201,9 +215,10 @@ export function toInvoice(row: Row): Invoice {
       totalCents: num(row, "total_cents", 0),
       amountPaidCents: num(row, "amount_paid_cents", 0),
       refundedCents: num(row, "refunded_cents", 0),
+      creditCents: num(row, "credit_cents", 0),
     },
     balanceCents: num(row, "balance_cents", 0),
-    dueOn: dateOrNull(row, "due_on"),
+    dueOn: calendarDateOrNull(row, "due_on"),
     issuedAt: dateOrNull(row, "issued_at"),
     voidedAt: dateOrNull(row, "voided_at"),
     attemptCount: num(row, "attempt_count", 0),

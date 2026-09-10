@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { BillingStore } from "@/lib/billing/store";
 import { type AutochargeDecision, nextAttemptAfter, planSweep } from "@/lib/billing/autocharge";
 import { chargeOffSession } from "@/lib/billing/gateway";
+import { reconcileInvoiceCollection } from "@/lib/billing/collection";
 import { cronSecretMatches, isBillingEnabled } from "@/lib/stripe/env";
 
 /**
@@ -49,7 +50,17 @@ export async function POST(request: NextRequest) {
   );
   const stripeIds = await stripeCustomerIds(store, charging.map((d) => d.customerId));
 
-  const result = { charged: 0, failed: 0, skipped: 0, escalated: 0, unchargeable: 0 };
+  const result = {
+    charged: 0,
+    failed: 0,
+    skipped: 0,
+    escalated: 0,
+    unchargeable: 0,
+    /** Attempts whose outcome we could not learn. Deliberately not "failed". */
+    unresolved: 0,
+    /** Payments Stripe had taken that nobody had recorded until now. */
+    recovered: 0,
+  };
 
   for (const decision of decisions) {
     if (decision.action === "skip") {
@@ -70,6 +81,40 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
+    // Claim the invoice before calling Stripe. `planSweep` already skipped
+    // anything with an attempt open, but the sweep and a customer pressing
+    // Pay are not synchronised — this is what makes the claim atomic.
+    const operation = await store.beginPaymentOperation({
+      invoiceId: decision.invoiceId,
+      channel: "autocharge",
+      idempotencyKey: decision.idempotencyKey,
+      amountCents: decision.amountCents,
+      // Long enough to cover a slow authorisation, short enough that a dead
+      // process does not hold the invoice until morning.
+      ttlSeconds: 15 * 60,
+    });
+
+    if (operation.outcome === "blocked") {
+      // Somebody started collecting between planning and now.
+      result.skipped += 1;
+      continue;
+    }
+
+    if (operation.outcome === "existing") {
+      // This exact attempt has been made before and we never resolved it.
+      // Ask Stripe what became of it rather than making it again — an
+      // unknown outcome retried as though it were a decline is how the same
+      // money gets taken twice.
+      const reconciled = await reconcileInvoiceCollection(store, decision.invoiceId);
+      if (reconciled.state === "settled") {
+        if (reconciled.recoveredPayment) result.recovered += 1;
+        result.charged += 1;
+      } else {
+        result.unresolved += 1;
+      }
+      continue;
+    }
+
     try {
       const charge = await chargeOffSession({
         invoiceId: decision.invoiceId,
@@ -78,6 +123,14 @@ export async function POST(request: NextRequest) {
         amountCents: decision.amountCents,
         idempotencyKey: decision.idempotencyKey,
         description: `Hey Spotless — invoice ${decision.invoiceId.slice(0, 8)}`,
+      });
+
+      // Written down before anything else, so a crash from here on leaves a
+      // record pointing at the intent rather than nothing at all.
+      await store.attachPaymentOperation({
+        idempotencyKey: decision.idempotencyKey,
+        stripeObjectKind: "payment_intent",
+        stripeObjectId: charge.paymentIntentId,
       });
 
       if (charge.status === "succeeded") {
@@ -93,11 +146,21 @@ export async function POST(request: NextRequest) {
           isAutocharge: true,
           method: "card",
         });
+        await store.resolvePaymentOperation(decision.idempotencyKey, "succeeded");
         result.charged += 1;
+      } else if (UNRESOLVED_INTENT_STATUSES.has(charge.status)) {
+        // Genuinely still in flight — most often a card wanting
+        // authentication the customer is not present to give. The attempt
+        // stays OPEN so nothing else collects this invoice while we wait,
+        // and it is not counted as a failure, because it has not failed.
+        result.unresolved += 1;
       } else {
-        // Anything not immediately succeeded — most often a card wanting
-        // authentication the customer is not present to give — spends the
-        // attempt and waits for the webhook to say how it ended.
+        // Stripe said no. That is an outcome, and it spends an attempt.
+        await store.resolvePaymentOperation(
+          decision.idempotencyKey,
+          "failed",
+          `payment intent ${charge.status}`,
+        );
         await store.recordAutochargeFailure(
           decision.invoiceId,
           `payment intent ${charge.status}`,
@@ -106,12 +169,25 @@ export async function POST(request: NextRequest) {
         result.failed += 1;
       }
     } catch (error) {
-      await store.recordAutochargeFailure(
-        decision.invoiceId,
-        messageOf(error),
-        nextAttemptAfter(decision.attempt, now),
-      );
-      result.failed += 1;
+      if (isDecline(error)) {
+        // A card decline is a KNOWN outcome. Resolve the attempt, spend one,
+        // and schedule the next.
+        await store.resolvePaymentOperation(decision.idempotencyKey, "failed", messageOf(error));
+        await store.recordAutochargeFailure(
+          decision.invoiceId,
+          messageOf(error),
+          nextAttemptAfter(decision.attempt, now),
+        );
+        result.failed += 1;
+      } else {
+        // We do NOT know what happened — a timeout, a dropped connection, a
+        // 500 from Stripe. The charge may well have gone through. Leave the
+        // attempt open so nothing else collects this invoice, and let the
+        // next sweep reconcile it with Stripe. Treating this as a decline is
+        // exactly how an invoice gets paid twice.
+        console.error(`autocharge ${decision.invoiceId} outcome unknown`, error);
+        result.unresolved += 1;
+      }
     }
   }
 
@@ -128,6 +204,38 @@ async function stripeCustomerIds(
     if (stripeId) found.set(id, stripeId);
   }
   return found;
+}
+
+/**
+ * Intent statuses that are not yet an answer. The customer's bank has not
+ * finished, so the attempt stays open rather than being written off.
+ */
+const UNRESOLVED_INTENT_STATUSES = new Set([
+  "processing",
+  "requires_action",
+  "requires_confirmation",
+  "requires_capture",
+]);
+
+/**
+ * Did Stripe TELL us this failed, or did we simply not hear back?
+ *
+ * The distinction is the difference between one charge and two. Stripe
+ * reports a decline as a structured `card_error` / `StripeCardError` with the
+ * request completed; a timeout, a socket reset or a 500 is a connection or
+ * API error, and the charge behind it may well have succeeded.
+ */
+function isDecline(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const type = (error as { type?: unknown }).type;
+  const name = (error as { name?: unknown }).name;
+  return (
+    type === "StripeCardError" ||
+    type === "card_error" ||
+    type === "StripeInvalidRequestError" ||
+    name === "StripeCardError" ||
+    name === "StripeInvalidRequestError"
+  );
 }
 
 /**

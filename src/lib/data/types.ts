@@ -11,6 +11,7 @@ import type { Frequency, ServiceType } from "../pricing/price-book";
 import type { Cleaner, DispatchJob } from "../dispatch/types";
 import type { RoomCounts } from "../pricing/quote";
 import type { InvoiceAmounts, InvoiceStatus, PaymentStatus } from "../billing/types";
+import type { CalendarDate } from "../time/zone";
 
 export type UserRole = "admin" | "cleaner" | "customer";
 
@@ -28,6 +29,15 @@ export interface Customer {
   lastName: string;
   email: string | null;
   phone: string | null;
+  /**
+   * What the office needs to know before quoting or scheduling — the dog that
+   * bites, the neighbour with the key, the reason they left the last cleaner.
+   *
+   * Carried on the domain type rather than fetched separately because the edit
+   * form writes every field it has: a notes field the form could not see was a
+   * notes field the form silently blanked on the next save.
+   */
+  notes: string | null;
   lifetimeValueCents: number;
   /** Null until their first Stripe interaction creates the customer object. */
   stripeCustomerId: string | null;
@@ -38,6 +48,17 @@ export interface Customer {
    */
   autopayEnabled: boolean;
   autopayAuthorizedAt: Date | null;
+  /**
+   * Set when autopay is consented to but cannot run — today that means the
+   * last saved card was detached. Consent is deliberately NOT withdrawn, so
+   * saving a card resumes it without asking again.
+   *
+   * It exists so that "autopay is on and nothing is being charged" is a state
+   * the screen can name, rather than one the customer discovers from a
+   * dunning email.
+   */
+  autopaySuspendedAt: Date | null;
+  autopaySuspendedReason: string | null;
 }
 
 export interface Property {
@@ -86,7 +107,13 @@ export interface Invoice {
   status: InvoiceStatus;
   amounts: InvoiceAmounts;
   balanceCents: number;
-  dueOn: Date | null;
+  /**
+   * A calendar DAY, not an instant. "Due on the 15th" has no time of day, and
+   * the moment it is turned into one the answer to "is this overdue" starts
+   * depending on the server's zone — an invoice due today falls overdue at 7pm
+   * the evening before, in a UTC process. Compared against `todayIn()`.
+   */
+  dueOn: CalendarDate | null;
   issuedAt: Date | null;
   voidedAt: Date | null;
   /** Auto-charge state. Zero attempts means it has never been tried. */

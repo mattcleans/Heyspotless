@@ -34,6 +34,8 @@ export interface Repository {
   getCustomer(id: string): Promise<Customer | null>;
   getCustomerByProfile(profileId: string): Promise<Customer | null>;
   getProperty(id: string): Promise<Property | null>;
+  /** Every property belonging to one customer. */
+  listProperties(customerId: string): Promise<Property[]>;
 
   /**
    * Billing reads. Writes deliberately do not live here — the repository is a

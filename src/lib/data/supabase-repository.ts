@@ -42,15 +42,17 @@ const JOB_SELECT = `
 const JOB_SELECT_FOR_CLEANER = `${JOB_SELECT}, job_assignments!inner ( cleaner_id )`;
 
 const CUSTOMER_SELECT = `
-  id, first_name, last_name, email, phone, lifetime_value_cents,
-  stripe_customer_id, autopay_enabled, autopay_authorized_at
+  id, first_name, last_name, email, phone, notes, lifetime_value_cents,
+  stripe_customer_id, autopay_enabled, autopay_authorized_at,
+  autopay_suspended_at, autopay_suspended_reason
 `;
 
 /** `balance_cents` is generated in the database; it is selected, never computed. */
 const INVOICE_SELECT = `
   id, customer_id, job_id, status, subtotal_cents, tip_cents, total_cents,
-  amount_paid_cents, refunded_cents, balance_cents, due_on, issued_at,
-  voided_at, attempt_count, next_attempt_at, last_error, created_at
+  amount_paid_cents, refunded_cents, credit_cents, balance_cents, due_on,
+  issued_at, voided_at, attempt_count, next_attempt_at, last_error,
+  autocharge_paused_at, autocharge_paused_reason, created_at
 `;
 
 const PAYMENT_METHOD_SELECT = `
@@ -205,6 +207,20 @@ export class SupabaseRepository implements Repository {
       .maybeSingle();
     if (error) throw new Error(`getProperty: ${error.message}`);
     return data ? toProperty(data as unknown as Row) : null;
+  }
+
+  async listProperties(customerId: string): Promise<Property[]> {
+    const { data, error } = await this.db
+      .from("properties")
+      .select(
+        "id, customer_id, street, city, state, zip, bedrooms, bathrooms, " +
+          "half_baths, kitchens, living_rooms, utility_rooms, gate_code, " +
+          "access_notes, parking_notes, pets",
+      )
+      .eq("customer_id", customerId)
+      .order("street");
+    if (error) throw new Error(`listProperties: ${error.message}`);
+    return rows(data).map(toProperty);
   }
 
   async listInvoices(filter: InvoiceFilter = {}): Promise<Invoice[]> {

@@ -5,6 +5,7 @@
  * reviewable and demoable, and it is what the 148 engine tests exercise.
  */
 
+import { demoCustomers, demoJobs, demoProperties } from "../demo/added";
 import {
   DEMO_CLEANERS,
   DEMO_INVOICES,
@@ -42,12 +43,32 @@ function toCustomer(demo: (typeof DEMO_JOBS)[number]): Customer {
     lastName: rest.join(" "),
     email: null,
     phone: null,
+    notes: null,
     lifetimeValueCents: demo.priceCents,
     stripeCustomerId: null,
     // Demo mode has consent recorded so the customer screen renders the
     // card-on-file state; there is no Stripe account behind it to charge.
     autopayEnabled: true,
     autopayAuthorizedAt: new Date("2026-06-01T00:00:00Z"),
+    autopaySuspendedAt: null,
+    autopaySuspendedReason: null,
+  };
+}
+
+/** A fixture job's property, in the shape the schema would have stored. */
+function jobProperty(demo: (typeof DEMO_JOBS)[number]): Property {
+  return {
+    id: `prop-${demo.id}`,
+    customerId: `cust-${demo.id}`,
+    street: demo.street,
+    city: demo.city,
+    state: "TX",
+    zip: demo.zip,
+    rooms: { bedrooms: demo.bedrooms, bathrooms: demo.bathrooms },
+    gateCode: null,
+    accessNotes: null,
+    parkingNotes: null,
+    pets: null,
   };
 }
 
@@ -55,7 +76,9 @@ export class DemoRepository implements Repository {
   readonly isDemo = true;
 
   async listJobs(filter: JobFilter = {}): Promise<Job[]> {
-    let jobs = DEMO_JOBS.map(toJob);
+    // Booked first, so a job someone has just created is visible without
+    // scrolling past the fixtures.
+    let jobs = [...demoJobs()].reverse().concat(DEMO_JOBS.map(toJob));
     if (filter.customerId) jobs = jobs.filter((j) => j.customerId === filter.customerId);
     // Demo mode has no assignments table; every job is visible to the one
     // cleaner the demo signs in as.
@@ -83,12 +106,25 @@ export class DemoRepository implements Repository {
   }
 
   async listCustomers(limit?: number): Promise<Customer[]> {
-    const all = DEMO_JOBS.map(toCustomer);
+    // Newest first: someone who has just added a customer expects to see them.
+    const all = [...demoCustomers()].reverse().concat(DEMO_JOBS.map(toCustomer));
     return limit === undefined ? all : all.slice(0, limit);
   }
 
   async getCustomer(id: string): Promise<Customer | null> {
-    return DEMO_JOBS.map(toCustomer).find((c) => c.id === id) ?? null;
+    return (
+      demoCustomers().find((c) => c.id === id) ??
+      DEMO_JOBS.map(toCustomer).find((c) => c.id === id) ??
+      null
+    );
+  }
+
+  async listProperties(customerId: string): Promise<Property[]> {
+    const added = demoProperties().filter((p) => p.customerId === customerId);
+    const fromJobs = DEMO_JOBS.filter((j) => `cust-${j.id}` === customerId).map((j) =>
+      jobProperty(j),
+    );
+    return [...added, ...fromJobs];
   }
 
   async getCustomerByProfile(): Promise<Customer | null> {
@@ -97,21 +133,10 @@ export class DemoRepository implements Repository {
   }
 
   async getProperty(id: string): Promise<Property | null> {
+    const added = demoProperties().find((p) => p.id === id);
+    if (added) return added;
     const demo = DEMO_JOBS.find((j) => `prop-${j.id}` === id);
-    if (!demo) return null;
-    return {
-      id,
-      customerId: `cust-${demo.id}`,
-      street: demo.street,
-      city: demo.city,
-      state: "TX",
-      zip: demo.zip,
-      rooms: { bedrooms: demo.bedrooms, bathrooms: demo.bathrooms },
-      gateCode: null,
-      accessNotes: null,
-      parkingNotes: null,
-      pets: null,
-    };
+    return demo ? jobProperty(demo) : null;
   }
 
   async listInvoices(filter: InvoiceFilter = {}): Promise<Invoice[]> {
