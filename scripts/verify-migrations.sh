@@ -249,6 +249,70 @@ end $$;
 SQL
 echo "  money paths verified"
 
+# --- the business calendar (0008) -------------------------------------------
+# `resettle_invoice` used to decide overdue with `current_date`, which is the
+# SESSION's date. On a UTC server that rolled an invoice to overdue at 7pm the
+# previous evening in Dallas. The session zone is deliberately set to two very
+# different values below: the answer must not move.
+echo "  checking the business calendar"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_inv uuid; v_status invoice_status; v_fail integer := 0;
+  v_today date; v_utc_today date;
+begin
+  insert into customers (first_name, last_name) values ('Calendar','Check')
+    returning id into v_cust;
+
+  -- Due TODAY in Dallas. Not overdue, in any session zone.
+  insert into invoices (customer_id, status, subtotal_cents, total_cents, due_on)
+    values (v_cust, 'sent', 17000, 17000, business_today()) returning id into v_inv;
+
+  set local timezone = 'UTC';
+  perform resettle_invoice(v_inv);
+  select status into v_status from invoices where id = v_inv;
+  if v_status <> 'sent' then v_fail := v_fail+1;
+    raise warning 'due today read as % with the session in UTC', v_status; end if;
+
+  set local timezone = 'America/Chicago';
+  perform resettle_invoice(v_inv);
+  select status into v_status from invoices where id = v_inv;
+  if v_status <> 'sent' then v_fail := v_fail+1;
+    raise warning 'due today read as % with the session in Chicago', v_status; end if;
+
+  -- Far enough east that the session date is tomorrow while Dallas is still
+  -- on today. This is the case a `current_date` comparison gets wrong.
+  set local timezone = 'Pacific/Auckland';
+  perform resettle_invoice(v_inv);
+  select status into v_status from invoices where id = v_inv;
+  if v_status <> 'sent' then v_fail := v_fail+1;
+    raise warning 'due today read as % with the session in Auckland', v_status; end if;
+  reset timezone;
+
+  -- Yesterday in Dallas really is overdue, and stays overdue everywhere.
+  update invoices set due_on = business_today() - 1 where id = v_inv;
+  set local timezone = 'UTC';
+  perform resettle_invoice(v_inv);
+  select status into v_status from invoices where id = v_inv;
+  if v_status <> 'overdue' then v_fail := v_fail+1;
+    raise warning 'a day past due read as %', v_status; end if;
+  reset timezone;
+
+  -- And business_today() itself does not follow the session.
+  set local timezone = 'Pacific/Auckland';
+  v_today := business_today();
+  set local timezone = 'UTC';
+  v_utc_today := business_today();
+  reset timezone;
+  if v_today <> v_utc_today then v_fail := v_fail+1;
+    raise warning 'business_today() moved with the session: % vs %', v_today, v_utc_today; end if;
+
+  if v_fail > 0 then raise exception '% calendar assertions failed', v_fail; end if;
+  raise notice 'business calendar passed';
+end $$;
+SQL
+echo "  business calendar verified"
+
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql
 echo "  access controls verified"

@@ -19,6 +19,12 @@
 
 import { type InvoiceAmounts, BillingError } from "./types";
 import { balanceCents } from "./amounts";
+import {
+  BUSINESS_TIME_ZONE,
+  compareCalendarDates,
+  todayIn,
+  type CalendarDate,
+} from "../time/zone";
 
 /**
  * Four attempts, then a person looks at it. Card failures are overwhelmingly
@@ -48,7 +54,8 @@ export interface AutochargeCandidate {
   customerId: string;
   status: "draft" | "sent" | "paid" | "overdue" | "void";
   amounts: InvoiceAmounts;
-  dueOn: Date | null;
+  /** The day it falls due, as a day — see the note on `Invoice.dueOn`. */
+  dueOn: CalendarDate | null;
   voidedAt: Date | null;
   attemptCount: number;
   nextAttemptAt: Date | null;
@@ -100,7 +107,11 @@ export function nextAttemptAfter(attemptsMade: number, from: Date): Date | null 
  * anything that could look like a reason to charge, so a customer who has not
  * opted in can never reach the charge branch by any combination of state.
  */
-export function decide(candidate: AutochargeCandidate, now: Date = new Date()): AutochargeDecision {
+export function decide(
+  candidate: AutochargeCandidate,
+  now: Date = new Date(),
+  timeZone: string = BUSINESS_TIME_ZONE,
+): AutochargeDecision {
   const { invoiceId, customerId } = candidate;
 
   if (candidate.voidedAt || candidate.status === "void") {
@@ -129,9 +140,10 @@ export function decide(candidate: AutochargeCandidate, now: Date = new Date()): 
     return { action: "skip", invoiceId, reason: "no_card" };
   }
 
-  // Never charge ahead of the due date. An invoice with no due date is due on
-  // issue, which is how a completed one-off clean behaves.
-  if (candidate.dueOn && startOfDay(candidate.dueOn) > startOfDay(now)) {
+  // Never charge ahead of the due date, and "ahead" is decided on the business
+  // calendar. Comparing timestamps in the server's zone meant a card could be
+  // run the evening BEFORE the invoice was due, which is money taken early.
+  if (candidate.dueOn && compareCalendarDates(candidate.dueOn, todayIn(timeZone, now)) > 0) {
     return { action: "skip", invoiceId, reason: "not_yet_due" };
   }
 
@@ -156,10 +168,7 @@ export function decide(candidate: AutochargeCandidate, now: Date = new Date()): 
 export function planSweep(
   candidates: readonly AutochargeCandidate[],
   now: Date = new Date(),
+  timeZone: string = BUSINESS_TIME_ZONE,
 ): AutochargeDecision[] {
-  return candidates.map((c) => decide(c, now));
-}
-
-function startOfDay(d: Date): number {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  return candidates.map((c) => decide(c, now, timeZone));
 }

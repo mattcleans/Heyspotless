@@ -4,6 +4,7 @@ import { PageHeader, Pill, Stat } from "@/components/ui";
 import { getRepository } from "@/lib/data";
 import { formatPhone, formatRooms } from "@/lib/format";
 import { formatCents } from "@/lib/money";
+import { formatDateTimeInZone } from "@/lib/time/zone";
 import { FREQUENCY_LABELS, SERVICE_LABELS } from "@/lib/pricing/price-book";
 import { BookingForm } from "../booking-form";
 import { CustomerForm } from "../customer-form";
@@ -103,13 +104,7 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
                   <p className="mt-0.5 text-sm text-ink-3">
                     {job.street}
                     {job.scheduledStart
-                      ? ` · ${job.scheduledStart.toLocaleString("en-US", {
-                          weekday: "short",
-                          month: "short",
-                          day: "numeric",
-                          hour: "numeric",
-                          minute: "2-digit",
-                        })}`
+                      ? ` · ${formatDateTimeInZone(job.scheduledStart)}`
                       : " · unscheduled"}
                   </p>
                 </div>

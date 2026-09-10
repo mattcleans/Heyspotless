@@ -11,6 +11,7 @@ import type { Frequency, ServiceType } from "../pricing/price-book";
 import type { Cleaner, DispatchJob } from "../dispatch/types";
 import type { RoomCounts } from "../pricing/quote";
 import type { InvoiceAmounts, InvoiceStatus, PaymentStatus } from "../billing/types";
+import type { CalendarDate } from "../time/zone";
 
 export type UserRole = "admin" | "cleaner" | "customer";
 
@@ -86,7 +87,13 @@ export interface Invoice {
   status: InvoiceStatus;
   amounts: InvoiceAmounts;
   balanceCents: number;
-  dueOn: Date | null;
+  /**
+   * A calendar DAY, not an instant. "Due on the 15th" has no time of day, and
+   * the moment it is turned into one the answer to "is this overdue" starts
+   * depending on the server's zone — an invoice due today falls overdue at 7pm
+   * the evening before, in a UTC process. Compared against `todayIn()`.
+   */
+  dueOn: CalendarDate | null;
   issuedAt: Date | null;
   voidedAt: Date | null;
   /** Auto-charge state. Zero attempts means it has never been tried. */

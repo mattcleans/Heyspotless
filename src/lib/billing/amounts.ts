@@ -18,6 +18,12 @@
  */
 
 import { type InvoiceAmounts, type InvoiceStatus, BillingError } from "./types";
+import {
+  BUSINESS_TIME_ZONE,
+  compareCalendarDates,
+  todayIn,
+  type CalendarDate,
+} from "../time/zone";
 
 /**
  * A tip may not exceed the work it is thanking. 100% of the subtotal is
@@ -49,17 +55,25 @@ export function derivedStatus(
   amounts: InvoiceAmounts,
   current: InvoiceStatusInput,
   now: Date = new Date(),
+  timeZone: string = BUSINESS_TIME_ZONE,
 ): InvoiceStatus {
   if (current.status === "void" || current.voidedAt) return "void";
   if (current.status === "draft") return "draft";
   if (isSettled(amounts)) return "paid";
-  if (current.dueOn && startOfDay(current.dueOn) < startOfDay(now)) return "overdue";
+  if (current.dueOn && compareCalendarDates(current.dueOn, todayIn(timeZone, now)) < 0) {
+    return "overdue";
+  }
   return "sent";
 }
 
 export interface InvoiceStatusInput {
   status: InvoiceStatus;
-  dueOn: Date | null;
+  /**
+   * The day it is due, as a day. Comparing it to a timestamp is what made an
+   * invoice due today read as overdue from 7pm the previous evening whenever
+   * the process ran in UTC — five hours before the office had even closed.
+   */
+  dueOn: CalendarDate | null;
   voidedAt?: Date | null;
 }
 
@@ -136,9 +150,4 @@ function assertWholeCents(value: number, label: string): void {
   if (!Number.isFinite(value) || !Number.isInteger(value)) {
     throw new BillingError(`${label} must be an integer number of cents, got ${value}`);
   }
-}
-
-/** Due dates are calendar days; an invoice due today is not overdue until tomorrow. */
-function startOfDay(d: Date): number {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 }

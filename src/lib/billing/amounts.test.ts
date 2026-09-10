@@ -12,6 +12,7 @@ import {
   withTip,
 } from "./amounts";
 import { BillingError, type InvoiceAmounts } from "./types";
+import { toCalendarDate } from "../time/zone";
 
 /**
  * The worked example throughout is a bi-weekly 2bd/2ba at $170 — the ticket the
@@ -160,10 +161,18 @@ describe("refunds", () => {
   });
 });
 
+/** A due date is a calendar day; the branded type keeps instants out. */
+function day(iso: string) {
+  const parsed = toCalendarDate(iso);
+  if (!parsed) throw new Error(`not a calendar date: ${iso}`);
+  return parsed;
+}
+
 describe("derived status", () => {
   const now = new Date("2026-09-09T12:00:00Z");
-  const yesterday = new Date("2026-09-08T00:00:00Z");
-  const tomorrow = new Date("2026-09-10T00:00:00Z");
+  const yesterday = day("2026-09-08");
+  const today = day("2026-09-09");
+  const tomorrow = day("2026-09-10");
 
   it("is paid once settled", () => {
     expect(
@@ -176,8 +185,24 @@ describe("derived status", () => {
   });
 
   it("is not overdue on the due date itself", () => {
-    const today = new Date("2026-09-09T23:00:00Z");
     expect(derivedStatus(invoice(), { status: "sent", dueOn: today }, now)).toBe("sent");
+  });
+
+  it("is still not overdue late on the due date in Dallas", () => {
+    // 02:00 UTC on the 10th is 9pm on the 9th in Dallas. This is the case that
+    // was wrong: comparing timestamps in a UTC process rolled the invoice to
+    // overdue while the customer's own day still had three hours left in it.
+    const lateEvening = new Date("2026-09-10T02:00:00Z");
+    expect(derivedStatus(invoice(), { status: "sent", dueOn: today }, lateEvening)).toBe("sent");
+  });
+
+  it("turns overdue once the business day has actually rolled over", () => {
+    // 06:00 UTC on the 10th is 1am on the 10th in Dallas — a new day, and now
+    // the invoice really is late.
+    const afterMidnightCentral = new Date("2026-09-10T06:00:00Z");
+    expect(derivedStatus(invoice(), { status: "sent", dueOn: today }, afterMidnightCentral)).toBe(
+      "overdue",
+    );
   });
 
   it("is not overdue before the due date", () => {
@@ -188,7 +213,7 @@ describe("derived status", () => {
     expect(
       derivedStatus(
         invoice({ amountPaidCents: 17000 }),
-        { status: "sent", dueOn: yesterday, voidedAt: yesterday },
+        { status: "sent", dueOn: yesterday, voidedAt: new Date("2026-09-08T00:00:00Z") },
         now,
       ),
     ).toBe("void");

@@ -3,6 +3,7 @@ import { getRepository } from "@/lib/data";
 import type { Invoice, PaymentMethod } from "@/lib/data/types";
 import { FREQUENCY_LABELS, SERVICE_LABELS } from "@/lib/pricing/price-book";
 import { formatCents } from "@/lib/money";
+import { formatCalendarDate, formatDateInZone } from "@/lib/time/zone";
 import { isBillingEnabled } from "@/lib/stripe/env";
 import { PayInvoiceButton, SaveCardButton } from "./billing-actions";
 
@@ -89,7 +90,7 @@ export default async function CustomerPage() {
                 <div>
                   <p className="font-medium text-ink">
                     {formatCents(invoice.balanceCents)} due
-                    {invoice.dueOn ? ` · ${formatDate(invoice.dueOn)}` : ""}
+                    {invoice.dueOn ? ` · ${formatCalendarDate(invoice.dueOn)}` : ""}
                   </p>
                   <p className="mt-1 flex items-center gap-2 text-sm text-ink-3">
                     <Pill tone={invoice.status === "overdue" ? "bad" : "neutral"}>
@@ -107,7 +108,7 @@ export default async function CustomerPage() {
                   {invoice.lastError ? (
                     <p className="mt-1.5 text-xs text-bad">
                       Last attempt failed: {invoice.lastError}
-                      {invoice.nextAttemptAt ? ` We will try again on ${formatDate(invoice.nextAttemptAt)}.` : ""}
+                      {invoice.nextAttemptAt ? ` We will try again on ${formatDateInZone(invoice.nextAttemptAt)}.` : ""}
                     </p>
                   ) : null}
                 </div>
@@ -158,7 +159,7 @@ export default async function CustomerPage() {
                 className="card flex items-center justify-between gap-4 px-4 py-3"
               >
                 <span className="text-sm text-ink-2">
-                  {invoice.issuedAt ? formatDate(invoice.issuedAt) : formatDate(invoice.createdAt)}
+                  {formatDateInZone(invoice.issuedAt ?? invoice.createdAt)}
                   {invoice.amounts.refundedCents > 0
                     ? ` · ${formatCents(invoice.amounts.refundedCents)} refunded`
                     : ""}
@@ -184,7 +185,7 @@ export default async function CustomerPage() {
                 </p>
                 <p className="mt-0.5 text-sm text-ink-3">
                   {job.street}, {job.city}
-                  {job.scheduledStart ? ` · ${formatDate(job.scheduledStart)}` : ""}
+                  {job.scheduledStart ? ` · ${formatDateInZone(job.scheduledStart)}` : ""}
                 </p>
               </div>
               <span className="nums font-semibold text-navy">{formatCents(job.priceCents)}</span>
@@ -201,6 +202,4 @@ function cardNote(card: PaymentMethod): string {
   return `expires ${String(card.expMonth).padStart(2, "0")}/${String(card.expYear).slice(-2)}`;
 }
 
-function formatDate(d: Invoice["createdAt"]): string {
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
+

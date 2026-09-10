@@ -22,6 +22,7 @@ import {
   type ServiceType,
 } from "../pricing/price-book";
 import type { RoomCounts } from "../pricing/quote";
+import { BUSINESS_TIME_ZONE, zonedTimeToUtc } from "../time/zone";
 
 export type Fields = Record<string, string | undefined>;
 
@@ -257,19 +258,36 @@ export function parseJob(fields: Fields): Validated<JobInput> {
 /**
  * The scheduled start, from a datetime-local input.
  *
+ * A `datetime-local` value carries NO zone — it is the wall clock the operator
+ * typed, and nothing more. `new Date(raw)` resolved it against the server's
+ * zone, which meant the same booking became a different appointment depending
+ * on where the app was deployed and, worse, on whether anyone had thought to
+ * set TZ. Bookings are Dallas bookings, so it is resolved in Dallas.
+ *
  * Empty is allowed and means unscheduled — a job can sit on the board before it
  * has a slot, which is exactly what the dispatch board is for. A value that is
  * present but unparseable is an error rather than a silent null, because
  * silently unscheduling a job somebody just scheduled is worse than refusing.
+ *
+ * The hour that does not exist is refused for the same reason: on the morning
+ * the clocks go forward there is no 2:30, and quietly booking 1:30 or 3:30
+ * instead puts a cleaner at a door an hour away from when anyone agreed.
  */
 function parseWhen(fields: Fields, errors: Record<string, string>): Date | null {
   const raw = text(fields, "scheduledStart");
   if (raw === "") return null;
 
-  const when = new Date(raw);
-  if (Number.isNaN(when.getTime())) {
-    errors["scheduledStart"] = "That is not a valid date and time.";
+  const parsed = zonedTimeToUtc(raw, BUSINESS_TIME_ZONE);
+  if (!parsed.ok) {
+    errors["scheduledStart"] =
+      parsed.reason === "nonexistent"
+        ? "The clocks go forward that morning, so that time does not exist. Pick another."
+        : "That is not a valid date and time.";
     return null;
   }
-  return when;
+  // An ambiguous time — the repeated hour when the clocks go back — resolves to
+  // its first occurrence. It is a real instant either way, so it is booked
+  // rather than refused; the alternative is refusing a legitimate 1:30am slot
+  // one morning a year.
+  return parsed.date;
 }

@@ -12,6 +12,7 @@ import { contractor, iggy, shonda } from "../dispatch/fixtures";
 import type { Cleaner, DispatchJob } from "../dispatch/types";
 import type { Frequency, ServiceType } from "../pricing/price-book";
 import type { Invoice, PaymentMethod } from "../data/types";
+import { BUSINESS_TIME_ZONE, todayIn, type CalendarDate } from "../time/zone";
 
 export interface DemoJob extends DispatchJob {
   customerName: string;
@@ -112,6 +113,11 @@ function days(n: number): Date {
   return new Date(DEMO_NOW.getTime() + n * 86_400_000);
 }
 
+/** The same offset as a business-calendar day, for the `date` columns. */
+function dueDay(n: number): CalendarDate {
+  return todayIn(BUSINESS_TIME_ZONE, days(n));
+}
+
 function invoice(
   id: string,
   subtotalCents: number,
@@ -130,7 +136,7 @@ function invoice(
     customerId: "cust-j-1",
     jobId: "j-1",
     status: "sent",
-    dueOn: days(-1),
+    dueOn: dueDay(-1),
     issuedAt: days(-8),
     voidedAt: null,
     attemptCount: 0,
@@ -154,17 +160,17 @@ export const DEMO_INVOICES: Invoice[] = [
       amountPaidCents: 19000,
       refundedCents: 0,
     },
-    dueOn: days(-15),
+    dueOn: dueDay(-15),
     issuedAt: days(-22),
     createdAt: days(-22),
   }),
   // Outstanding and not yet due — what "Pay now" acts on.
-  invoice("inv-2", 17000, { status: "sent", dueOn: days(2) }),
+  invoice("inv-2", 17000, { status: "sent", dueOn: dueDay(2) }),
   // Overdue, one failed auto-charge behind it, next attempt scheduled. This is
   // the state that looks fine in isolation and wrong on screen.
   invoice("inv-3", 17000, {
     status: "overdue",
-    dueOn: days(-6),
+    dueOn: dueDay(-6),
     issuedAt: days(-13),
     createdAt: days(-13),
     attemptCount: 1,

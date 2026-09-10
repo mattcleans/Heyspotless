@@ -9,10 +9,20 @@ import {
   planSweep,
 } from "./autocharge";
 import { BillingError } from "./types";
+import { toCalendarDate, type CalendarDate } from "../time/zone";
 
 const NOW = new Date("2026-09-09T12:00:00Z");
-const YESTERDAY = new Date("2026-09-08T00:00:00Z");
-const TOMORROW = new Date("2026-09-10T00:00:00Z");
+
+/** Due dates are calendar days. Instants are what got this wrong. */
+function day(iso: string): CalendarDate {
+  const parsed = toCalendarDate(iso);
+  if (!parsed) throw new Error(`not a calendar date: ${iso}`);
+  return parsed;
+}
+
+const YESTERDAY = day("2026-09-08");
+const TODAY = day("2026-09-09");
+const TOMORROW = day("2026-09-10");
 
 /** A candidate that would be charged. Each test breaks exactly one thing. */
 function candidate(overrides: Partial<AutochargeCandidate> = {}): AutochargeCandidate {
@@ -65,8 +75,26 @@ describe("the charge decision", () => {
   });
 
   it("charges on the due date itself", () => {
-    const dueToday = new Date("2026-09-09T23:00:00Z");
-    expect(decide(candidate({ dueOn: dueToday }), NOW)).toMatchObject({ action: "charge" });
+    expect(decide(candidate({ dueOn: TODAY }), NOW)).toMatchObject({ action: "charge" });
+  });
+
+  it("does not charge a future-due invoice late on the previous evening", () => {
+    // The early-charge case. 02:00 UTC on the 9th is 9pm on the 8th in Dallas,
+    // so an invoice due on the 9th is not yet due — a UTC comparison would
+    // already have taken the money.
+    const lateOnTheEighth = new Date("2026-09-09T02:00:00Z");
+    expect(decide(candidate({ dueOn: TODAY }), lateOnTheEighth)).toMatchObject({
+      action: "skip",
+      reason: "not_yet_due",
+    });
+  });
+
+  it("charges once the business day has rolled over to the due date", () => {
+    // 06:00 UTC on the 9th is 1am on the 9th in Dallas.
+    const afterMidnightCentral = new Date("2026-09-09T06:00:00Z");
+    expect(decide(candidate({ dueOn: TODAY }), afterMidnightCentral)).toMatchObject({
+      action: "charge",
+    });
   });
 
   it("charges immediately when there is no due date", () => {
@@ -99,7 +127,7 @@ describe("consent", () => {
       autopayEnabled: false,
       status: "overdue",
       attemptCount: 0,
-      dueOn: new Date("2026-01-01T00:00:00Z"),
+      dueOn: day("2026-01-01"),
     });
     expect(decide(overdue, NOW)).toMatchObject({ reason: "no_consent" });
   });
@@ -107,7 +135,9 @@ describe("consent", () => {
 
 describe("skips", () => {
   it("skips a voided invoice", () => {
-    expect(decide(candidate({ voidedAt: YESTERDAY }), NOW)).toMatchObject({ reason: "voided" });
+    expect(decide(candidate({ voidedAt: new Date("2026-09-08T00:00:00Z") }), NOW)).toMatchObject({
+      reason: "voided",
+    });
     expect(decide(candidate({ status: "void" }), NOW)).toMatchObject({ reason: "voided" });
   });
 

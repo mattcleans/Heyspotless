@@ -246,7 +246,9 @@ describe("billing mappers", () => {
 
   it("parses the dates and tolerates the absent ones", () => {
     const invoice = toInvoice(invoiceRow);
-    expect(invoice.dueOn?.getUTCFullYear()).toBe(2026);
+    // A `date` column stays a calendar day. Parsing it into midnight-UTC is
+    // what made an invoice due on the 15th read as overdue on the 14th here.
+    expect(invoice.dueOn).toBe("2026-09-01");
     expect(invoice.nextAttemptAt?.toISOString()).toBe("2026-09-12T12:00:00.000Z");
     expect(invoice.voidedAt).toBeNull();
   });
