@@ -54,6 +54,13 @@ export async function createCheckoutSession(args: {
   origin: string;
   /** Keep the card for auto-charge. Only ever true when the customer asked. */
   saveCard: boolean;
+  /**
+   * Sent as the Idempotency-Key, so two requests for the same obligation get
+   * the SAME session back from Stripe rather than two chargeable pages. The
+   * local `payment_operations` row is the first line of defence; this is the
+   * one that still holds if two processes race past it.
+   */
+  idempotencyKey: string;
 }): Promise<{ id: string; url: string }> {
   const stripe = getStripe();
 
@@ -78,7 +85,7 @@ export async function createCheckoutSession(args: {
     },
     success_url: `${args.origin}/customer?paid=${args.invoiceId}`,
     cancel_url: `${args.origin}/customer?canceled=${args.invoiceId}`,
-  });
+  }, { idempotencyKey: args.idempotencyKey });
 
   if (!session.url) {
     throw new BillingError("Stripe returned a checkout session with no URL");
@@ -165,4 +172,74 @@ export async function refundPaymentIntent(args: {
   });
 
   return { id: refund.id, status: refund.status };
+}
+
+
+// --- asking Stripe what actually happened ----------------------------------
+//
+// The other half of not collecting twice. An operation we started and never
+// heard back about is an UNKNOWN outcome, not a failure, and the only way to
+// turn it into a known one is to go and look. Everything below is read-only.
+
+/** What became of a collection attempt, as far as Stripe is concerned. */
+export type CollectionOutcome =
+  /** Money was taken. `paymentIntentId` is what to record it against. */
+  | { state: "paid"; paymentIntentId: string | null; amountCents: number; chargeId: string | null }
+  /** Still collectible — the customer has the page open, or has not opened it. */
+  | { state: "open"; url: string | null }
+  /** Stripe is done with it and no money moved. */
+  | { state: "dead"; reason: string };
+
+/**
+ * What happened to a Checkout session.
+ *
+ * `payment_status` rather than `status`: a session can be `complete` with
+ * `payment_status` still `unpaid` when it used a delayed method, and treating
+ * that as paid would settle an invoice nobody has paid.
+ */
+export async function lookUpCheckoutSession(sessionId: string): Promise<CollectionOutcome> {
+  const session = await getStripe().checkout.sessions.retrieve(sessionId);
+
+  if (session.payment_status === "paid") {
+    const intent = session.payment_intent;
+    return {
+      state: "paid",
+      paymentIntentId: typeof intent === "string" ? intent : (intent?.id ?? null),
+      amountCents: session.amount_total ?? 0,
+      chargeId: null,
+    };
+  }
+
+  if (session.status === "open") {
+    return { state: "open", url: session.url ?? null };
+  }
+
+  return { state: "dead", reason: `session ${session.status ?? "unknown"}` };
+}
+
+/** What happened to a payment intent — the auto-charge side of the same question. */
+export async function lookUpPaymentIntent(paymentIntentId: string): Promise<CollectionOutcome> {
+  const intent = await getStripe().paymentIntents.retrieve(paymentIntentId);
+
+  if (intent.status === "succeeded") {
+    return {
+      state: "paid",
+      paymentIntentId: intent.id,
+      amountCents: intent.amount_received || intent.amount,
+      chargeId: typeof intent.latest_charge === "string" ? intent.latest_charge : null,
+    };
+  }
+
+  // `processing` is genuinely still in flight; so is anything waiting on the
+  // customer. Neither is a licence to charge again.
+  if (
+    intent.status === "processing" ||
+    intent.status === "requires_action" ||
+    intent.status === "requires_confirmation" ||
+    intent.status === "requires_capture"
+  ) {
+    return { state: "open", url: null };
+  }
+
+  return { state: "dead", reason: `payment intent ${intent.status}` };
 }

@@ -162,9 +162,38 @@ describe("parseJob", () => {
     expect(result.ok && result.value.scheduledStart).toBeNull();
   });
 
-  it("keeps a scheduled time", () => {
+  it("reads the typed time as Dallas time, not the server's", () => {
+    // The acceptance case. 9:30am on 15 September in Dallas is 14:30 UTC, and
+    // it has to be that instant whether this runs in Chicago, UTC or Tokyo —
+    // `getFullYear()` would have agreed with any of them and proved nothing.
     const result = parseJob({ ...booking, scheduledStart: "2026-09-15T09:30" });
-    expect(result.ok && result.value.scheduledStart?.getFullYear()).toBe(2026);
+    expect(result.ok && result.value.scheduledStart?.toISOString()).toBe(
+      "2026-09-15T14:30:00.000Z",
+    );
+  });
+
+  it("uses standard time for a winter booking", () => {
+    const result = parseJob({ ...booking, scheduledStart: "2026-01-15T09:30" });
+    expect(result.ok && result.value.scheduledStart?.toISOString()).toBe(
+      "2026-01-15T15:30:00.000Z",
+    );
+  });
+
+  it("refuses the hour the clocks skip forward", () => {
+    // 02:30 on 8 March 2026 is not a time in Dallas. Booking 01:30 or 03:30
+    // instead sends a cleaner an hour away from the appointment.
+    const result = parseJob({ ...booking, scheduledStart: "2026-03-08T02:30" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors["scheduledStart"]).toMatch(/clocks go forward/);
+  });
+
+  it("books the repeated hour at its first occurrence", () => {
+    // 01:30 on 1 November 2026 happens twice. Both are real, so it is booked;
+    // what matters is that every machine picks the same one.
+    const result = parseJob({ ...booking, scheduledStart: "2026-11-01T01:30" });
+    expect(result.ok && result.value.scheduledStart?.toISOString()).toBe(
+      "2026-11-01T06:30:00.000Z",
+    );
   });
 
   it("refuses a date it cannot read rather than silently unscheduling", () => {

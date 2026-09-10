@@ -77,7 +77,12 @@ function propertyColumns(input: PropertyInput) {
   };
 }
 
-const CUSTOMER_COLS = "id, first_name, last_name, email, phone, lifetime_value_cents";
+/**
+ * `notes` is in this list deliberately. It was missing, and because the edit
+ * form writes every column it knows about, a customer read back without their
+ * notes was a customer whose notes the next "save changes" erased.
+ */
+const CUSTOMER_COLS = "id, first_name, last_name, email, phone, notes, lifetime_value_cents";
 const PROPERTY_COLS =
   `id, customer_id, street, city, state, zip, bedrooms, bathrooms, half_baths, ` +
   `kitchens, living_rooms, utility_rooms, gate_code, access_notes, parking_notes, pets`;

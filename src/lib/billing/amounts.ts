@@ -8,16 +8,39 @@
  *
  * The invariant, restated because it is the part people get wrong:
  *
- *     balance = total - amountPaid + refunded
+ *     balance = total - credits - amountPaid + refunded
  *
- * A refund RESTORES balance rather than shrinking the invoice. A $170 clean
- * that was paid and then fully refunded still reports $170 of revenue and
- * $170 outstanding — which is the truth, and is what a "revenue minus actual
- * labour" job-costing report needs. Netting the refund into the total instead
- * would quietly erase the job from the books.
+ * Refunds still RESTORE balance, and that is deliberate: gross captured and
+ * gross refunded both have to survive, or a refunded job vanishes from the
+ * books and job costing lies. What 0006 lacked was the other half. Giving
+ * money back is not the same decision as deciding it is owed again, and with
+ * one rule for both, a $50 apology became $50 the auto-charge sweep would
+ * take straight back off the customer's card.
+ *
+ * A CREDIT is that other half: a recorded decision not to collect. A goodwill
+ * refund raises one to match, and they cancel —
+ *
+ *     $170 clean, paid in full, $50 back as a goodwill gesture:
+ *       total 17000, credits 5000, paid 17000, refunded 5000
+ *       balance = 0        nothing further to collect
+ *       netPaid = 12000    what actually stayed in the bank
+ *       revenue = 17000    still the value of the job
+ *
+ * — while a refund recorded as a correction raises no credit and the balance
+ * is restored on purpose. Which kind a refund is, is a decision someone
+ * makes; see RefundKind in ./types and the policy in 0011.
+ *
+ * Dates here are calendar days, in the zone the business runs in. See
+ * lib/time/zone.ts for why that distinction is load-bearing.
  */
 
 import { type InvoiceAmounts, type InvoiceStatus, BillingError } from "./types";
+import {
+  BUSINESS_TIME_ZONE,
+  compareCalendarDates,
+  todayIn,
+  type CalendarDate,
+} from "../time/zone";
 
 /**
  * A tip may not exceed the work it is thanking. 100% of the subtotal is
@@ -28,7 +51,18 @@ export const MAX_TIP_FRACTION_OF_SUBTOTAL = 1;
 
 /** What the customer still owes. Negative means they have overpaid. */
 export function balanceCents(amounts: InvoiceAmounts): number {
-  return amounts.totalCents - amounts.amountPaidCents + amounts.refundedCents;
+  return (
+    amounts.totalCents - amounts.creditCents - amounts.amountPaidCents + amounts.refundedCents
+  );
+}
+
+/**
+ * What the job is worth to the business once anything written off is taken
+ * out. `totalCents` is still the value of the work — this is what we ever
+ * expected to collect for it.
+ */
+export function collectibleTotalCents(amounts: InvoiceAmounts): number {
+  return amounts.totalCents - amounts.creditCents;
 }
 
 /** Captured and kept — what actually landed in the bank. */
@@ -49,17 +83,25 @@ export function derivedStatus(
   amounts: InvoiceAmounts,
   current: InvoiceStatusInput,
   now: Date = new Date(),
+  timeZone: string = BUSINESS_TIME_ZONE,
 ): InvoiceStatus {
   if (current.status === "void" || current.voidedAt) return "void";
   if (current.status === "draft") return "draft";
   if (isSettled(amounts)) return "paid";
-  if (current.dueOn && startOfDay(current.dueOn) < startOfDay(now)) return "overdue";
+  if (current.dueOn && compareCalendarDates(current.dueOn, todayIn(timeZone, now)) < 0) {
+    return "overdue";
+  }
   return "sent";
 }
 
 export interface InvoiceStatusInput {
   status: InvoiceStatus;
-  dueOn: Date | null;
+  /**
+   * The day it is due, as a day. Comparing it to a timestamp is what made an
+   * invoice due today read as overdue from 7pm the previous evening whenever
+   * the process ran in UTC — five hours before the office had even closed.
+   */
+  dueOn: CalendarDate | null;
   voidedAt?: Date | null;
 }
 
@@ -136,9 +178,4 @@ function assertWholeCents(value: number, label: string): void {
   if (!Number.isFinite(value) || !Number.isInteger(value)) {
     throw new BillingError(`${label} must be an integer number of cents, got ${value}`);
   }
-}
-
-/** Due dates are calendar days; an invoice due today is not overdue until tomorrow. */
-function startOfDay(d: Date): number {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 }

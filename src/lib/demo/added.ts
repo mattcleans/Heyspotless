@@ -33,6 +33,7 @@ export function addDemoCustomer(input: CustomerInput, id?: string): Customer {
     lastName: input.lastName,
     email: input.email,
     phone: input.phone,
+    notes: input.notes,
     // Lifetime value is recomputed from real invoices, never entered; a new
     // customer has not paid for anything yet.
     lifetimeValueCents: existing?.lifetimeValueCents ?? 0,
@@ -42,6 +43,8 @@ export function addDemoCustomer(input: CustomerInput, id?: string): Customer {
     stripeCustomerId: existing?.stripeCustomerId ?? null,
     autopayEnabled: existing?.autopayEnabled ?? false,
     autopayAuthorizedAt: existing?.autopayAuthorizedAt ?? null,
+    autopaySuspendedAt: existing?.autopaySuspendedAt ?? null,
+    autopaySuspendedReason: existing?.autopaySuspendedReason ?? null,
   };
 
   if (existing) customers[customers.indexOf(existing)] = customer;

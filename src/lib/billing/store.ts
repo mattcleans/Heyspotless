@@ -3,14 +3,52 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AutochargeCandidate } from "./autocharge";
 import type { BillingTransition } from "./events";
+import type { RefundKind, RefundStatus } from "./types";
+
+/** Which surface a collection attempt came from. */
+export type PaymentOperationChannel = "checkout" | "autocharge";
+
+/**
+ * A collection attempt, as `begin_payment_operation` reports it.
+ *
+ *   "started"  — ours; call Stripe.
+ *   "existing" — this exact key is already in play. Two identical tabs land
+ *                here and get the SAME Stripe session, not a second one.
+ *   "blocked"  — a different attempt is open on this invoice. Reconcile it
+ *                before collecting again.
+ */
+export interface PaymentOperation {
+  outcome: "started" | "existing" | "blocked";
+  id: string;
+  channel: PaymentOperationChannel;
+  idempotencyKey: string;
+  stripeObjectId: string | null;
+  stripeObjectKind: "checkout_session" | "payment_intent" | null;
+  redirectUrl: string | null;
+  amountCents: number;
+}
+
+function toPaymentOperation(row: Record<string, unknown>): PaymentOperation {
+  const text = (key: string): string | null =>
+    typeof row[key] === "string" ? (row[key] as string) : null;
+
+  return {
+    outcome: (text("outcome") ?? "started") as PaymentOperation["outcome"],
+    id: text("operation_id") ?? text("id") ?? "",
+    channel: (text("channel") ?? "checkout") as PaymentOperationChannel,
+    idempotencyKey: text("idempotency_key") ?? "",
+    stripeObjectId: text("stripe_object_id"),
+    stripeObjectKind: text("stripe_object_kind") as PaymentOperation["stripeObjectKind"],
+    redirectUrl: text("redirect_url"),
+    amountCents: typeof row["amount_cents"] === "number" ? row["amount_cents"] : 0,
+  };
+}
 import { toInvoice } from "../data/mappers";
 
 /**
- * How long an unfinished claim must sit before another delivery may take it
- * over. Comfortably above the webhook route's `maxDuration` of 60s, so a
- * handler that is merely slow is never treated as abandoned.
+ * What happened when we tried to claim a webhook event. See `claimEvent`.
  */
-const ABANDONED_CLAIM_MS = 5 * 60_000;
+export type EventClaim = "claimed" | "completed" | "processing";
 
 /**
  * Every write to the money tables.
@@ -27,76 +65,80 @@ const ABANDONED_CLAIM_MS = 5 * 60_000;
 export class BillingStore {
   constructor(private readonly db: SupabaseClient) {}
 
-  // --- webhook idempotency -------------------------------------------------
+  // --- webhook events ------------------------------------------------------
 
   /**
-   * Claim a Stripe event, returning false if it has been seen before.
+   * Claim an event for processing, or find out why we cannot.
    *
-   * The insert IS the lock: `stripe_events.id` is the primary key, so a
-   * concurrent duplicate delivery loses the race with a unique violation rather
-   * than both handlers proceeding. Postgres reports that as 23505.
+   * Three outcomes, and the whole point of this change is that they are three
+   * rather than two:
    *
-   * A losing insert is not automatically a duplicate, though. `releaseEvent`
-   * gives the claim back when the handler THROWS, but a hard kill or a function
-   * timeout leaves the row behind with `processed_at` still null — and then
-   * every Stripe retry would be waved through as a duplicate and the payment
-   * never applied, while Stripe holds the money. So an unfinished claim old
-   * enough that no handler could still be running is taken over instead.
+   *   "claimed"    — ours. Process it, then `finishEvent`.
+   *   "completed"  — already done. Acknowledge to Stripe, do nothing.
+   *   "processing" — another handler holds a live lease. Do NOT acknowledge.
+   *
+   * The old shape returned a bare boolean, and `false` meant both "already
+   * done" and "someone is working on it". The route answered 200 to both, so
+   * an event whose handler then died had already been acknowledged to Stripe:
+   * no retry, no payment applied, nothing anywhere saying so. Distinguishing
+   * the two is the fix; the lease and the owner (0010) are how.
    */
-  async claimEvent(id: string, type: string, payload: unknown): Promise<boolean> {
-    const { error } = await this.db
-      .from("stripe_events")
-      .insert({ id, type, payload });
+  async claimEvent(
+    id: string,
+    type: string,
+    payload: unknown,
+    owner: string,
+    leaseSeconds?: number,
+  ): Promise<EventClaim> {
+    const { data, error } = await this.db.rpc("claim_stripe_event", {
+      p_id: id,
+      p_type: type,
+      p_payload: payload ?? null,
+      p_owner: owner,
+      p_lease_seconds: leaseSeconds ?? null,
+    });
+    if (error) throw new Error(`claimEvent: ${error.message}`);
 
-    if (!error) return true;
-    if (error.code !== "23505") throw new Error(`claimEvent: ${error.message}`);
-
-    return this.reclaimAbandonedEvent(id, type);
+    if (data === "claimed" || data === "completed" || data === "processing") return data;
+    throw new Error(`claimEvent: unexpected outcome ${JSON.stringify(data)}`);
   }
 
   /**
-   * Take over a claim whose handler died before finishing it.
+   * Give a claimed event back after the handler failed, so the retry can take
+   * the ordinary path.
    *
-   * Touching `received_at` is what makes this a claim rather than a read: the
-   * predicated UPDATE serialises, so a second delivery arriving alongside this
-   * one re-evaluates after it commits, sees a fresh timestamp, and correctly
-   * reports a duplicate. Two reclaims would be safe anyway — `record_payment`
-   * is idempotent on the payment intent — but one is the point.
+   * Returns false when we no longer hold the lease — another handler has taken
+   * the event over, and clearing its claim would be actively harmful. The
+   * caller should leave it alone; the new owner will finish it.
    */
-  private async reclaimAbandonedEvent(id: string, type: string): Promise<boolean> {
-    const cutoff = new Date(Date.now() - ABANDONED_CLAIM_MS).toISOString();
-
-    const { data, error } = await this.db
-      .from("stripe_events")
-      .update({ received_at: new Date().toISOString(), type })
-      .eq("id", id)
-      .is("processed_at", null)
-      .lt("received_at", cutoff)
-      .select("id");
-
-    if (error) throw new Error(`claimEvent reclaim: ${error.message}`);
-    return (data ?? []).length > 0;
-  }
-
-  /**
-   * Give a claimed event back after the handler failed.
-   *
-   * Without this the claim would defeat the retry: we would have returned 500
-   * to make Stripe redeliver, and then treated the redelivery as a duplicate
-   * and skipped it, so the payment would never be applied. The row is deleted
-   * rather than flagged so the retry takes the ordinary path.
-   */
-  async releaseEvent(id: string): Promise<void> {
-    const { error } = await this.db.from("stripe_events").delete().eq("id", id);
+  async releaseEvent(id: string, owner: string, errorMessage?: string): Promise<boolean> {
+    const { data, error } = await this.db.rpc("release_stripe_event", {
+      p_id: id,
+      p_owner: owner,
+      p_error: errorMessage ?? null,
+    });
     if (error) throw new Error(`releaseEvent: ${error.message}`);
+    return data === true;
   }
 
-  async finishEvent(id: string, outcome: string, errorMessage?: string): Promise<void> {
-    const { error } = await this.db
-      .from("stripe_events")
-      .update({ processed_at: new Date().toISOString(), outcome, error: errorMessage ?? null })
-      .eq("id", id);
+  /**
+   * Mark an event finished. Returns false if the lease has moved on, in which
+   * case this handler was too slow and its result is not the one of record.
+   */
+  async finishEvent(
+    id: string,
+    owner: string,
+    outcome: string,
+    errorMessage?: string,
+  ): Promise<boolean> {
+    const { data, error } = await this.db.rpc("finish_stripe_event", {
+      p_id: id,
+      p_owner: owner,
+      p_outcome: outcome,
+      p_error: errorMessage ?? null,
+    });
     if (error) throw new Error(`finishEvent: ${error.message}`);
+    return data === true;
   }
 
   // --- money ---------------------------------------------------------------
@@ -126,10 +168,23 @@ export class BillingStore {
     return typeof data === "string" ? data : null;
   }
 
-  /** Returns the new refund id, or null when this refund was already recorded. */
+  /**
+   * Record a refund. Returns the new refund id, or null when this Stripe
+   * refund id has already been recorded.
+   *
+   * `kind` is the decision that matters and it is required at the call site
+   * rather than defaulted here: it is what separates giving money back from
+   * deciding it is owed again. The SQL defaults it to `goodwill` for the one
+   * caller that genuinely cannot know — a refund issued from the Stripe
+   * dashboard — because a refund of unknown intent must never bill anyone.
+   *
+   * A refund recorded `pending` moves no money until `settleRefund`.
+   */
   async recordRefund(args: {
     stripePaymentIntentId: string;
     amountCents: number;
+    kind: RefundKind;
+    status?: RefundStatus;
     stripeRefundId?: string | null;
     requestedBy?: string | null;
     reason?: string | null;
@@ -140,9 +195,27 @@ export class BillingStore {
       p_stripe_refund_id: args.stripeRefundId ?? null,
       p_requested_by: args.requestedBy ?? null,
       p_reason: args.reason ?? null,
+      p_kind: args.kind,
+      p_status: args.status ?? "succeeded",
     });
     if (error) throw new Error(`recordRefund: ${error.message}`);
     return typeof data === "string" ? data : null;
+  }
+
+  /**
+   * Tell us how a refund ended. Stripe can fail a refund days after
+   * accepting it, and until this existed the money had already moved here.
+   *
+   * Returns what happened: the new status, "unchanged" for a replay, or
+   * "unknown" for a refund we never recorded.
+   */
+  async settleRefund(stripeRefundId: string, status: RefundStatus): Promise<string> {
+    const { data, error } = await this.db.rpc("settle_refund", {
+      p_stripe_refund_id: stripeRefundId,
+      p_status: status,
+    });
+    if (error) throw new Error(`settleRefund: ${error.message}`);
+    return typeof data === "string" ? data : "unknown";
   }
 
   async recordAutochargeFailure(
@@ -164,6 +237,157 @@ export class BillingStore {
       .update({ last_error: message })
       .eq("id", invoiceId);
     if (error) throw new Error(`recordPaymentFailure: ${error.message}`);
+  }
+
+  // --- collection attempts -------------------------------------------------
+
+  /**
+   * Start a collection attempt, or find out why we may not.
+   *
+   * Written BEFORE Stripe is called. Between "Stripe has been asked for
+   * money" and "we know what happened" there used to be no record at all, so
+   * anything that consulted the invoice saw an unpaid invoice and started
+   * again — a second Checkout tab, a repeated submission, the nightly sweep
+   * landing on an invoice a customer was in the middle of paying.
+   */
+  async beginPaymentOperation(args: {
+    invoiceId: string;
+    channel: PaymentOperationChannel;
+    idempotencyKey: string;
+    amountCents: number;
+    ttlSeconds?: number;
+  }): Promise<PaymentOperation> {
+    const { data, error } = await this.db.rpc("begin_payment_operation", {
+      p_invoice_id: args.invoiceId,
+      p_channel: args.channel,
+      p_idempotency_key: args.idempotencyKey,
+      p_amount_cents: args.amountCents,
+      p_ttl_seconds: args.ttlSeconds ?? null,
+    });
+    if (error) throw new Error(`beginPaymentOperation: ${error.message}`);
+
+    const row = Array.isArray(data) ? (data[0] as Record<string, unknown> | undefined) : null;
+    if (!row) throw new Error("beginPaymentOperation: no row returned");
+    return toPaymentOperation(row);
+  }
+
+  /** Record what Stripe object an attempt became, as soon as Stripe answers. */
+  async attachPaymentOperation(args: {
+    idempotencyKey: string;
+    stripeObjectKind: "checkout_session" | "payment_intent";
+    stripeObjectId: string;
+    redirectUrl?: string | null;
+    expiresAt?: Date | null;
+  }): Promise<boolean> {
+    const { data, error } = await this.db.rpc("attach_payment_operation", {
+      p_idempotency_key: args.idempotencyKey,
+      p_stripe_object_kind: args.stripeObjectKind,
+      p_stripe_object_id: args.stripeObjectId,
+      p_redirect_url: args.redirectUrl ?? null,
+      p_expires_at: args.expiresAt ? args.expiresAt.toISOString() : null,
+    });
+    if (error) throw new Error(`attachPaymentOperation: ${error.message}`);
+    return data === true;
+  }
+
+  /**
+   * Close a collection attempt.
+   *
+   * "failed" means Stripe SAID it failed. An attempt whose outcome we could
+   * not learn is "abandoned", and only after reconciling with Stripe — the
+   * difference is the whole point, because retrying an unknown outcome as
+   * though it were a decline is how the same money gets taken twice.
+   */
+  async resolvePaymentOperation(
+    idempotencyKey: string,
+    state: "succeeded" | "failed" | "abandoned",
+    errorMessage?: string,
+  ): Promise<boolean> {
+    const { data, error } = await this.db.rpc("resolve_payment_operation", {
+      p_idempotency_key: idempotencyKey,
+      p_state: state,
+      p_error: errorMessage ?? null,
+    });
+    if (error) throw new Error(`resolvePaymentOperation: ${error.message}`);
+    return data === true;
+  }
+
+  /**
+   * Close a failed attempt by the Stripe object it was made against.
+   *
+   * Only ever called when Stripe has told us the attempt is over. An attempt
+   * whose outcome we never learned must stay open — that is what stops the
+   * next collection taking the same money.
+   */
+  async resolvePaymentOperationByRef(
+    invoiceId: string,
+    ref: string,
+    errorMessage?: string | null,
+  ): Promise<boolean> {
+    const { data, error } = await this.db
+      .from("payment_operations")
+      .update({
+        state: "failed",
+        resolved_at: new Date().toISOString(),
+        last_error: errorMessage ?? null,
+      })
+      .eq("invoice_id", invoiceId)
+      .eq("stripe_object_id", ref)
+      .eq("state", "open")
+      .select("id");
+    if (error) throw new Error(`resolvePaymentOperationByRef: ${error.message}`);
+    return (data ?? []).length > 0;
+  }
+
+  /** Close whatever attempt a settled payment belongs to, by Stripe object. */
+  async settlePaymentOperationByRef(invoiceId: string, ref: string | null): Promise<boolean> {
+    if (!ref) return false;
+    const { data, error } = await this.db.rpc("settle_payment_operation_by_ref", {
+      p_invoice_id: invoiceId,
+      p_ref: ref,
+    });
+    if (error) throw new Error(`settlePaymentOperationByRef: ${error.message}`);
+    return data === true;
+  }
+
+  /** The attempt currently open on an invoice, if any. */
+  async openPaymentOperation(invoiceId: string): Promise<PaymentOperation | null> {
+    const { data, error } = await this.db.rpc("open_payment_operation", {
+      p_invoice_id: invoiceId,
+    });
+    if (error) throw new Error(`openPaymentOperation: ${error.message}`);
+
+    const row = Array.isArray(data)
+      ? (data[0] as Record<string, unknown> | undefined)
+      : (data as Record<string, unknown> | null);
+    if (!row || typeof row["id"] !== "string") return null;
+    return toPaymentOperation({ ...row, operation_id: row["id"], outcome: "existing" });
+  }
+
+  /** Every invoice with a collection attempt open, for the sweep to avoid. */
+  async invoiceIdsWithOpenCollection(invoiceIds: readonly string[]): Promise<Set<string>> {
+    if (invoiceIds.length === 0) return new Set();
+
+    const { data, error } = await this.db
+      .from("payment_operations")
+      .select("invoice_id, expires_at")
+      .in("invoice_id", [...invoiceIds])
+      .eq("state", "open");
+    if (error) throw new Error(`invoiceIdsWithOpenCollection: ${error.message}`);
+
+    const now = Date.now();
+    const open = new Set<string>();
+    for (const row of (data ?? []) as Record<string, unknown>[]) {
+      const invoiceId = row["invoice_id"];
+      const expiresAt = row["expires_at"];
+      if (typeof invoiceId !== "string") continue;
+      // An expired attempt is not in flight. It still blocks a NEW attempt
+      // until reconciled (begin_payment_operation abandons it), but it must
+      // not make the sweep skip an invoice for ever.
+      if (typeof expiresAt === "string" && new Date(expiresAt).getTime() <= now) continue;
+      open.add(invoiceId);
+    }
+    return open;
   }
 
   // --- customers and cards -------------------------------------------------
@@ -209,23 +433,32 @@ export class BillingStore {
       .update({
         autopay_enabled: enabled,
         autopay_authorized_at: enabled ? new Date().toISOString() : null,
+        // A suspension describes autopay that is on and cannot run. Switching
+        // it off resolves that; switching it on is a fresh start.
+        autopay_suspended_at: null,
+        autopay_suspended_reason: null,
       })
       .eq("id", customerId);
     if (error) throw new Error(`setAutopay: ${error.message}`);
   }
 
   /**
-   * Mirror a card Stripe has attached. The first card a customer saves becomes
-   * their default, so someone who has just added a card and switched autopay on
-   * is chargeable without a second, invisible step.
+   * Mirror a card Stripe has attached.
    *
-   * "First" means first OTHER than this one. Stripe redelivers
-   * `setup_intent.succeeded`, so this runs again for cards already on file; a
-   * query that counted the card itself would conclude "not first" and the upsert
-   * below would write `is_default: false` over the customer's only default.
-   * They would still have a saved card, autopay would still read as on, and
-   * `listAutochargeCandidates` — which filters `is_default` — would quietly stop
-   * charging them.
+   * The decision — whether this card becomes the default — is NOT made here.
+   * It is a read-modify-write across two rows that two webhook deliveries can
+   * enter at once, so it happens in `save_payment_method` (0009) under a lock
+   * on the customer row.
+   *
+   * The previous attempt made it here, by counting the customer's other cards
+   * and writing `is_default = (there are none)`. That is right with one card
+   * on file and wrong with two: replaying the DEFAULT card's attach event —
+   * which Stripe does routinely, for three days — found the other card, judged
+   * this one "not first", and wrote `is_default = false` over the customer's
+   * only default. Saved cards intact, autopay still on, and the sweep silently
+   * charging nobody.
+   *
+   * Returns whether this card is the default after the call.
    */
   async saveCard(
     customerId: string,
@@ -236,41 +469,33 @@ export class BillingStore {
       expMonth: number | null;
       expYear: number | null;
     },
-  ): Promise<void> {
-    const existing = await this.db
-      .from("payment_methods")
-      .select("id")
-      .eq("customer_id", customerId)
-      .is("detached_at", null)
-      .neq("stripe_payment_method_id", card.paymentMethodId)
-      .limit(1);
-    if (existing.error) throw new Error(`saveCard: ${existing.error.message}`);
-
-    const isFirst = (existing.data ?? []).length === 0;
-
-    const { error } = await this.db.from("payment_methods").upsert(
-      {
-        customer_id: customerId,
-        stripe_payment_method_id: card.paymentMethodId,
-        brand: card.brand,
-        last4: card.last4,
-        exp_month: card.expMonth,
-        exp_year: card.expYear,
-        is_default: isFirst,
-        detached_at: null,
-      },
-      { onConflict: "stripe_payment_method_id" },
-    );
+  ): Promise<boolean> {
+    const { data, error } = await this.db.rpc("save_payment_method", {
+      p_customer_id: customerId,
+      p_stripe_payment_method_id: card.paymentMethodId,
+      p_brand: card.brand,
+      p_last4: card.last4,
+      p_exp_month: card.expMonth,
+      p_exp_year: card.expYear,
+    });
     if (error) throw new Error(`saveCard: ${error.message}`);
+    return data === true;
   }
 
-  /** Detached, never deleted: a past payment must still be able to name its card. */
-  async detachCard(stripePaymentMethodId: string): Promise<void> {
-    const { error } = await this.db
-      .from("payment_methods")
-      .update({ detached_at: new Date().toISOString(), is_default: false })
-      .eq("stripe_payment_method_id", stripePaymentMethodId);
+  /**
+   * Detach a card. Detached, never deleted: a past payment must still be able
+   * to name the card it was taken on.
+   *
+   * Returns the Stripe id of whatever is the default afterwards, or null when
+   * the customer has no card left. Removing the last card SUSPENDS autopay
+   * rather than cancelling it — see the policy in 0009.
+   */
+  async detachCard(stripePaymentMethodId: string): Promise<string | null> {
+    const { data, error } = await this.db.rpc("detach_payment_method", {
+      p_stripe_payment_method_id: stripePaymentMethodId,
+    });
     if (error) throw new Error(`detachCard: ${error.message}`);
+    return typeof data === "string" ? data : null;
   }
 
   async setCheckoutSession(invoiceId: string, sessionId: string): Promise<void> {
@@ -296,8 +521,9 @@ export class BillingStore {
       .from("invoices")
       .select(
         `id, customer_id, status, subtotal_cents, tip_cents, total_cents,
-         amount_paid_cents, refunded_cents, balance_cents, due_on, issued_at,
-         voided_at, attempt_count, next_attempt_at, last_error, created_at,
+         amount_paid_cents, refunded_cents, credit_cents, balance_cents, due_on,
+         issued_at, voided_at, attempt_count, next_attempt_at, last_error,
+         autocharge_paused_at, autocharge_paused_reason, created_at,
          customers!inner ( autopay_enabled, autopay_authorized_at )`,
       )
       .in("status", ["sent", "overdue"])
@@ -327,6 +553,14 @@ export class BillingStore {
       if (typeof customerId === "string" && typeof pm === "string") defaultCard.set(customerId, pm);
     }
 
+    // Which of these a customer is already in the middle of paying. The
+    // sweep must not charge alongside a Checkout page, and this is the only
+    // signal that says so — Stripe's idempotency key is per-channel and sees
+    // the two attempts as unrelated.
+    const inFlight = await this.invoiceIdsWithOpenCollection(
+      invoiceRows.map((r) => String(r["id"])),
+    );
+
     return invoiceRows.map((row) => {
       const invoice = toInvoice(row);
       const customer = relation(row, "customers");
@@ -342,6 +576,8 @@ export class BillingStore {
         autopayEnabled: customer["autopay_enabled"] === true,
         autopayAuthorizedAt: parseDate(customer["autopay_authorized_at"]),
         defaultPaymentMethodId: defaultCard.get(invoice.customerId) ?? null,
+        collectionInFlight: inFlight.has(invoice.id),
+        autochargePausedAt: parseDate(row["autocharge_paused_at"]),
       };
     });
   }

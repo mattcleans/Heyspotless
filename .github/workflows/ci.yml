@@ -31,7 +31,13 @@ jobs:
       # The pricing and dispatch suites. These assert against figures published
       # independently of this code, so a failure here means the code and the
       # pricelist have drifted apart.
-      - run: npm test
+      #
+      # Run TWICE, in two zones. Scheduling and due dates resolve against
+      # America/Chicago no matter where the process runs, and the only honest
+      # way to keep that true is to run the suite somewhere it would break if
+      # it stopped being true. Pinning TZ to one value in the config would
+      # hide exactly the bug this guards.
+      - run: npm run test:zones
 
       # Demo mode is already the default with no Supabase config, but say it
       # explicitly so the build cannot start depending on real credentials.

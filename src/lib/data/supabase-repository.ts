@@ -42,15 +42,17 @@ const JOB_SELECT = `
 const JOB_SELECT_FOR_CLEANER = `${JOB_SELECT}, job_assignments!inner ( cleaner_id )`;
 
 const CUSTOMER_SELECT = `
-  id, first_name, last_name, email, phone, lifetime_value_cents,
-  stripe_customer_id, autopay_enabled, autopay_authorized_at
+  id, first_name, last_name, email, phone, notes, lifetime_value_cents,
+  stripe_customer_id, autopay_enabled, autopay_authorized_at,
+  autopay_suspended_at, autopay_suspended_reason
 `;
 
 /** `balance_cents` is generated in the database; it is selected, never computed. */
 const INVOICE_SELECT = `
   id, customer_id, job_id, status, subtotal_cents, tip_cents, total_cents,
-  amount_paid_cents, refunded_cents, balance_cents, due_on, issued_at,
-  voided_at, attempt_count, next_attempt_at, last_error, created_at
+  amount_paid_cents, refunded_cents, credit_cents, balance_cents, due_on,
+  issued_at, voided_at, attempt_count, next_attempt_at, last_error,
+  autocharge_paused_at, autocharge_paused_reason, created_at
 `;
 
 const PAYMENT_METHOD_SELECT = `

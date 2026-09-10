@@ -13,6 +13,7 @@ import { forecastWeek, zipCentroidEstimator } from "@/lib/dispatch/route";
 import { checkEligibility, REASON_LABELS } from "@/lib/dispatch/eligibility";
 import type { Cleaner } from "@/lib/dispatch/types";
 import { formatCents, formatHours, formatPct } from "@/lib/money";
+import { formatDateTimeInZone } from "@/lib/time/zone";
 import { SERVICE_LABELS, FREQUENCY_LABELS } from "@/lib/pricing/price-book";
 
 export const metadata = { title: "Dispatch — Spotless Ops" };
@@ -54,11 +55,7 @@ function DecisionSummary({ decision }: { decision: DispatchDecision }) {
           <p className="mt-2 text-sm text-ink-2">{decision.rationale}</p>
           <p className="mt-1 text-xs text-ink-3">
             Promotes to the waterfall{" "}
-            {decision.promoteToWaterfallAt.toLocaleString("en-US", {
-              weekday: "short",
-              hour: "numeric",
-              minute: "2-digit",
-            })}{" "}
+            {formatDateTimeInZone(decision.promoteToWaterfallAt)}{" "}
             · {decision.eligible.length} eligible
           </p>
         </>

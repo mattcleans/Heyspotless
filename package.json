@@ -13,6 +13,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:zones": "TZ=UTC vitest run && TZ=America/Chicago vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {

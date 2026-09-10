@@ -9,10 +9,20 @@ import {
   planSweep,
 } from "./autocharge";
 import { BillingError } from "./types";
+import { toCalendarDate, type CalendarDate } from "../time/zone";
 
 const NOW = new Date("2026-09-09T12:00:00Z");
-const YESTERDAY = new Date("2026-09-08T00:00:00Z");
-const TOMORROW = new Date("2026-09-10T00:00:00Z");
+
+/** Due dates are calendar days. Instants are what got this wrong. */
+function day(iso: string): CalendarDate {
+  const parsed = toCalendarDate(iso);
+  if (!parsed) throw new Error(`not a calendar date: ${iso}`);
+  return parsed;
+}
+
+const YESTERDAY = day("2026-09-08");
+const TODAY = day("2026-09-09");
+const TOMORROW = day("2026-09-10");
 
 /** A candidate that would be charged. Each test breaks exactly one thing. */
 function candidate(overrides: Partial<AutochargeCandidate> = {}): AutochargeCandidate {
@@ -26,6 +36,7 @@ function candidate(overrides: Partial<AutochargeCandidate> = {}): AutochargeCand
       totalCents: 17000,
       amountPaidCents: 0,
       refundedCents: 0,
+      creditCents: 0,
     },
     dueOn: YESTERDAY,
     voidedAt: null,
@@ -34,6 +45,8 @@ function candidate(overrides: Partial<AutochargeCandidate> = {}): AutochargeCand
     autopayEnabled: true,
     autopayAuthorizedAt: new Date("2026-01-01T00:00:00Z"),
     defaultPaymentMethodId: "pm_123",
+    collectionInFlight: false,
+    autochargePausedAt: null,
     ...overrides,
   };
 }
@@ -65,8 +78,26 @@ describe("the charge decision", () => {
   });
 
   it("charges on the due date itself", () => {
-    const dueToday = new Date("2026-09-09T23:00:00Z");
-    expect(decide(candidate({ dueOn: dueToday }), NOW)).toMatchObject({ action: "charge" });
+    expect(decide(candidate({ dueOn: TODAY }), NOW)).toMatchObject({ action: "charge" });
+  });
+
+  it("does not charge a future-due invoice late on the previous evening", () => {
+    // The early-charge case. 02:00 UTC on the 9th is 9pm on the 8th in Dallas,
+    // so an invoice due on the 9th is not yet due — a UTC comparison would
+    // already have taken the money.
+    const lateOnTheEighth = new Date("2026-09-09T02:00:00Z");
+    expect(decide(candidate({ dueOn: TODAY }), lateOnTheEighth)).toMatchObject({
+      action: "skip",
+      reason: "not_yet_due",
+    });
+  });
+
+  it("charges once the business day has rolled over to the due date", () => {
+    // 06:00 UTC on the 9th is 1am on the 9th in Dallas.
+    const afterMidnightCentral = new Date("2026-09-09T06:00:00Z");
+    expect(decide(candidate({ dueOn: TODAY }), afterMidnightCentral)).toMatchObject({
+      action: "charge",
+    });
   });
 
   it("charges immediately when there is no due date", () => {
@@ -99,7 +130,7 @@ describe("consent", () => {
       autopayEnabled: false,
       status: "overdue",
       attemptCount: 0,
-      dueOn: new Date("2026-01-01T00:00:00Z"),
+      dueOn: day("2026-01-01"),
     });
     expect(decide(overdue, NOW)).toMatchObject({ reason: "no_consent" });
   });
@@ -107,7 +138,9 @@ describe("consent", () => {
 
 describe("skips", () => {
   it("skips a voided invoice", () => {
-    expect(decide(candidate({ voidedAt: YESTERDAY }), NOW)).toMatchObject({ reason: "voided" });
+    expect(decide(candidate({ voidedAt: new Date("2026-09-08T00:00:00Z") }), NOW)).toMatchObject({
+      reason: "voided",
+    });
     expect(decide(candidate({ status: "void" }), NOW)).toMatchObject({ reason: "voided" });
   });
 
@@ -218,5 +251,49 @@ describe("the sweep", () => {
     const decisions = planSweep([candidate({ invoiceId: "a" }), candidate({ invoiceId: "b" })], NOW);
     const keys = decisions.flatMap((d) => (d.action === "charge" ? [d.idempotencyKey] : []));
     expect(new Set(keys).size).toBe(2);
+  });
+});
+
+describe("collecting once across channels", () => {
+  /**
+   * The sweep's other three defences all key on the sweep's OWN attempt.
+   * None of them sees a customer sitting on a Checkout page for the same
+   * invoice: a different channel means a different Stripe idempotency key,
+   * so as far as Stripe is concerned the two charges are unrelated. They are
+   * not — it is the same obligation, and collecting it twice is a refund
+   * and an apology.
+   */
+  it("does not charge alongside a Checkout page the customer has open", () => {
+    expect(decide(candidate({ collectionInFlight: true }), NOW)).toEqual({
+      action: "skip",
+      invoiceId: "inv-1",
+      reason: "collection_in_flight",
+    });
+  });
+
+  it("does not charge an invoice where collection has been paused", () => {
+    // Set by a refund recorded as a dispute. Charging a card mid-dispute is
+    // how one chargeback becomes two.
+    expect(
+      decide(candidate({ autochargePausedAt: new Date("2026-09-01T00:00:00Z") }), NOW),
+    ).toMatchObject({ action: "skip", reason: "collection_paused" });
+  });
+
+  it("checks both before anything that looks like a reason to charge", () => {
+    // Same ordering guarantee as consent: no combination of state reaches
+    // the charge branch while somebody else is collecting.
+    const overdueAndInFlight = candidate({
+      status: "overdue",
+      dueOn: day("2026-01-01"),
+      attemptCount: 0,
+      collectionInFlight: true,
+    });
+    expect(decide(overdueAndInFlight, NOW)).toMatchObject({ reason: "collection_in_flight" });
+  });
+
+  it("charges normally once the other attempt has cleared", () => {
+    expect(decide(candidate({ collectionInFlight: false }), NOW)).toMatchObject({
+      action: "charge",
+    });
   });
 });

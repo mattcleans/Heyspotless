@@ -43,12 +43,15 @@ function toCustomer(demo: (typeof DEMO_JOBS)[number]): Customer {
     lastName: rest.join(" "),
     email: null,
     phone: null,
+    notes: null,
     lifetimeValueCents: demo.priceCents,
     stripeCustomerId: null,
     // Demo mode has consent recorded so the customer screen renders the
     // card-on-file state; there is no Stripe account behind it to charge.
     autopayEnabled: true,
     autopayAuthorizedAt: new Date("2026-06-01T00:00:00Z"),
+    autopaySuspendedAt: null,
+    autopaySuspendedReason: null,
   };
 }
 
