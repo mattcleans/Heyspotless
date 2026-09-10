@@ -2,136 +2,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, expect, it } from "vitest";
 import { BillingStore } from "./store";
 
-/**
- * Claiming is the one piece of BillingStore that decides something rather than
- * just executing, and getting it wrong loses a payment silently — so it is
- * worth a test even though the rest of this class is a thin Supabase wrapper.
- *
- * The fake below is a real (tiny) `stripe_events` table rather than canned
- * responses: it enforces the primary key and honours the filters, so the
- * assertions are about behaviour and not about which methods got called. In
- * the spirit of events.test.ts — no SDK, no keys, no network.
- */
-interface Row {
-  id: string;
-  type: string;
-  payload: unknown;
-  received_at: string;
-  processed_at: string | null;
-}
-
-function fakeDb(rows: Row[]): SupabaseClient {
-  const db = {
-    from(table: string) {
-      if (table !== "stripe_events") throw new Error(`unexpected table: ${table}`);
-      return {
-        insert(row: Record<string, unknown>) {
-          if (rows.some((r) => r.id === row["id"])) {
-            return Promise.resolve({ error: { code: "23505", message: "duplicate key" } });
-          }
-          // received_at/processed_at are column defaults in 0006, not something
-          // the insert supplies, so they are filled in here the same way.
-          rows.push({
-            id: String(row["id"]),
-            type: String(row["type"]),
-            payload: row["payload"],
-            received_at: new Date().toISOString(),
-            processed_at: null,
-          });
-          return Promise.resolve({ error: null });
-        },
-
-        update(patch: Record<string, unknown>) {
-          const filters: ((r: Row) => boolean)[] = [];
-          const builder = {
-            eq(col: keyof Row, v: unknown) {
-              filters.push((r) => r[col] === v);
-              return builder;
-            },
-            is(col: keyof Row, v: unknown) {
-              filters.push((r) => r[col] === v);
-              return builder;
-            },
-            lt(col: keyof Row, v: unknown) {
-              // ISO-8601 UTC sorts lexicographically, same order as timestamptz.
-              filters.push((r) => String(r[col]) < String(v));
-              return builder;
-            },
-            select() {
-              const matched = rows.filter((r) => filters.every((f) => f(r)));
-              for (const r of matched) Object.assign(r, patch);
-              return Promise.resolve({ data: matched.map((r) => ({ id: r.id })), error: null });
-            },
-          };
-          return builder;
-        },
-      };
-    },
-  };
-  return db as unknown as SupabaseClient;
-}
-
-function claimed(overrides: Partial<Row> = {}): Row {
-  return {
-    id: "evt_1",
-    type: "checkout.session.completed",
-    payload: {},
-    received_at: new Date().toISOString(),
-    processed_at: null,
-    ...overrides,
-  };
-}
-
-/** Older than the 5-minute abandonment window. */
-function minutesAgo(n: number): string {
-  return new Date(Date.now() - n * 60_000).toISOString();
-}
-
-describe("claimEvent", () => {
-  it("claims an event never seen before", async () => {
-    const rows: Row[] = [];
-    const store = new BillingStore(fakeDb(rows));
-
-    expect(await store.claimEvent("evt_1", "charge.refunded", { a: 1 })).toBe(true);
-    expect(rows).toHaveLength(1);
-  });
-
-  it("reports a duplicate while the first handler could still be running", async () => {
-    const rows = [claimed({ received_at: minutesAgo(1) })];
-    const store = new BillingStore(fakeDb(rows));
-
-    expect(await store.claimEvent("evt_1", "checkout.session.completed", {})).toBe(false);
-  });
-
-  it("reports a duplicate for an event already processed", async () => {
-    // Long past the window, but finished — the ordinary redelivery case, and the
-    // one that must stay a no-op no matter how old it gets.
-    const rows = [claimed({ received_at: minutesAgo(60), processed_at: minutesAgo(59) })];
-    const store = new BillingStore(fakeDb(rows));
-
-    expect(await store.claimEvent("evt_1", "checkout.session.completed", {})).toBe(false);
-  });
-
-  it("takes over a claim whose handler died before finishing", async () => {
-    // The failure this guards: without the takeover Stripe's retry is waved
-    // through as a duplicate, and the payment is never applied.
-    const rows = [claimed({ received_at: minutesAgo(30) })];
-    const store = new BillingStore(fakeDb(rows));
-
-    expect(await store.claimEvent("evt_1", "checkout.session.completed", {})).toBe(true);
-  });
-
-  it("only lets one delivery take over an abandoned claim", async () => {
-    const rows = [claimed({ received_at: minutesAgo(30) })];
-    const store = new BillingStore(fakeDb(rows));
-
-    expect(await store.claimEvent("evt_1", "checkout.session.completed", {})).toBe(true);
-    // The takeover refreshed received_at, so a delivery arriving alongside it
-    // now sees a live claim.
-    expect(await store.claimEvent("evt_1", "checkout.session.completed", {})).toBe(false);
-  });
-});
-
 // --- cards ----------------------------------------------------------------
 
 /**
@@ -232,5 +102,82 @@ describe("detachCard", () => {
   it("returns null when no card is left, which is how autopay gets suspended", async () => {
     const { db } = fakeRpc(() => ({ data: null, error: null }));
     expect(await new BillingStore(db).detachCard("pm_1")).toBeNull();
+  });
+});
+
+
+// --- webhook events -------------------------------------------------------
+
+/**
+ * The claim RULES — completed vs processing vs abandoned, and lease
+ * ownership — live in 0010 and are asserted against real Postgres in
+ * scripts/verify-migrations.sh, including two overlapping connections and a
+ * handler that dies holding a lease.
+ *
+ * Left here: that the store asks the right question and reads the answer
+ * honestly. An unrecognised outcome must RAISE rather than be coerced into
+ * one of the three, because silently treating an unknown value as "completed"
+ * would resurrect the bug this whole change is about.
+ */
+describe("claimEvent", () => {
+  it("passes the event, the owner and the lease through", async () => {
+    const { db, calls } = fakeRpc(() => ({ data: "claimed", error: null }));
+
+    expect(await new BillingStore(db).claimEvent("evt_1", "charge.refunded", { a: 1 }, "own-1", 30))
+      .toBe("claimed");
+    expect(calls).toEqual([
+      {
+        fn: "claim_stripe_event",
+        args: {
+          p_id: "evt_1",
+          p_type: "charge.refunded",
+          p_payload: { a: 1 },
+          p_owner: "own-1",
+          p_lease_seconds: 30,
+        },
+      },
+    ]);
+  });
+
+  it("reports each of the three outcomes as itself", async () => {
+    for (const outcome of ["claimed", "completed", "processing"] as const) {
+      const { db } = fakeRpc(() => ({ data: outcome, error: null }));
+      expect(await new BillingStore(db).claimEvent("evt_1", "t", {}, "own-1")).toBe(outcome);
+    }
+  });
+
+  it("refuses to guess at an outcome it does not recognise", async () => {
+    // Coercing an unexpected value into "completed" would acknowledge an
+    // event nobody processed, which is the failure this change exists to fix.
+    const { db } = fakeRpc(() => ({ data: null, error: null }));
+    await expect(new BillingStore(db).claimEvent("evt_1", "t", {}, "own-1")).rejects.toThrow(
+      /unexpected outcome/,
+    );
+  });
+});
+
+describe("finishEvent and releaseEvent", () => {
+  it("reports success when this handler still holds the lease", async () => {
+    const { db, calls } = fakeRpc(() => ({ data: true, error: null }));
+    const store = new BillingStore(db);
+
+    expect(await store.finishEvent("evt_1", "own-1", "applied")).toBe(true);
+    expect(await store.releaseEvent("evt_1", "own-1", "boom")).toBe(true);
+    expect(calls.map((c) => c.fn)).toEqual(["finish_stripe_event", "release_stripe_event"]);
+    expect(calls[0]?.args).toEqual({
+      p_id: "evt_1",
+      p_owner: "own-1",
+      p_outcome: "applied",
+      p_error: null,
+    });
+    expect(calls[1]?.args).toEqual({ p_id: "evt_1", p_owner: "own-1", p_error: "boom" });
+  });
+
+  it("reports failure when the lease has moved to another handler", async () => {
+    const { db } = fakeRpc(() => ({ data: false, error: null }));
+    const store = new BillingStore(db);
+
+    expect(await store.finishEvent("evt_1", "stale-owner", "applied")).toBe(false);
+    expect(await store.releaseEvent("evt_1", "stale-owner")).toBe(false);
   });
 });

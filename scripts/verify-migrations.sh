@@ -468,6 +468,132 @@ end \$\$;
 SQL
 echo "  concurrent saves verified"
 
+# --- webhook event leases (0010) ---------------------------------------------
+# 0006's primary key told us an event had been seen. It did not tell us
+# whether it had been FINISHED, and the route acknowledged both cases the
+# same way — so a retry arriving while the first handler was still running
+# was answered "duplicate", Stripe stopped retrying, and if that handler then
+# died the payment was never applied.
+echo "  checking webhook event leases"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_a uuid := gen_random_uuid();  -- handler A
+  v_b uuid := gen_random_uuid();  -- handler B
+  v_result text; v_fail integer := 0; v_attempts integer; v_state stripe_event_state;
+begin
+  -- A first delivery claims.
+  if claim_stripe_event('evt_lease_1', 'payment_intent.succeeded', '{}'::jsonb, v_a)
+     <> 'claimed' then
+    v_fail := v_fail+1; raise warning 'a first delivery did not claim'; end if;
+
+  -- A retry arriving while A holds a live lease is NOT a duplicate. This is
+  -- the case that used to be acknowledged and lost.
+  v_result := claim_stripe_event('evt_lease_1', 'payment_intent.succeeded', '{}'::jsonb, v_b);
+  if v_result <> 'processing' then v_fail := v_fail+1;
+    raise warning 'a retry inside the lease reported %, want processing', v_result; end if;
+
+  -- B cannot finish work it does not own, nor release A's claim.
+  if finish_stripe_event('evt_lease_1', v_b, 'applied') then
+    v_fail := v_fail+1; raise warning 'a non-owner completed another handler''s event'; end if;
+  if release_stripe_event('evt_lease_1', v_b) then
+    v_fail := v_fail+1; raise warning 'a non-owner released another handler''s claim'; end if;
+  select state into v_state from stripe_events where id = 'evt_lease_1';
+  if v_state <> 'processing' then v_fail := v_fail+1;
+    raise warning 'a non-owner moved the event to %', v_state; end if;
+
+  -- The owner finishes it.
+  if not finish_stripe_event('evt_lease_1', v_a, 'applied') then
+    v_fail := v_fail+1; raise warning 'the lease owner could not finish its own event'; end if;
+
+  -- Now, and only now, a redelivery is a duplicate — for as long as Stripe
+  -- keeps retrying, which is days.
+  if claim_stripe_event('evt_lease_1', 'payment_intent.succeeded', '{}'::jsonb, v_b)
+     <> 'completed' then
+    v_fail := v_fail+1; raise warning 'a redelivery of a finished event was not completed'; end if;
+
+  -- A stale handler waking up after the fact cannot un-finish it.
+  if finish_stripe_event('evt_lease_1', v_a, 'applied') then
+    v_fail := v_fail+1; raise warning 'a surrendered lease could still finish the event'; end if;
+
+  -- PROCESS TERMINATION. A claims with a one-second lease and never returns.
+  perform claim_stripe_event('evt_lease_2', 'checkout.session.completed', '{}'::jsonb, v_a, 1);
+
+  -- A retry BEFORE the lease expires still gets "come back later".
+  if claim_stripe_event('evt_lease_2', 'checkout.session.completed', '{}'::jsonb, v_b, 1)
+     <> 'processing' then
+    v_fail := v_fail+1; raise warning 'a retry before lease expiry was not held off'; end if;
+
+  perform pg_sleep(1.2);
+
+  -- AFTER expiry, the next delivery takes it over rather than being told it
+  -- is a duplicate of work that never happened.
+  if claim_stripe_event('evt_lease_2', 'checkout.session.completed', '{}'::jsonb, v_b, 60)
+     <> 'claimed' then
+    v_fail := v_fail+1; raise warning 'an abandoned event was not taken over'; end if;
+  select attempts into v_attempts from stripe_events where id = 'evt_lease_2';
+  if v_attempts <> 2 then v_fail := v_fail+1;
+    raise warning 'takeover recorded % attempts, want 2', v_attempts; end if;
+
+  -- And the handler that died can no longer touch it.
+  if finish_stripe_event('evt_lease_2', v_a, 'applied') then
+    v_fail := v_fail+1; raise warning 'the dead handler completed an event it had lost'; end if;
+  if release_stripe_event('evt_lease_2', v_a) then
+    v_fail := v_fail+1; raise warning 'the dead handler released a claim it had lost'; end if;
+
+  -- A DATABASE FAILURE mid-processing: the handler releases, and the retry
+  -- picks it up immediately rather than waiting out the lease.
+  if not release_stripe_event('evt_lease_2', v_b, 'connection terminated') then
+    v_fail := v_fail+1; raise warning 'the owner could not release its own claim'; end if;
+  select state into v_state from stripe_events where id = 'evt_lease_2';
+  if v_state <> 'failed' then v_fail := v_fail+1;
+    raise warning 'a released event is in state %, want failed', v_state; end if;
+  if claim_stripe_event('evt_lease_2', 'checkout.session.completed', '{}'::jsonb, v_a, 60)
+     <> 'claimed' then
+    v_fail := v_fail+1; raise warning 'a released event was not immediately reclaimable'; end if;
+
+  -- The row survives a release, so the audit trail and the attempt count do
+  -- too. Deleting it — the old behaviour — lost both.
+  select attempts into v_attempts from stripe_events where id = 'evt_lease_2';
+  if v_attempts <> 3 then v_fail := v_fail+1;
+    raise warning 'attempts after release and reclaim: %, want 3', v_attempts; end if;
+
+  -- OUT OF ORDER: distinct event ids are distinct claims, whatever order
+  -- they arrive in.
+  if claim_stripe_event('evt_lease_3', 'charge.refunded', '{}'::jsonb, v_b) <> 'claimed' then
+    v_fail := v_fail+1; raise warning 'a second distinct event could not be claimed'; end if;
+
+  if v_fail > 0 then raise exception '% webhook lease assertions failed', v_fail; end if;
+  raise notice 'webhook leases passed';
+end $$;
+SQL
+echo "  webhook leases verified"
+
+# --- concurrent webhook deliveries (0010) ------------------------------------
+# Two connections claiming the same event at the same moment. Exactly one may
+# be told to process it; the other must be held off, NOT acknowledged.
+echo "  checking concurrent webhook deliveries"
+as_super $PSQL -d "$DB" -tAc \
+  "select claim_stripe_event('evt_race', 'payment_intent.succeeded', '{}'::jsonb,
+                             gen_random_uuid(), 30)" > /tmp/spotless_claim_a.txt &
+CLAIM_A=$!
+as_super $PSQL -d "$DB" -tAc \
+  "select claim_stripe_event('evt_race', 'payment_intent.succeeded', '{}'::jsonb,
+                             gen_random_uuid(), 30)" > /tmp/spotless_claim_b.txt &
+CLAIM_B=$!
+wait $CLAIM_A
+wait $CLAIM_B
+
+CLAIMED_COUNT=$(cat /tmp/spotless_claim_a.txt /tmp/spotless_claim_b.txt | grep -c '^claimed$' || true)
+HELD_COUNT=$(cat /tmp/spotless_claim_a.txt /tmp/spotless_claim_b.txt | grep -c '^processing$' || true)
+rm -f /tmp/spotless_claim_a.txt /tmp/spotless_claim_b.txt
+
+if [ "$CLAIMED_COUNT" != "1" ] || [ "$HELD_COUNT" != "1" ]; then
+  echo "  concurrent deliveries: $CLAIMED_COUNT claimed, $HELD_COUNT held — want 1 and 1" >&2
+  exit 1
+fi
+echo "  concurrent deliveries verified"
+
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql
 echo "  access controls verified"

@@ -6,11 +6,9 @@ import type { BillingTransition } from "./events";
 import { toInvoice } from "../data/mappers";
 
 /**
- * How long an unfinished claim must sit before another delivery may take it
- * over. Comfortably above the webhook route's `maxDuration` of 60s, so a
- * handler that is merely slow is never treated as abandoned.
+ * What happened when we tried to claim a webhook event. See `claimEvent`.
  */
-const ABANDONED_CLAIM_MS = 5 * 60_000;
+export type EventClaim = "claimed" | "completed" | "processing";
 
 /**
  * Every write to the money tables.
@@ -27,76 +25,80 @@ const ABANDONED_CLAIM_MS = 5 * 60_000;
 export class BillingStore {
   constructor(private readonly db: SupabaseClient) {}
 
-  // --- webhook idempotency -------------------------------------------------
+  // --- webhook events ------------------------------------------------------
 
   /**
-   * Claim a Stripe event, returning false if it has been seen before.
+   * Claim an event for processing, or find out why we cannot.
    *
-   * The insert IS the lock: `stripe_events.id` is the primary key, so a
-   * concurrent duplicate delivery loses the race with a unique violation rather
-   * than both handlers proceeding. Postgres reports that as 23505.
+   * Three outcomes, and the whole point of this change is that they are three
+   * rather than two:
    *
-   * A losing insert is not automatically a duplicate, though. `releaseEvent`
-   * gives the claim back when the handler THROWS, but a hard kill or a function
-   * timeout leaves the row behind with `processed_at` still null — and then
-   * every Stripe retry would be waved through as a duplicate and the payment
-   * never applied, while Stripe holds the money. So an unfinished claim old
-   * enough that no handler could still be running is taken over instead.
+   *   "claimed"    — ours. Process it, then `finishEvent`.
+   *   "completed"  — already done. Acknowledge to Stripe, do nothing.
+   *   "processing" — another handler holds a live lease. Do NOT acknowledge.
+   *
+   * The old shape returned a bare boolean, and `false` meant both "already
+   * done" and "someone is working on it". The route answered 200 to both, so
+   * an event whose handler then died had already been acknowledged to Stripe:
+   * no retry, no payment applied, nothing anywhere saying so. Distinguishing
+   * the two is the fix; the lease and the owner (0010) are how.
    */
-  async claimEvent(id: string, type: string, payload: unknown): Promise<boolean> {
-    const { error } = await this.db
-      .from("stripe_events")
-      .insert({ id, type, payload });
+  async claimEvent(
+    id: string,
+    type: string,
+    payload: unknown,
+    owner: string,
+    leaseSeconds?: number,
+  ): Promise<EventClaim> {
+    const { data, error } = await this.db.rpc("claim_stripe_event", {
+      p_id: id,
+      p_type: type,
+      p_payload: payload ?? null,
+      p_owner: owner,
+      p_lease_seconds: leaseSeconds ?? null,
+    });
+    if (error) throw new Error(`claimEvent: ${error.message}`);
 
-    if (!error) return true;
-    if (error.code !== "23505") throw new Error(`claimEvent: ${error.message}`);
-
-    return this.reclaimAbandonedEvent(id, type);
+    if (data === "claimed" || data === "completed" || data === "processing") return data;
+    throw new Error(`claimEvent: unexpected outcome ${JSON.stringify(data)}`);
   }
 
   /**
-   * Take over a claim whose handler died before finishing it.
+   * Give a claimed event back after the handler failed, so the retry can take
+   * the ordinary path.
    *
-   * Touching `received_at` is what makes this a claim rather than a read: the
-   * predicated UPDATE serialises, so a second delivery arriving alongside this
-   * one re-evaluates after it commits, sees a fresh timestamp, and correctly
-   * reports a duplicate. Two reclaims would be safe anyway — `record_payment`
-   * is idempotent on the payment intent — but one is the point.
+   * Returns false when we no longer hold the lease — another handler has taken
+   * the event over, and clearing its claim would be actively harmful. The
+   * caller should leave it alone; the new owner will finish it.
    */
-  private async reclaimAbandonedEvent(id: string, type: string): Promise<boolean> {
-    const cutoff = new Date(Date.now() - ABANDONED_CLAIM_MS).toISOString();
-
-    const { data, error } = await this.db
-      .from("stripe_events")
-      .update({ received_at: new Date().toISOString(), type })
-      .eq("id", id)
-      .is("processed_at", null)
-      .lt("received_at", cutoff)
-      .select("id");
-
-    if (error) throw new Error(`claimEvent reclaim: ${error.message}`);
-    return (data ?? []).length > 0;
-  }
-
-  /**
-   * Give a claimed event back after the handler failed.
-   *
-   * Without this the claim would defeat the retry: we would have returned 500
-   * to make Stripe redeliver, and then treated the redelivery as a duplicate
-   * and skipped it, so the payment would never be applied. The row is deleted
-   * rather than flagged so the retry takes the ordinary path.
-   */
-  async releaseEvent(id: string): Promise<void> {
-    const { error } = await this.db.from("stripe_events").delete().eq("id", id);
+  async releaseEvent(id: string, owner: string, errorMessage?: string): Promise<boolean> {
+    const { data, error } = await this.db.rpc("release_stripe_event", {
+      p_id: id,
+      p_owner: owner,
+      p_error: errorMessage ?? null,
+    });
     if (error) throw new Error(`releaseEvent: ${error.message}`);
+    return data === true;
   }
 
-  async finishEvent(id: string, outcome: string, errorMessage?: string): Promise<void> {
-    const { error } = await this.db
-      .from("stripe_events")
-      .update({ processed_at: new Date().toISOString(), outcome, error: errorMessage ?? null })
-      .eq("id", id);
+  /**
+   * Mark an event finished. Returns false if the lease has moved on, in which
+   * case this handler was too slow and its result is not the one of record.
+   */
+  async finishEvent(
+    id: string,
+    owner: string,
+    outcome: string,
+    errorMessage?: string,
+  ): Promise<boolean> {
+    const { data, error } = await this.db.rpc("finish_stripe_event", {
+      p_id: id,
+      p_owner: owner,
+      p_outcome: outcome,
+      p_error: errorMessage ?? null,
+    });
     if (error) throw new Error(`finishEvent: ${error.message}`);
+    return data === true;
   }
 
   // --- money ---------------------------------------------------------------
