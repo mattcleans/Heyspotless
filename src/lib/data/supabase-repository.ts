@@ -42,7 +42,7 @@ const JOB_SELECT = `
 const JOB_SELECT_FOR_CLEANER = `${JOB_SELECT}, job_assignments!inner ( cleaner_id )`;
 
 const CUSTOMER_SELECT = `
-  id, first_name, last_name, email, phone, lifetime_value_cents,
+  id, first_name, last_name, email, phone, notes, lifetime_value_cents,
   stripe_customer_id, autopay_enabled, autopay_authorized_at
 `;
 

@@ -57,10 +57,18 @@ export function CustomerForm({ customer }: { customer?: Customer }) {
         />
       </div>
 
+      {/*
+        Falling back to the stored notes matters more here than on the other
+        fields. `updateCustomer` writes every column, so an empty textarea is
+        indistinguishable from "clear the notes" — and the textarea WAS always
+        empty, because this defaulted to the rejected submission and nothing
+        else. Editing a phone number wiped the notes. Prefilled, an empty box
+        once again means what it says, and clearing notes on purpose still works.
+      */}
       <TextArea
         name="notes"
         label="Notes"
-        defaultValue={was?.["notes"]}
+        defaultValue={was?.["notes"] ?? customer?.notes ?? ""}
         hint="Anything the office should know before quoting or scheduling."
         errors={state.errors}
       />

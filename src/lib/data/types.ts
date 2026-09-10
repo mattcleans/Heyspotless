@@ -29,6 +29,15 @@ export interface Customer {
   lastName: string;
   email: string | null;
   phone: string | null;
+  /**
+   * What the office needs to know before quoting or scheduling — the dog that
+   * bites, the neighbour with the key, the reason they left the last cleaner.
+   *
+   * Carried on the domain type rather than fetched separately because the edit
+   * form writes every field it has: a notes field the form could not see was a
+   * notes field the form silently blanked on the next save.
+   */
+  notes: string | null;
   lifetimeValueCents: number;
   /** Null until their first Stripe interaction creates the customer object. */
   stripeCustomerId: string | null;

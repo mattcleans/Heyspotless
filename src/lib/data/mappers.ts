@@ -103,6 +103,7 @@ export function toCustomer(row: Row): Customer {
     lastName: str(row, "last_name"),
     email: strOrNull(row, "email"),
     phone: strOrNull(row, "phone"),
+    notes: strOrNull(row, "notes"),
     lifetimeValueCents: num(row, "lifetime_value_cents", 0),
     stripeCustomerId: strOrNull(row, "stripe_customer_id"),
     autopayEnabled: bool(row, "autopay_enabled"),

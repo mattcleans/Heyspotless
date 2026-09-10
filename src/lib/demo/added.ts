@@ -33,6 +33,7 @@ export function addDemoCustomer(input: CustomerInput, id?: string): Customer {
     lastName: input.lastName,
     email: input.email,
     phone: input.phone,
+    notes: input.notes,
     // Lifetime value is recomputed from real invoices, never entered; a new
     // customer has not paid for anything yet.
     lifetimeValueCents: existing?.lifetimeValueCents ?? 0,
