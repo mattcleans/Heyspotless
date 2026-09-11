@@ -433,10 +433,10 @@ export class BillingStore {
       .update({
         autopay_enabled: enabled,
         autopay_authorized_at: enabled ? new Date().toISOString() : null,
-        // A suspension describes autopay that is on and cannot run. Switching
-        // it off resolves that; switching it on is a fresh start.
-        autopay_suspended_at: null,
-        autopay_suspended_reason: null,
+        // The "we turned this off" marker describes a past system action.
+        // Either direction of a deliberate choice by the customer clears it.
+        autopay_ended_at: null,
+        autopay_ended_reason: null,
       })
       .eq("id", customerId);
     if (error) throw new Error(`setAutopay: ${error.message}`);

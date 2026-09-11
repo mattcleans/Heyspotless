@@ -399,23 +399,30 @@ begin
   if detach_payment_method('pm_never_seen') is not null then
     v_fail := v_fail+1; raise warning 'detaching an unmirrored card returned a default'; end if;
 
-  -- THE LAST CARD. Autopay is suspended and SAID SO, rather than silently
-  -- becoming unusable. Consent is deliberately kept.
+  -- THE LAST CARD. Consent is WITHDRAWN with it (0013): an authorisation to
+  -- charge a card the customer has removed is stale, and stale consent is not
+  -- a position to defend a dispute from. The reason is recorded so the screen
+  -- can explain itself rather than just showing "Off".
   perform detach_payment_method('pm_b');
   perform detach_payment_method('pm_a');
   if exists (select 1 from payment_methods
              where customer_id = v_cust and detached_at is null) then
     v_fail := v_fail+1; raise warning 'a card survived detaching them all'; end if;
   if not exists (select 1 from customers where id = v_cust
-                 and autopay_suspended_at is not null
-                 and autopay_enabled and autopay_authorized_at is not null) then
+                 and autopay_enabled = false
+                 and autopay_authorized_at is null
+                 and autopay_ended_at is not null
+                 and autopay_ended_reason is not null) then
     v_fail := v_fail+1;
-    raise warning 'removing the last card did not suspend autopay, or dropped consent'; end if;
+    raise warning 'removing the last card did not withdraw autopay consent'; end if;
 
-  -- And saving a card resumes it without asking for consent again.
+  -- And saving a card does NOT resurrect it. Opting back in is a fresh
+  -- decision the customer makes; nothing here may make it for them.
   perform save_payment_method(v_cust, 'pm_d', 'visa', '4444', 9, 2034);
-  if exists (select 1 from customers where id = v_cust and autopay_suspended_at is not null) then
-    v_fail := v_fail+1; raise warning 'a new card did not lift the suspension'; end if;
+  if exists (select 1 from customers where id = v_cust
+             and (autopay_enabled or autopay_authorized_at is not null)) then
+    v_fail := v_fail+1;
+    raise warning 'saving a card silently re-enabled autopay without consent'; end if;
 
   -- A card moving to a different customer keeps that customer''s default
   -- arrangement intact rather than inheriting the old one''s.
@@ -815,6 +822,127 @@ echo "  refund policy verified"
 # that looked at the invoice saw an unpaid invoice and started another one:
 # two Checkout tabs, a repeated submission, or the nightly sweep landing on
 # an invoice a customer was in the middle of paying.
+# --- refund attribution (0013) ------------------------------------------------
+# A refund nobody explained is still fully credited and still never
+# re-collected — the money rule from 0011 is unchanged. What 0013 adds is
+# honest attribution: recording every unexplained refund as pure goodwill
+# hides the ones that were a service failure, and those are the ones a
+# marketplace has to be able to see.
+echo "  checking refund attribution"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_inv uuid; v_fail integer := 0;
+  v_bal integer; v_credit integer; v_service integer; v_goodwill integer;
+begin
+  insert into customers (first_name, last_name) values ('Attribute','Refund')
+    returning id into v_cust;
+
+  ----------------------------------------------------------------------
+  -- UNATTRIBUTED (the Stripe-dashboard default): 50/50, fully credited.
+  ----------------------------------------------------------------------
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_inv;
+  perform record_payment(v_inv, 17000, 0, 'pi_attr_1', null, null, false, 'card');
+  perform record_refund('pi_attr_1', 5000, 're_attr_1');   -- kind defaults
+
+  if not exists (select 1 from refunds
+                 where stripe_refund_id = 're_attr_1' and kind = 'unattributed') then
+    v_fail := v_fail+1; raise warning 'an unstated refund was not recorded as unattributed'; end if;
+
+  select coalesce(sum(amount_cents) filter (where category = 'service_refund'), 0),
+         coalesce(sum(amount_cents) filter (where category = 'goodwill'), 0)
+    into v_service, v_goodwill
+  from invoice_adjustments where invoice_id = v_inv;
+
+  if v_service <> 2500 then v_fail := v_fail+1;
+    raise warning 'service share: got %, want 2500', v_service; end if;
+  if v_goodwill <> 2500 then v_fail := v_fail+1;
+    raise warning 'goodwill share: got %, want 2500', v_goodwill; end if;
+
+  -- The money rule is untouched: fully credited, nothing collectible.
+  select credit_cents, balance_cents into v_credit, v_bal from invoices where id = v_inv;
+  if v_credit <> 5000 then v_fail := v_fail+1;
+    raise warning 'total credit: got %, want 5000', v_credit; end if;
+  if v_bal <> 0 then v_fail := v_fail+1;
+    raise warning 'an unattributed refund left % collectible, want 0', v_bal; end if;
+
+  -- Replay must not credit either half twice.
+  perform record_refund('pi_attr_1', 5000, 're_attr_1');
+  select credit_cents into v_credit from invoices where id = v_inv;
+  if v_credit <> 5000 then v_fail := v_fail+1;
+    raise warning 'a replayed unattributed refund credited twice: %', v_credit; end if;
+  if (select count(*) from invoice_adjustments where invoice_id = v_inv) <> 2 then
+    v_fail := v_fail+1; raise warning 'a replay produced extra adjustment rows'; end if;
+
+  ----------------------------------------------------------------------
+  -- The ODD CENT goes to goodwill, so the service-failure figure — which
+  -- is what drives quality work — is never overstated.
+  ----------------------------------------------------------------------
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_inv;
+  perform record_payment(v_inv, 17000, 0, 'pi_attr_odd', null, null, false, 'card');
+  perform record_refund('pi_attr_odd', 501, 're_attr_odd');
+
+  select coalesce(sum(amount_cents) filter (where category = 'service_refund'), 0),
+         coalesce(sum(amount_cents) filter (where category = 'goodwill'), 0)
+    into v_service, v_goodwill
+  from invoice_adjustments where invoice_id = v_inv;
+  if v_service <> 250 or v_goodwill <> 251 then v_fail := v_fail+1;
+    raise warning 'odd split: service %, goodwill %, want 250/251', v_service, v_goodwill; end if;
+  select credit_cents into v_credit from invoices where id = v_inv;
+  if v_credit <> 501 then v_fail := v_fail+1;
+    raise warning 'odd split lost a cent: credited %, refunded 501', v_credit; end if;
+
+  ----------------------------------------------------------------------
+  -- An admin who KNOWS the clean was the problem gets an undiluted number.
+  ----------------------------------------------------------------------
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_inv;
+  perform record_payment(v_inv, 17000, 0, 'pi_attr_svc', null, null, false, 'card');
+  perform record_refund('pi_attr_svc', 5000, 're_attr_svc', null,
+                        'bathroom was missed', 'service_refund');
+
+  select coalesce(sum(amount_cents) filter (where category = 'service_refund'), 0),
+         coalesce(sum(amount_cents) filter (where category = 'goodwill'), 0)
+    into v_service, v_goodwill
+  from invoice_adjustments where invoice_id = v_inv;
+  if v_service <> 5000 or v_goodwill <> 0 then v_fail := v_fail+1;
+    raise warning 'a stated service refund split: service %, goodwill %', v_service, v_goodwill; end if;
+  select balance_cents into v_bal from invoices where id = v_inv;
+  if v_bal <> 0 then v_fail := v_fail+1;
+    raise warning 'a service refund left % collectible, want 0', v_bal; end if;
+
+  ----------------------------------------------------------------------
+  -- A stated goodwill refund is still wholly goodwill.
+  ----------------------------------------------------------------------
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_inv;
+  perform record_payment(v_inv, 17000, 0, 'pi_attr_gw', null, null, false, 'card');
+  perform record_refund('pi_attr_gw', 5000, 're_attr_gw', null, 'thanks for your patience',
+                        'goodwill');
+  select coalesce(sum(amount_cents) filter (where category = 'goodwill'), 0)
+    into v_goodwill from invoice_adjustments where invoice_id = v_inv;
+  if v_goodwill <> 5000 then v_fail := v_fail+1;
+    raise warning 'a stated goodwill refund credited % to goodwill, want 5000', v_goodwill; end if;
+
+  ----------------------------------------------------------------------
+  -- The kinds that deliberately stay collectible raise no credit at all.
+  ----------------------------------------------------------------------
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_inv;
+  perform record_payment(v_inv, 17000, 0, 'pi_attr_corr', null, null, false, 'card');
+  perform record_refund('pi_attr_corr', 17000, 're_attr_corr', null, 'wrong card', 'correction');
+  select credit_cents, balance_cents into v_credit, v_bal from invoices where id = v_inv;
+  if v_credit <> 0 or v_bal <> 17000 then v_fail := v_fail+1;
+    raise warning 'a correction credited % and left balance %', v_credit, v_bal; end if;
+
+  if v_fail > 0 then raise exception '% refund-attribution assertions failed', v_fail; end if;
+  raise notice 'refund attribution passed';
+end $$;
+SQL
+echo "  refund attribution verified"
+
 echo "  checking payment operations"
 as_super $PSQL -d "$DB" <<'SQL'
 do $$

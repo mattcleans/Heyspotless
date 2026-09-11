@@ -50,8 +50,8 @@ function toCustomer(demo: (typeof DEMO_JOBS)[number]): Customer {
     // card-on-file state; there is no Stripe account behind it to charge.
     autopayEnabled: true,
     autopayAuthorizedAt: new Date("2026-06-01T00:00:00Z"),
-    autopaySuspendedAt: null,
-    autopaySuspendedReason: null,
+    autopayEndedAt: null,
+    autopayEndedReason: null,
   };
 }
 

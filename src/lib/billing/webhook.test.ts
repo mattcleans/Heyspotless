@@ -342,10 +342,12 @@ describe("the webhook's response to Stripe", () => {
 });
 
 describe("refunds arriving through the webhook", () => {
-  it("records a dashboard refund as goodwill, so it cannot become a charge", async () => {
+  it("records a dashboard refund as unattributed, so it cannot become a charge", async () => {
     // A refund we did not initiate carries no stated intent. Reading it as a
     // correction would restore the balance and — with autopay on — take the
-    // money straight back off the customer's card. An apology must not bill.
+    // money straight back off the customer's card. Reading it as pure
+    // goodwill would be safe for the customer but would quietly file every
+    // botched clean under generosity, so the business never sees them.
     const h = harness();
     const result = await handleStripeEvent(h.store, {
       id: "evt_r",
@@ -360,7 +362,7 @@ describe("refunds arriving through the webhook", () => {
     });
 
     expect(result.status).toBe(200);
-    expect(h.recorded.refundKinds).toEqual(["goodwill"]);
+    expect(h.recorded.refundKinds).toEqual(["unattributed"]);
   });
 
   it("passes a later failure through to settlement rather than ignoring it", async () => {

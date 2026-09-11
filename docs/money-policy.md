@@ -40,14 +40,41 @@ correction are the same Stripe call and opposite outcomes for the customer.
 
 | Kind | Credit raised? | Balance after | Use it when |
 |---|---|---|---|
-| `goodwill` | yes, matching | unchanged | The work stands and we are giving money back — a missed room, a late arrival, an apology. |
+| `unattributed` | yes, matching, **split 50/50** | unchanged | Nobody said why. The default. |
+| `service_refund` | yes, matching | unchanged | The clean was the problem, and someone has confirmed it. |
+| `goodwill` | yes, matching | unchanged | The work was fine and we chose to give something back. |
 | `overpayment` | no | rises to zero, never past it | They paid more than was owed and we are returning the difference. Capped at what was actually overpaid. |
 | `correction` | no | restored, collectible again | The money is still owed; it was taken the wrong way (wrong card, wrong customer). We intend to collect it again. |
 | `dispute` | no | restored, collection **paused** | The customer has disputed. A person handles it; nothing automatic touches the card. |
 
-**`goodwill` is the default** — for refunds issued from the Stripe dashboard,
-and anywhere else intent is not stated. A refund of unknown intent must never
-turn itself into a fresh charge.
+**`unattributed` is the default** — for refunds issued from the Stripe
+dashboard, and anywhere else intent is not stated. A refund of unknown intent
+must never turn itself into a fresh charge, so it is credited in full.
+
+### Why an unexplained refund is not all goodwill
+
+It is fully credited either way, so this changes no money. What it changes is
+what the business can see.
+
+Filing every unexplained refund under "goodwill" says the work was fine and we
+were being generous. Some of them are. Some of them are a clean that went
+wrong and nobody wrote it down — and if the books never say so, nobody ever
+finds out which cleans, or which cleaners, or which properties. For a
+marketplace that sells trust, that number is not a footnote.
+
+So an unattributed refund is split **50/50** between `service_refund` and
+`goodwill`: a stated default in the absence of better information, not a
+measurement. The odd cent goes to goodwill, because understating a clean's
+failures is safer than pointing quality work at the wrong job.
+
+`service_refund` is also selectable outright, for when someone looked and
+knows. That one is undiluted — it is the figure quality work should be
+prioritised from, so guesses must not inflate it.
+
+The share lives in one place in each language: `unattributed_service_share()`
+in `0013`, and `UNATTRIBUTED_SERVICE_SHARE` in `lib/billing/types.ts`. Change
+both when there is real data on how often an unexplained refund turns out to
+be a service failure.
 
 ### The worked example
 
@@ -117,10 +144,18 @@ separately, and they mean different things.
 Consent is two halves — the flag and the timestamp — and a CHECK constraint
 refuses one without the other. A card on file is not consent to charge it.
 
-When the last saved card is removed, autopay is **suspended, not cancelled**:
-consent stands, the reason is recorded on the customer, the customer screen
-says "Paused" and what to do, and saving any card resumes it without asking
-again. Detaching a non-last default promotes the oldest remaining card.
+When the last saved card is removed, **consent is withdrawn**: autopay is
+switched off, `autopay_authorized_at` is cleared, and the reason is recorded
+on the customer so the screen can say "we switched this off because…" rather
+than a bare "Off". Saving a card later does **not** resurrect it — turning
+autopay back on is a fresh decision the customer makes, which writes a fresh
+consent timestamp.
+
+An authorisation to charge a card the customer has since removed is a stale
+authorisation, and "they agreed months ago, before they deleted the card" is
+not a position to defend a dispute from. Detaching a non-last default still
+just promotes the oldest remaining card; consent is untouched there, because
+the customer still has a card on file.
 
 The sweep never charges:
 
