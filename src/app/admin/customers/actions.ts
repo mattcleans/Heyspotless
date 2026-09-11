@@ -4,7 +4,14 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getOpsStore, getRepository } from "@/lib/data";
 import { parseCustomer, parseJob, parseProperty, type Fields } from "@/lib/data/validate";
+import { FREQUENCY_LABELS } from "@/lib/pricing/price-book";
 import { PriceBookError, buildQuote } from "@/lib/pricing/quote";
+import {
+  BUSINESS_TIME_ZONE,
+  formatDateTimeInZone,
+  todayIn,
+  toLocalInputValue,
+} from "@/lib/time/zone";
 
 /**
  * Server actions for the customer surfaces.
@@ -165,8 +172,45 @@ export async function bookJob(
     return { message: messageOf(error), values: fields };
   }
 
+  const store = await getOpsStore();
+
+  // A recurring plan and a one-off booking are genuinely different acts. The
+  // plan stores the AGREED RATE, so a later price-book change cannot quietly
+  // raise a long-standing customer — the live overbilling bug in build-plan
+  // section 09. The visits themselves are created by the recurring sweep,
+  // which is idempotent, so the plan is the only thing written here.
+  if (parsed.value.repeats && parsed.value.scheduledStart) {
+    const anchorDate = todayIn(BUSINESS_TIME_ZONE, parsed.value.scheduledStart);
+    const startTime = toLocalInputValue(parsed.value.scheduledStart).slice(11, 16);
+
+    try {
+      await store.createRecurringPlan({
+        customerId,
+        propertyId: parsed.value.propertyId,
+        service: parsed.value.service,
+        frequency: parsed.value.frequency,
+        anchorDate,
+        startTime,
+        agreedPriceCents: priceCents,
+        estimatedMinutes: estimatedCleanMinutes,
+        notes: parsed.value.notes,
+      });
+    } catch (error) {
+      return { message: messageOf(error), values: fields };
+    }
+
+    revalidatePath(`/admin/customers/${customerId}`);
+    revalidatePath("/admin/dispatch");
+    return {
+      message:
+        `Plan started — ${FREQUENCY_LABELS[parsed.value.frequency].toLowerCase()} ` +
+        `from ${formatDateTimeInZone(parsed.value.scheduledStart)}, at this rate. ` +
+        `Visits appear on the board as they come into range.`,
+    };
+  }
+
   try {
-    await (await getOpsStore()).createJob({
+    await store.createJob({
       input: parsed.value,
       customerId,
       priceCents,

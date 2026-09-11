@@ -56,15 +56,24 @@ none of this authorizes live payment activation.
 | Billing calendar dates | Implemented, verified | `0008` + `lib/time/zone.ts`. Scheduling resolves in America/Chicago (including the skipped and repeated hours); due dates are calendar days compared against today-in-Chicago. The suite is **not** pinned to a zone — `npm run test:zones` runs it under UTC and America/Chicago, and CI runs that. The SQL assertion runs with the session zone set to UTC, Chicago and Auckland. |
 | Integrated verification | Partly done | All checks pass on the combined branch: 357 unit tests in both zones, typecheck, lint, build, all twelve migrations, and the SQL and role suites. **Stripe test-mode flows have NOT been exercised** — no Stripe credentials are configured in this environment, and no staging deploy exists to point a webhook at. This gate is open. |
 
-## Scheduling limitation
+## Recurring scheduling
 
-Selecting a frequency books **one** clean at the recurring rate. It does not
-create the series, and nothing in the application will. Generating recurring
-visits, skipping, rescheduling and holding legacy rates are unbuilt.
+Built (`0014`). Frequency sets the rate; "repeat this automatically" starts a
+plan. Visits are generated six weeks ahead by `/api/recurring/generate`,
+idempotent on `(plan, occurrence date)` and asserted against three concurrent
+sweeps. Skips are rows with reasons, and skipping one visit does not move the
+rest. The agreed rate lives on the plan, which closes gate 5 below and the
+overbilling exposure in `docs/setup.md` item 7 **for future visits** — it does
+nothing about invoices already sent.
 
-Stated in the booking form, the README and here, because the dropdown looks
-exactly like one that does schedule a series. Recurring customers stay in
-Housecall Pro until it exists.
+Remaining gaps, neither blocking a pilot:
+
+- Customers cannot yet see their own schedule; the plan and its skips are
+  admin-only surfaces.
+- Dispatch does not read `preferred_cleaner_id`. The column is written and
+  the continuity intent is recorded, but the offer ladder still treats every
+  visit as a fresh auction. For a marketplace whose core promise is "the same
+  person comes back", this is the highest-value next piece.
 
 ## Customer and operations gates
 
@@ -72,7 +81,8 @@ Housecall Pro until it exists.
 2. Create and change bookings through supported screens with capacity checks.
 3. Assign work and let the cleaner record completion through their own account.
 4. Show upcoming visits, invoices, receipts and payment authorization to customers.
-5. Generate recurring visits without duplicates and preserve locked legacy rates.
+5. ~~Generate recurring visits without duplicates and preserve locked legacy rates.~~
+   Done — `0014`, verified against concurrent sweeps.
 6. Pilot a small, representative customer group with daily job and money reconciliation.
 7. Verify migrated history and future visits, rehearse rollback, and complete the
    planned parallel run before retiring Housecall Pro.

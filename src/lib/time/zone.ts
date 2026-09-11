@@ -270,6 +270,86 @@ export function compareCalendarDates(a: CalendarDate, b: CalendarDate): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+/**
+ * Calendar arithmetic.
+ *
+ * Deliberately done on UTC midnights rather than on instants. A recurring
+ * clean every 14 days is fourteen CALENDAR days — adding 14 × 86,400,000ms to
+ * a timestamp lands an hour out twice a year, which over a year of fortnightly
+ * visits is a cleaner turning up at the wrong time for half of them.
+ */
+function calendarToUtcMs(day: CalendarDate): number {
+  const [y, mo, d] = day.split("-").map(Number);
+  return Date.UTC(y ?? 1970, (mo ?? 1) - 1, d ?? 1);
+}
+
+function utcMsToCalendar(ms: number): CalendarDate {
+  const d = new Date(ms);
+  return (
+    `${pad(d.getUTCFullYear(), 4)}-${pad(d.getUTCMonth() + 1, 2)}-${pad(d.getUTCDate(), 2)}`
+  ) as CalendarDate;
+}
+
+/** `n` calendar days later (or earlier, for a negative `n`). */
+export function addCalendarDays(day: CalendarDate, n: number): CalendarDate {
+  return utcMsToCalendar(calendarToUtcMs(day) + n * DAY_MS);
+}
+
+/** Whole calendar days from `a` to `b`. Negative when `b` is earlier. */
+export function calendarDaysBetween(a: CalendarDate, b: CalendarDate): number {
+  return Math.round((calendarToUtcMs(b) - calendarToUtcMs(a)) / DAY_MS);
+}
+
+/** 0 = Sunday, 6 = Saturday — the same numbering as `Date.getUTCDay()`. */
+export function dayOfWeek(day: CalendarDate): number {
+  return new Date(calendarToUtcMs(day)).getUTCDay();
+}
+
+/** Which occurrence of its weekday this is within its month: 1 for the first. */
+export function weekdayOrdinalInMonth(day: CalendarDate): number {
+  const [, , d] = day.split("-").map(Number);
+  return Math.floor(((d ?? 1) - 1) / 7) + 1;
+}
+
+/**
+ * The `ordinal`-th `weekday` of a month, clamped to the last one present.
+ *
+ * A plan anchored on the fifth Tuesday cannot be honoured in a month with
+ * four, and skipping that month would silently drop a visit somebody is
+ * expecting. Clamping to the last Tuesday keeps the cadence.
+ */
+export function nthWeekdayOfMonth(
+  year: number,
+  month: number,
+  weekday: number,
+  ordinal: number,
+): CalendarDate {
+  const firstOfMonth = Date.UTC(year, month - 1, 1);
+  const firstWeekday = new Date(firstOfMonth).getUTCDay();
+  const offsetToFirst = (weekday - firstWeekday + 7) % 7;
+
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const available = Math.floor((daysInMonth - offsetToFirst - 1) / 7) + 1;
+
+  const useOrdinal = Math.min(ordinal, available);
+  return utcMsToCalendar(firstOfMonth + (offsetToFirst + (useOrdinal - 1) * 7) * DAY_MS);
+}
+
+/** The year and month of a calendar day, as numbers. */
+export function yearMonthOf(day: CalendarDate): { year: number; month: number } {
+  const [y, mo] = day.split("-").map(Number);
+  return { year: y ?? 1970, month: mo ?? 1 };
+}
+
+/** `n` months later, as a year/month pair. Handles the December wrap. */
+export function addMonths(
+  ym: { year: number; month: number },
+  n: number,
+): { year: number; month: number } {
+  const zeroBased = ym.year * 12 + (ym.month - 1) + n;
+  return { year: Math.floor(zeroBased / 12), month: (zeroBased % 12) + 1 };
+}
+
 /** The instant a calendar day begins, where the business is. For display only. */
 export function startOfCalendarDay(
   day: CalendarDate,

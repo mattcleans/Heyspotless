@@ -116,3 +116,27 @@ export function demoJobs(): readonly Job[] {
 export function demoProperties(): readonly Property[] {
   return properties;
 }
+
+/**
+ * A recurring plan created in demo mode.
+ *
+ * In-memory like the rest of demo state: the plan is remembered for the life
+ * of the server process, so the admin UI can be walked end to end with no
+ * Supabase. Generating its visits is the sweep's job, and the sweep needs a
+ * real database — so in demo mode a plan is a record of intent and nothing
+ * more, which the screen says.
+ */
+const plans: { id: string; anchorDate: string; frequency: string }[] = [];
+
+export function addDemoRecurringPlan(plan: {
+  anchorDate: string;
+  frequency: string;
+}): string {
+  const id = nextId("plan");
+  plans.push({ id, anchorDate: plan.anchorDate, frequency: plan.frequency });
+  return id;
+}
+
+export function demoRecurringPlans(): readonly { id: string; anchorDate: string; frequency: string }[] {
+  return plans;
+}

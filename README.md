@@ -48,6 +48,7 @@ src/lib/dispatch/     marginal cost, eligibility gate, offer ladder, routing, en
 src/lib/billing/      invoice arithmetic, refund policy, auto-charge decisions,
                       collection reconciliation, Stripe event mapping
 src/lib/time/         the business calendar — America/Chicago, and calendar days
+src/lib/recurring/    when a recurring plan's next visits fall, and generating them
 src/lib/stripe/       SDK boundary — client, config flags, cron guard
 src/app/admin/        dispatch board, quote builder, price book
 src/app/api/          Stripe webhook, checkout, saved cards, auto-charge sweep, refunds
@@ -85,18 +86,28 @@ The money rules are written down in [`docs/money-policy.md`](docs/money-policy.m
 what a refund does to what is owed, how an obligation is collected exactly once, and
 what happens when Stripe's answer never arrives.
 
-### Recurring scheduling is NOT built
+### Recurring scheduling
 
-Booking a clean with a recurring frequency books **one** clean, at the recurring
-rate. It does not create the series: choosing "Weekly" does not put next week's visit
-on the board, and nothing in the app will. Generating a series, skipping a week,
-moving a day, and holding a rate across a price change are all unbuilt.
+Frequency and repeating are two separate choices, on purpose. The **frequency sets
+the rate** — a fortnightly clean is priced fortnightly whether or not it repeats.
+**"Repeat this automatically"** starts a standing plan.
 
-This is called out here, in the booking form itself, and in
-[`docs/release-readiness.md`](docs/release-readiness.md), because the dropdown reads
-exactly like the one in a tool that does create the series — and the cost of the
-wrong assumption is a customer waiting for a cleaner nobody booked. Keep recurring
-customers in Housecall Pro until it exists.
+A plan stores the **agreed rate**, so a later price-book change cannot quietly raise
+a long-standing customer. Visits are materialised about six weeks ahead by
+`/api/recurring/generate`, which is idempotent on `(plan, occurrence date)` —
+running it twice, or three times at once, produces one job per visit. Any single
+visit can be skipped without moving the ones after it, and a skip is a row with a
+reason, not a deletion.
+
+The cadence derives from one anchor — the first visit. Weekly and fortnightly repeat
+on its weekday; monthly repeats on its *nth weekday of the month* ("the third
+Tuesday"), because cleaning schedules are weekday-shaped and "the 31st" does not
+exist half the year. See [`src/lib/recurring/schedule.ts`](src/lib/recurring/schedule.ts)
+and [`docs/scheduled-work.md`](docs/scheduled-work.md).
+
+Still unbuilt: a customer-facing view of their own schedule, and dispatch preferring
+the plan's `preferred_cleaner_id` — the column is written, the ladder does not read
+it yet.
 
 Twilio, a live Supabase project and the Vercel deploy wait on the checklist in
 [`docs/setup.md`](docs/setup.md) — **start the A2P 10DLC filing first**, carrier

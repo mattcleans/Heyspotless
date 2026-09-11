@@ -58,6 +58,15 @@ export interface JobInput {
   /** Null books the job onto the board unscheduled, which is a real state. */
   scheduledStart: Date | null;
   notes: string | null;
+  /**
+   * Start a recurring plan rather than booking a single visit.
+   *
+   * Only meaningful for a recurring frequency, and only when a start time was
+   * given — a plan with no first visit has no cadence to derive. Both are
+   * enforced in `parseJob`, so an impossible combination cannot reach the
+   * store.
+   */
+  repeats: boolean;
 }
 
 /** Long enough for any real value, short enough to reject a paste of a novel. */
@@ -241,6 +250,17 @@ export function parseJob(fields: Fields): Validated<JobInput> {
   const notes = optionalText(fields, "notes");
   if (notes !== null && notes.length > MAX_NOTE) errors["notes"] = "Too long.";
 
+  // A recurring plan derives its whole cadence from the first visit, so it
+  // needs one. Asked for without a date, it would be a plan that never
+  // happens — which is worse than refusing, because it looks like it worked.
+  const repeats = text(fields, "repeats") === "on" || text(fields, "repeats") === "true";
+  if (repeats && frequency === "one_time") {
+    errors["repeats"] = "A one-time clean does not repeat.";
+  }
+  if (repeats && scheduledStart === null && !errors["scheduledStart"]) {
+    errors["scheduledStart"] = "A repeating plan needs a first date and time.";
+  }
+
   if (Object.keys(errors).length > 0) return { ok: false, errors };
   return {
     ok: true,
@@ -251,6 +271,7 @@ export function parseJob(fields: Fields): Validated<JobInput> {
       frequency: frequency as Frequency,
       scheduledStart,
       notes,
+      repeats,
     },
   };
 }

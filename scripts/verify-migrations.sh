@@ -1076,6 +1076,176 @@ if [ "$STARTED" != "1" ] || [ "$BLOCKED" != "1" ]; then
 fi
 echo "  concurrent collection verified"
 
+# --- recurring generation (0014) ----------------------------------------------
+# A recurring customer is the relationship the business is built on, so the
+# two failures that matter both repeat every cycle: a visit generated twice
+# is a double booking and a double charge, and a visit never generated is a
+# customer in a dirty house. The unique index on (plan, occurrence date) is
+# what makes the first impossible.
+echo "  checking recurring generation"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_prop uuid; v_plan uuid; v_cleaner uuid;
+  v_job uuid; v_again uuid; v_count integer; v_fail integer := 0;
+  v_price integer; v_status job_status; v_freq frequency;
+begin
+  insert into customers (first_name, last_name) values ('Recur','Ring')
+    returning id into v_cust;
+  insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+    values (v_cust, '18 Cedar Bend', 'Plano', '75024', 2, 2) returning id into v_prop;
+
+  insert into recurring_plans (customer_id, property_id, freq, service,
+                               agreed_price_cents, estimated_minutes, anchor_date,
+                               start_time)
+  values (v_cust, v_prop, 'biweekly', 'standard', 15900, 120, date '2026-09-15', '09:30')
+  returning id into v_plan;
+
+  -- Generating an occurrence creates exactly one job at the PLAN's rate.
+  v_job := materialise_recurring_job(v_plan, date '2026-09-15',
+                                     timestamptz '2026-09-15 14:30:00+00');
+  if v_job is null then v_fail := v_fail+1;
+    raise warning 'the first generation produced no job'; end if;
+
+  select price_cents, status, freq into v_price, v_status, v_freq
+    from jobs where id = v_job;
+  if v_price <> 15900 then v_fail := v_fail+1;
+    raise warning 'job priced at %, want the plan rate 15900', v_price; end if;
+  if v_status <> 'scheduled' then v_fail := v_fail+1;
+    raise warning 'generated job status %, want scheduled', v_status; end if;
+  if v_freq <> 'biweekly' then v_fail := v_fail+1;
+    raise warning 'generated job freq %, want biweekly', v_freq; end if;
+
+  -- THE GUARANTEE. The sweep runs daily across a six-week horizon, so every
+  -- occurrence is seen dozens of times before it happens. All no-ops.
+  v_again := materialise_recurring_job(v_plan, date '2026-09-15',
+                                       timestamptz '2026-09-15 14:30:00+00');
+  if v_again is distinct from v_job then v_fail := v_fail+1;
+    raise warning 'regenerating returned % instead of the existing %', v_again, v_job; end if;
+  select count(*) into v_count from jobs
+    where recurring_plan_id = v_plan and occurrence_date = date '2026-09-15';
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'one occurrence produced % jobs', v_count; end if;
+
+  -- The price on an ALREADY GENERATED job is not rewritten when the plan
+  -- rate changes. What they agreed to for that visit is what they pay.
+  update recurring_plans set agreed_price_cents = 20000 where id = v_plan;
+  perform materialise_recurring_job(v_plan, date '2026-09-15',
+                                    timestamptz '2026-09-15 14:30:00+00');
+  select price_cents into v_price from jobs where id = v_job;
+  if v_price <> 15900 then v_fail := v_fail+1;
+    raise warning 'a plan price change rewrote an existing visit to %', v_price; end if;
+  update recurring_plans set agreed_price_cents = 15900 where id = v_plan;
+
+  -- A RESCHEDULE moves the visit without freeing its slot to be regenerated.
+  update jobs set scheduled_start = timestamptz '2026-09-16 15:00:00+00' where id = v_job;
+  perform materialise_recurring_job(v_plan, date '2026-09-15',
+                                    timestamptz '2026-09-15 14:30:00+00');
+  select count(*) into v_count from jobs where recurring_plan_id = v_plan;
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'rescheduling a visit let its original slot regenerate (% jobs)', v_count; end if;
+
+  -- A SKIP cancels the visit and stops it coming back.
+  perform materialise_recurring_job(v_plan, date '2026-09-29',
+                                    timestamptz '2026-09-29 14:30:00+00');
+  perform skip_recurring_occurrence(v_plan, date '2026-09-29', 'customer away');
+  select status into v_status from jobs
+    where recurring_plan_id = v_plan and occurrence_date = date '2026-09-29';
+  if v_status <> 'canceled' then v_fail := v_fail+1;
+    raise warning 'a skipped visit is %, want canceled', v_status; end if;
+
+  if materialise_recurring_job(v_plan, date '2026-09-29',
+                               timestamptz '2026-09-29 14:30:00+00') is not null then
+    v_fail := v_fail+1; raise warning 'a skipped occurrence was regenerated'; end if;
+
+  -- Skipping twice is a no-op, not an error: a person clicking twice, or a
+  -- retry, must not blow up.
+  perform skip_recurring_occurrence(v_plan, date '2026-09-29', 'customer away');
+  select count(*) into v_count from recurring_plan_skips
+    where plan_id = v_plan and occurrence_date = date '2026-09-29';
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'skipping twice produced % rows', v_count; end if;
+
+  -- The skip is a ROW, so "why was there no clean on the 29th" has an answer
+  -- months later.
+  if not exists (select 1 from recurring_plan_skips
+                 where plan_id = v_plan and occurrence_date = date '2026-09-29'
+                   and reason = 'customer away') then
+    v_fail := v_fail+1; raise warning 'the skip did not record why'; end if;
+
+  -- UNSKIP puts it back in play.
+  if not unskip_recurring_occurrence(v_plan, date '2026-09-29') then
+    v_fail := v_fail+1; raise warning 'unskipping a skipped occurrence reported nothing'; end if;
+  if materialise_recurring_job(v_plan, date '2026-09-29',
+                               timestamptz '2026-09-29 14:30:00+00') is null then
+    v_fail := v_fail+1; raise warning 'an unskipped occurrence did not regenerate'; end if;
+
+  -- A visit that has already happened is not skippable. Cancelling a
+  -- completed clean is a different act with different money attached.
+  perform materialise_recurring_job(v_plan, date '2026-10-13',
+                                    timestamptz '2026-10-13 14:30:00+00');
+  update jobs set status = 'complete'
+    where recurring_plan_id = v_plan and occurrence_date = date '2026-10-13';
+  begin
+    perform skip_recurring_occurrence(v_plan, date '2026-10-13', 'too late');
+    v_fail := v_fail+1; raise warning 'a completed visit was skipped';
+  exception when others then null; end;
+
+  -- An inactive plan generates nothing.
+  update recurring_plans set active = false where id = v_plan;
+  begin
+    perform materialise_recurring_job(v_plan, date '2026-10-27',
+                                      timestamptz '2026-10-27 14:30:00+00');
+    v_fail := v_fail+1; raise warning 'an inactive plan generated a visit';
+  exception when others then null; end;
+  update recurring_plans set active = true where id = v_plan;
+
+  -- A plan cannot be active with no anchor: it could not say when anything
+  -- happens, and a silent no-op is worse than a refused write.
+  begin
+    update recurring_plans set anchor_date = null where id = v_plan;
+    v_fail := v_fail+1; raise warning 'an active plan was allowed with no anchor';
+  exception when check_violation then null; end;
+
+  if v_fail > 0 then raise exception '% recurring assertions failed', v_fail; end if;
+  raise notice 'recurring generation passed';
+end $$;
+SQL
+echo "  recurring generation verified"
+
+# --- concurrent recurring generation (0014) -----------------------------------
+# Two sweeps landing on the same occurrence at the same moment. The unique
+# index must leave exactly one job — a double booking here is a double charge
+# to a customer who has one every fortnight.
+echo "  checking concurrent recurring generation"
+RECUR_PLAN=$(as_super $PSQL -d "$DB" -tAc \
+  "with c as (insert into customers (first_name, last_name)
+              values ('Race','Recur') returning id),
+        p as (insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+              select id, '2 Race Way', 'Plano', '75024', 2, 2 from c returning id, customer_id)
+   insert into recurring_plans (customer_id, property_id, freq, service,
+                               agreed_price_cents, estimated_minutes, anchor_date, start_time)
+   select p.customer_id, p.id, 'weekly', 'standard', 15900, 120, date '2026-09-15', '09:30'
+   from p returning id")
+
+for i in 1 2 3; do
+  as_super $PSQL -d "$DB" -tAc \
+    "select materialise_recurring_job('$RECUR_PLAN', date '2026-09-22',
+                                      timestamptz '2026-09-22 14:30:00+00')" \
+    > /dev/null 2>&1 &
+done
+wait
+
+RECUR_JOBS=$(as_super $PSQL -d "$DB" -tAc \
+  "select count(*) from jobs where recurring_plan_id = '$RECUR_PLAN'
+   and occurrence_date = date '2026-09-22'")
+
+if [ "$RECUR_JOBS" != "1" ]; then
+  echo "  three concurrent sweeps created $RECUR_JOBS jobs for one occurrence — want 1" >&2
+  exit 1
+fi
+echo "  concurrent recurring generation verified"
+
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql
 echo "  access controls verified"

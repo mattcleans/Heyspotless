@@ -169,3 +169,50 @@ export function FormError({ message }: { message?: string }) {
     </div>
   );
 }
+
+/**
+ * A checkbox with its explanation attached.
+ *
+ * The label is the thing being switched on; the hint is what it will actually
+ * do. For a control that starts a standing commitment — a recurring plan
+ * against somebody's card — "what will happen" is not optional detail.
+ */
+export function Checkbox({
+  name,
+  label,
+  hint,
+  defaultChecked,
+  checked,
+  onChange,
+  errors,
+}: {
+  name: string;
+  label: string;
+  hint?: string;
+  defaultChecked?: boolean;
+  checked?: boolean;
+  onChange?: (checked: boolean) => void;
+  errors?: Record<string, string>;
+}) {
+  const error = errors?.[name];
+
+  return (
+    <div>
+      <label className="flex cursor-pointer items-start gap-2.5">
+        <input
+          type="checkbox"
+          name={name}
+          defaultChecked={defaultChecked}
+          checked={checked}
+          onChange={onChange ? (e) => onChange(e.currentTarget.checked) : undefined}
+          className="mt-0.5 h-4 w-4 shrink-0 rounded border-line accent-navy"
+        />
+        <span>
+          <span className="text-sm font-medium text-ink">{label}</span>
+          {hint ? <span className="mt-0.5 block text-xs text-ink-3">{hint}</span> : null}
+        </span>
+      </label>
+      {error ? <span className="mt-1 block text-xs text-bad">{error}</span> : null}
+    </div>
+  );
+}
