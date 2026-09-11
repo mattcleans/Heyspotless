@@ -182,7 +182,6 @@ export function Checkbox({
   label,
   hint,
   defaultChecked,
-  checked,
   onChange,
   errors,
 }: {
@@ -190,7 +189,7 @@ export function Checkbox({
   label: string;
   hint?: string;
   defaultChecked?: boolean;
-  checked?: boolean;
+  /** Fires on every change, for a hint that has to keep up. Not control. */
   onChange?: (checked: boolean) => void;
   errors?: Record<string, string>;
 }) {
@@ -199,11 +198,24 @@ export function Checkbox({
   return (
     <div>
       <label className="flex cursor-pointer items-start gap-2.5">
+        {/*
+          UNCONTROLLED, deliberately, and there is no `checked` prop to pass.
+
+          React resets a form's DOM after a server action returns. For a
+          CONTROLLED input whose value did not change across that render,
+          React's virtual DOM sees nothing to patch and the reset stands — so
+          the box comes back unticked while the component still believes it
+          is ticked. On this form that meant the button read "Start plan" and
+          the hint promised a standing plan, over a checkbox that would post
+          nothing: the next submit silently booked a one-off instead.
+
+          `defaultChecked` survives the reset, which is why every other field
+          here is uncontrolled and re-seeded from what was posted.
+        */}
         <input
           type="checkbox"
           name={name}
           defaultChecked={defaultChecked}
-          checked={checked}
           onChange={onChange ? (e) => onChange(e.currentTarget.checked) : undefined}
           className="mt-0.5 h-4 w-4 shrink-0 rounded border-line accent-navy"
         />

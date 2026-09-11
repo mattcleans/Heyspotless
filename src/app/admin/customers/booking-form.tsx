@@ -44,9 +44,41 @@ export function BookingForm({
 }) {
   const action = bookJob.bind(null, customerId);
   const [state, formAction] = useActionState<FormState, FormData>(action, {});
-  const [service, setService] = useState<ServiceType>("standard");
-  const [frequency, setFrequency] = useState<Frequency>("weekly");
-  const [repeats, setRepeats] = useState(false);
+
+  // What the last submission posted, echoed back by the action. Every field
+  // here re-seeds from it, so a rejected booking comes back as the operator
+  // left it rather than as a blank form.
+  const was = state.values;
+
+  const [service, setService] = useState<ServiceType>(
+    (was?.["service"] as ServiceType) ?? "standard",
+  );
+  const [frequency, setFrequency] = useState<Frequency>(
+    (was?.["frequency"] as Frequency) ?? "weekly",
+  );
+  const [repeats, setRepeats] = useState(was?.["repeats"] === "on");
+
+  /*
+    React resets the form's DOM when a server action returns. Uncontrolled
+    inputs come back as `defaultValue`/`defaultChecked`, which is why those
+    are seeded from `was` — but this component's own state does not reset,
+    so without the block below the hint and the button would go on
+    describing a choice the reset had already thrown away.
+
+    Re-seeding during render is the documented way to adjust state when a
+    prop-like input changes; `key` on the form then forces the inputs to
+    remount and pick the seeded values up, rather than keeping a DOM that
+    React thinks is already correct.
+  */
+  const [lastResult, setLastResult] = useState(state);
+  const [submissions, setSubmissions] = useState(0);
+  if (lastResult !== state) {
+    setLastResult(state);
+    setSubmissions((n) => n + 1);
+    setService((was?.["service"] as ServiceType) ?? "standard");
+    setFrequency((was?.["frequency"] as Frequency) ?? "weekly");
+    setRepeats(was?.["repeats"] === "on");
+  }
 
   const frequencies = frequenciesForService(service);
   // Changing the service can make the chosen frequency unsellable — Deep is
@@ -56,7 +88,7 @@ export function BookingForm({
   const canRepeat = effectiveFrequency !== "one_time";
 
   return (
-    <form action={formAction} className="space-y-4">
+    <form key={submissions} action={formAction} className="space-y-4">
       <FormError message={state.message} />
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -102,7 +134,7 @@ export function BookingForm({
           <Checkbox
             name="repeats"
             label="Repeat this automatically"
-            checked={repeats}
+            defaultChecked={repeats}
             onChange={setRepeats}
             errors={state.errors}
             hint={
