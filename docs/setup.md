@@ -37,9 +37,18 @@ an invoice marked paid that never was.
 2. Subscribe to exactly these events:
    `checkout.session.completed`, `payment_intent.succeeded`,
    `payment_intent.payment_failed`, `payment_method.attached`,
-   `payment_method.detached`, `charge.refunded`.
+   `payment_method.detached`, `charge.refunded`,
+   `refund.updated`, `refund.failed`.
    Anything else is answered with "ignored" rather than an error, so a stray
    event will not cause a retry storm — but there is no reason to send one.
+
+   **The last two are not optional.** A refund can be accepted by Stripe and
+   rejected by the issuer days later. Refunds we are not yet sure of are
+   recorded `pending` and move no money until one of those events settles them
+   (see `docs/money-policy.md`). Without them subscribed, a pending refund sits
+   pending for ever: the customer has their money back and the invoice never
+   records it. Older accounts send this as `charge.refund.updated`, which is
+   handled identically — subscribe to whichever your dashboard offers.
 3. Copy the signing secret into `STRIPE_WEBHOOK_SECRET`.
 
 Locally, `stripe listen --forward-to localhost:3000/api/stripe/webhook` prints a
