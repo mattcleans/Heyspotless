@@ -201,9 +201,13 @@ describe("what continuity costs", () => {
     expect(holdCostCents(5750, null)).toBeNull();
   });
 
-  it("caps the premium at a share of the ticket", () => {
-    expect(continuityPremiumCapCents(20000)).toBe(3000);
-    expect(continuityPremiumCapCents(0)).toBe(0);
+  it("applies no ceiling by default — continuity is not given up on price", () => {
+    // The cap shipped at 15% of the ticket and fired constantly, because the
+    // comparison that matters is against an idle W-2 costing nothing and a
+    // contractor's whole payout is 33-36% of the ticket. The rule it produced
+    // was "a customer loses their cleaner whenever Shonda has a spare hour".
+    expect(continuityPremiumCapCents(20000)).toBeNull();
+    expect(continuityPremiumCapCents(0)).toBeNull();
   });
 });
 

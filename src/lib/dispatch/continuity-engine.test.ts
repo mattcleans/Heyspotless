@@ -103,45 +103,61 @@ describe("a requested cleaner is not made to bid for her own customer", () => {
   });
 });
 
-describe("an incumbency nobody asked for is priced", () => {
+describe("an incumbency nobody asked for is still an incumbency", () => {
   const revealed = {
     preferredCleanerId: null,
     incumbentCleanerId: "sarah",
     priorVisits: MIN_VISITS_FOR_INCUMBENCY + 3,
   };
 
-  it("holds for her when the premium is affordable", () => {
+  it("holds for her against another contractor", () => {
     const decision = dispatch(
       job({ continuity: revealed }),
       context([sarah(), contractor({ id: "stranger" })]),
     );
-    // Both are contractors priced at the same opening rate, so keeping the
-    // one who knows the house costs nothing.
     expect(decision.kind).toBe("hold_for_incumbent");
     if (decision.kind !== "hold_for_incumbent") return;
     expect(decision.basis).toBe("incumbent");
   });
 
-  it("lets the job go to market when the premium is too large, and says so", () => {
+  it("holds for her even when an idle W-2 would cost nothing", () => {
+    // THE POLICY. A cleaner who has been to a house before keeps going to that
+    // house. Payroll having a gap this week is not a reason to send somebody
+    // else, and under the old 15% cap this exact case reassigned the customer
+    // every time.
     const decision = dispatch(
       job({ continuity: revealed }),
       context([sarah(), shonda({ hoursScheduledThisWeek: 0 })]),
     );
 
-    // Shonda is free; Sarah is not; nobody promised the customer anything.
-    expect(decision.kind).toBe("assign_guaranteed");
-    expect(decision.continuity.status).toBe("waived_too_costly");
-    if (decision.continuity.status !== "waived_too_costly") return;
-    expect(decision.continuity.cleanerId).toBe("sarah");
-    expect(decision.continuity.premiumCents).toBeGreaterThan(decision.continuity.capCents);
+    expect(decision.kind).toBe("hold_for_incumbent");
+    if (decision.kind !== "hold_for_incumbent") return;
+    expect(decision.cleaner.id).toBe("sarah");
   });
 
-  it("respects an explicit cap from the caller", () => {
+  it("still records what that choice cost", () => {
+    // Not waived, but not invisible either: the spread agreed when a pairing
+    // forms is the spread for as long as it lasts, so the number has to be
+    // readable even though it reassigns nobody.
+    const decision = dispatch(
+      job({ continuity: revealed }),
+      context([sarah(), shonda({ hoursScheduledThisWeek: 0 })]),
+    );
+
+    expect(decision.continuity.status).toBe("held");
+    if (decision.continuity.status !== "held") return;
+    expect(decision.continuity.premiumCents).toBeGreaterThan(0);
+  });
+
+  it("gives the job up only when a ceiling is set deliberately", () => {
+    // The cap survives as a manual safety valve. It is off by default and
+    // nothing reaches this branch unless somebody turns it on.
     const decision = dispatch(job({ continuity: revealed }), {
       ...context([sarah(), shonda({ hoursScheduledThisWeek: 0 })]),
-      continuityPremiumCapCents: 100_000,
+      continuityPremiumCapCents: 100,
     });
-    expect(decision.kind).toBe("hold_for_incumbent");
+
+    expect(decision.continuity.status).toBe("waived_too_costly");
   });
 });
 
@@ -402,5 +418,74 @@ describe("the ladder is a schedule across sweeps, not a broadcast", () => {
       context([contractor()]),
     );
     expect(decision.kind).toBe("no_eligible_cleaner");
+  });
+});
+
+describe("the spread is fixed at the rate the relationship was agreed at", () => {
+  const agreedAt = (rate: number | null) => ({
+    preferredCleanerId: "sarah",
+    incumbentCleanerId: "sarah",
+    priorVisits: 20,
+    agreedPayoutRateCents: rate,
+  });
+
+  it("offers the incumbent her agreed rate, not the current opening rate", () => {
+    // A pairing that works lasts years, so the margin agreed when it formed is
+    // the margin for years. Pricing her from the global opening rate means a
+    // rate raised to attract NEW supply silently re-cuts the margin on every
+    // EXISTING customer — the same bug 0014 fixed on the customer's side,
+    // pointing the other way.
+    const decision = dispatch(
+      job({ continuity: agreedAt(2800) }),
+      context([sarah(), contractor({ id: "stranger" })]),
+    );
+
+    expect(decision.kind).toBe("hold_for_incumbent");
+    if (decision.kind !== "hold_for_incumbent") return;
+    expect(decision.hourlyRateCents).toBe(2800);
+    // 138 minutes at $28/h.
+    expect(decision.payoutCents).toBe(6440);
+  });
+
+  it("honours an agreed rate BELOW the current opening rate too", () => {
+    // The direction that actually protects margin. A relationship agreed at
+    // $24/h stays at $24/h when the opening rate moves to $25 — otherwise
+    // every existing customer's spread narrows the moment the market rate
+    // moves, which is the whole thing this locks.
+    const decision = dispatch(
+      job({ continuity: agreedAt(2400) }),
+      context([sarah(), contractor({ id: "stranger" })]),
+    );
+
+    if (decision.kind !== "hold_for_incumbent") return;
+    expect(decision.hourlyRateCents).toBe(2400);
+  });
+
+  it("falls back to the opening rate for a pairing with no agreed rate", () => {
+    // Null means unlocked, not free — the honest reading for every
+    // relationship that predates the column.
+    const decision = dispatch(
+      job({ continuity: agreedAt(null) }),
+      context([sarah(), contractor({ id: "stranger" })]),
+    );
+
+    if (decision.kind !== "hold_for_incumbent") return;
+    expect(decision.hourlyRateCents).toBe(2500);
+  });
+
+  it("prices the continuity premium at the agreed rate as well", () => {
+    // Or the recorded cost of keeping her would be measured against a rate
+    // she is not actually being paid.
+    const cheap = dispatch(
+      job({ continuity: agreedAt(2400) }),
+      context([sarah(), shonda({ hoursScheduledThisWeek: 0 })]),
+    );
+    const dear = dispatch(
+      job({ continuity: agreedAt(3200) }),
+      context([sarah(), shonda({ hoursScheduledThisWeek: 0 })]),
+    );
+
+    if (cheap.continuity.status !== "held" || dear.continuity.status !== "held") return;
+    expect(dear.continuity.premiumCents).toBeGreaterThan(cheap.continuity.premiumCents ?? 0);
   });
 });

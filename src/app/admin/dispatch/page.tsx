@@ -107,6 +107,35 @@ function DecisionSummary({ decision }: { decision: DispatchDecision }) {
 }
 
 /**
+ * The spread on this job: the ticket, what the cleaner takes, and what is left.
+ *
+ * Shown wherever the decision names a payout, because a pairing that works
+ * lasts years and the margin agreed when it forms is the margin for years.
+ * Deciding that without the number in front of you is how a relationship gets
+ * locked in at a spread nobody would have chosen.
+ */
+function SpreadNote({ job, decision }: { job: Job; decision: DispatchDecision }) {
+  const payoutCents =
+    decision.kind === "hold_for_incumbent" || decision.kind === "open_board"
+      ? decision.payoutCents
+      : decision.kind === "assign_guaranteed" || decision.kind === "assign_w2"
+        ? decision.marginalCents
+        : null;
+
+  if (payoutCents === null || job.priceCents <= 0) return null;
+
+  const spread = job.priceCents - payoutCents;
+  return (
+    <p className="mt-2 text-xs text-ink-3">
+      <span className="nums">{formatCents(job.priceCents)}</span> ticket ·{" "}
+      <span className="nums">{formatCents(payoutCents)}</span> to the cleaner ·{" "}
+      <strong className="nums text-ink-2">{formatCents(spread)}</strong> contribution (
+      {formatPct(spread / job.priceCents)})
+    </p>
+  );
+}
+
+/**
  * What happened to the continuity promise, shown on every job including the
  * ones where nothing did.
  *
@@ -181,6 +210,7 @@ function JobCard({ job, decision, now }: { job: Job; decision: DispatchDecision;
       </p>
       <div className="mt-3.5 border-t border-line-soft pt-3.5">
         <DecisionSummary decision={decision} />
+        <SpreadNote job={job} decision={decision} />
         <ContinuityNote decision={decision} />
       </div>
     </li>

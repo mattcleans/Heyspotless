@@ -44,6 +44,20 @@ export interface ContinuityContext {
   incumbentCleanerId: string | null;
   /** Completed visits by the incumbent at this property. */
   priorVisits: number;
+  /**
+   * The cleaner hourly rate agreed when this relationship formed, in cents.
+   *
+   * The mirror of `recurring_plans.agreed_price_cents`. Together they fix the
+   * SPREAD for the life of the plan, which matters precisely because a pairing
+   * that works lasts years: the margin agreed at formation is the margin for
+   * years. Locking only the customer half — which is what shipped before 0017
+   * — meant a change to the global opening rate silently moved the margin on
+   * every existing relationship, with no record of what was ever agreed.
+   *
+   * Null means unlocked, not free: the current opening rate applies, which is
+   * the honest reading for a pairing that predates the column.
+   */
+  agreedPayoutRateCents?: number | null;
 }
 
 export type ContinuityBasis = "preferred" | "incumbent";
@@ -271,23 +285,33 @@ export function holdCostCents(
 }
 
 /**
- * How much more than the cheapest alternative continuity may cost, as a share
- * of the ticket, before the job goes back to the open market.
+ * A cost ceiling on continuity — OFF by default, and deliberately so.
  *
- * A STATED DEFAULT, not a measurement — the same posture as the refund split
- * in 0013. Some premium is obviously right: the relationship is most of what
- * the customer is buying, and re-auctioning it to save four dollars is a bad
- * trade in every direction. An unbounded premium is obviously wrong: it means
- * an incumbent deep in overtime, or one who has drifted to the top of the
- * ladder, silently sets the price of her own customers.
+ * 0015 shipped this at 15% of the ticket and applied it to any incumbency the
+ * customer had not explicitly asked for. In practice it fired constantly: the
+ * comparison that matters is almost always against an idle W-2 inside
+ * guaranteed hours, which costs nothing, so the premium was a contractor's
+ * whole payout — 33-36% of the ticket at every job size on the current
+ * pricelist. The effective rule was "a customer loses their cleaner whenever
+ * Shonda has a spare hour", which is the opposite of the product.
  *
- * 15% of the ticket is the opening position. It is a business policy for Matt
- * and Maddie to set, so it is one named constant rather than a number buried
- * in a comparison.
+ * The policy (Matt, 12 September 2026) is that a relationship ends for a
+ * REASON — the customer asks for somebody else, the customer complains, the
+ * cleaner cannot take it, or she turns it down — and never because payroll had
+ * a gap that week. So nothing is waived on cost unless somebody switches this
+ * on, and `null` is the default.
+ *
+ * The premium is still computed and recorded on every decision. That is not
+ * vestigial: the spread agreed when a pairing forms is the spread for as long
+ * as it lasts, so what continuity costs is exactly the number the business
+ * needs in front of it — it just is not a number that quietly reassigns
+ * anybody.
  */
-export const MAX_CONTINUITY_PREMIUM_FRACTION = 0.15;
+export const MAX_CONTINUITY_PREMIUM_FRACTION: number | null = null;
 
-export function continuityPremiumCapCents(priceCents: number): number {
+/** Null means no ceiling: continuity is not given up on price. */
+export function continuityPremiumCapCents(priceCents: number): number | null {
+  if (MAX_CONTINUITY_PREMIUM_FRACTION === null) return null;
   return Math.floor(priceCents * MAX_CONTINUITY_PREMIUM_FRACTION);
 }
 

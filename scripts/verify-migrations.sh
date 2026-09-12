@@ -1620,6 +1620,175 @@ if [ "$ASSIGNMENTS" != "1" ]; then
 fi
 echo "  concurrent offer acceptance verified"
 
+# --- relationships end for a reason (0017) ------------------------------------
+# The policy is that a cleaner who has been to a house keeps going to that
+# house, and what ends it is a reason -- the customer asks for somebody else,
+# the customer complains, she cannot take it, or she turns it down. Never a
+# price. These assert the reasons are recordable and that they actually bite.
+echo "  checking relationship blocks and the locked spread"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_prop uuid; v_plan uuid;
+  v_ada uuid; v_ben uuid; v_job uuid; v_old uuid;
+  v_incumbent uuid; v_rate integer; v_pref uuid; v_created boolean;
+  v_fail integer := 0;
+begin
+  insert into customers (first_name, last_name) values ('Block','Test')
+    returning id into v_cust;
+  insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+    values (v_cust, '7 Block Way', 'Plano', '75024', 3, 2) returning id into v_prop;
+
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Ada Block', 'contractor_1099', 'active', 4.7, true) returning id into v_ada;
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Ben Block', 'contractor_1099', 'active', 4.7, true) returning id into v_ben;
+
+  -- Ada has cleaned it three times. She is the incumbent.
+  for i in 1..3 loop
+    insert into jobs (customer_id, property_id, status, service, freq,
+                      scheduled_start, price_cents, estimated_clean_minutes)
+      values (v_cust, v_prop, 'complete', 'standard', 'biweekly',
+              now() - (i || ' weeks')::interval, 17000, 138)
+      returning id into v_old;
+    insert into job_assignments (job_id, cleaner_id, payout_cents)
+      values (v_old, v_ada, 5750);
+  end loop;
+
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes,
+                    preferred_cleaner_id)
+    values (v_cust, v_prop, 'scheduled', 'standard', 'biweekly',
+            now() + interval '9 days', 17000, 138, v_ada)
+    returning id into v_job;
+
+  select incumbent_cleaner_id into v_incumbent from job_continuity where job_id = v_job;
+  if v_incumbent is distinct from v_ada then v_fail := v_fail+1;
+    raise warning 'before any block the incumbent is %, want Ada', v_incumbent; end if;
+
+  -- THE COMPLAINT. This is the thing that should end a relationship and had
+  -- nowhere to live before 0017.
+  perform block_cleaner_from_property(v_prop, v_ada, 'customer_complaint',
+                                      'left the back door unlocked');
+
+  select incumbent_cleaner_id into v_incumbent from job_continuity where job_id = v_job;
+  if v_incumbent is not null then v_fail := v_fail+1;
+    raise warning 'a blocked cleaner is still the incumbent (%)', v_incumbent; end if;
+
+  -- The stated preference goes with it. Leaving it pointing at somebody who
+  -- is not coming back would report "their requested cleaner is unavailable"
+  -- on every future visit for ever, which is true and useless.
+  select preferred_cleaner_id into v_pref from jobs where id = v_job;
+  if v_pref is not null then v_fail := v_fail+1;
+    raise warning 'the block left a stated preference pointing at the blocked cleaner'; end if;
+
+  -- The reason is on the record.
+  if not exists (select 1 from property_cleaner_blocks
+                 where property_id = v_prop and cleaner_id = v_ada
+                   and reason = 'customer_complaint'
+                   and note = 'left the back door unlocked') then
+    v_fail := v_fail+1; raise warning 'the block did not record why'; end if;
+
+  -- Blocking twice is a no-op, not a second block: "is she blocked" must not
+  -- be a question with two answers.
+  perform block_cleaner_from_property(v_prop, v_ada, 'customer_complaint');
+  select count(*) into v_rate from property_cleaner_blocks
+    where property_id = v_prop and cleaner_id = v_ada and lifted_at is null;
+  if v_rate <> 1 then v_fail := v_fail+1;
+    raise warning 'blocking twice produced % live blocks', v_rate; end if;
+
+  -- A block is per PROPERTY. A cleaner who was wrong for one house is not
+  -- thereby wrong for every house, and a blanket block would throw away a
+  -- working relationship to settle a different one.
+  declare v_other uuid;
+  begin
+    insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+      values (v_cust, '8 Other St', 'Plano', '75024', 2, 1) returning id into v_other;
+    insert into jobs (customer_id, property_id, status, service, freq,
+                      scheduled_start, price_cents, estimated_clean_minutes)
+      values (v_cust, v_other, 'complete', 'standard', 'biweekly',
+              now() - interval '1 week', 15900, 120)
+      returning id into v_old;
+    insert into job_assignments (job_id, cleaner_id, payout_cents)
+      values (v_old, v_ada, 5000);
+    insert into jobs (customer_id, property_id, status, service, freq,
+                      scheduled_start, price_cents, estimated_clean_minutes)
+      values (v_cust, v_other, 'scheduled', 'standard', 'biweekly',
+              now() + interval '9 days', 15900, 120)
+      returning id into v_old;
+
+    select incumbent_cleaner_id into v_incumbent from job_continuity where job_id = v_old;
+    if v_incumbent is distinct from v_ada then v_fail := v_fail+1;
+      raise warning 'a block at one property removed her incumbency at another'; end if;
+  end;
+
+  -- LIFTING brings her back, and keeps the row.
+  if not lift_cleaner_block(v_prop, v_ada) then v_fail := v_fail+1;
+    raise warning 'lifting a live block reported nothing'; end if;
+  select incumbent_cleaner_id into v_incumbent from job_continuity where job_id = v_job;
+  if v_incumbent is distinct from v_ada then v_fail := v_fail+1;
+    raise warning 'lifting the block did not restore her incumbency'; end if;
+  if not exists (select 1 from property_cleaner_blocks
+                 where property_id = v_prop and cleaner_id = v_ada
+                   and lifted_at is not null) then
+    v_fail := v_fail+1; raise warning 'a lifted block was deleted rather than kept'; end if;
+
+  -- Lifting twice reports nothing to lift rather than failing.
+  if lift_cleaner_block(v_prop, v_ada) then v_fail := v_fail+1;
+    raise warning 'lifting an already-lifted block reported a change'; end if;
+
+  -- ------------------------------------------------------- the spread -----
+  -- Both halves locked on the plan, and both carried onto every visit. The
+  -- customer half has been locked since 0014; the CLEANER half was a global
+  -- constant read at dispatch time, so a rate raised to attract new supply
+  -- would have re-cut the margin on every existing relationship silently.
+  insert into recurring_plans (customer_id, property_id, freq, service,
+                               agreed_price_cents, estimated_minutes, anchor_date,
+                               start_time, preferred_cleaner_id,
+                               agreed_payout_rate_cents)
+  values (v_cust, v_prop, 'weekly', 'standard', 17000, 138, current_date + 7,
+          '09:30', v_ben, 2800)
+  returning id into v_plan;
+
+  select job_id, created into v_job, v_created
+    from materialise_recurring_job(v_plan, current_date + 7,
+                                   (current_date + 7)::timestamptz + interval '9.5 hours');
+  if not v_created then v_fail := v_fail+1;
+    raise warning 'the spread-locked plan generated nothing'; end if;
+
+  select price_cents into v_rate from jobs where id = v_job;
+  if v_rate <> 17000 then v_fail := v_fail+1;
+    raise warning 'the customer half of the spread is %, want 17000', v_rate; end if;
+
+  select agreed_payout_rate_cents into v_rate from jobs where id = v_job;
+  if v_rate is distinct from 2800 then v_fail := v_fail+1;
+    raise warning 'the cleaner half of the spread is %, want 2800', v_rate; end if;
+
+  select agreed_payout_rate_cents into v_rate from job_continuity where job_id = v_job;
+  if v_rate is distinct from 2800 then v_fail := v_fail+1;
+    raise warning 'the view reports an agreed rate of %, want 2800', v_rate; end if;
+
+  -- Renegotiating the plan does NOT rewrite a visit already generated, the
+  -- same guarantee agreed_price_cents has had since 0014.
+  update recurring_plans set agreed_payout_rate_cents = 3200 where id = v_plan;
+  perform * from materialise_recurring_job(v_plan, current_date + 7,
+                                           (current_date + 7)::timestamptz + interval '9.5 hours');
+  select agreed_payout_rate_cents into v_rate from jobs where id = v_job;
+  if v_rate is distinct from 2800 then v_fail := v_fail+1;
+    raise warning 'a rate renegotiation rewrote an existing visit to %', v_rate; end if;
+
+  -- A rate of zero is not "unlocked", it is a mistake. Null is unlocked.
+  begin
+    update recurring_plans set agreed_payout_rate_cents = 0 where id = v_plan;
+    v_fail := v_fail+1; raise warning 'a zero agreed payout rate was accepted';
+  exception when check_violation then null; end;
+
+  if v_fail > 0 then raise exception '% relationship assertions failed', v_fail; end if;
+  raise notice 'relationship blocks and locked spread passed';
+end $$;
+SQL
+echo "  relationship blocks and locked spread verified"
+
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql
 echo "  access controls verified"

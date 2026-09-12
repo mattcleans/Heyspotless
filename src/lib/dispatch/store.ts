@@ -215,7 +215,9 @@ export async function continuityFor(
 
   const { data, error } = await db
     .from("job_continuity")
-    .select("job_id, preferred_cleaner_id, incumbent_cleaner_id, prior_visits")
+    .select(
+      "job_id, preferred_cleaner_id, incumbent_cleaner_id, prior_visits, agreed_payout_rate_cents",
+    )
     .in("job_id", [...jobIds]);
   if (error) throw new Error(`continuityFor: ${error.message}`);
 
@@ -225,10 +227,12 @@ export async function continuityFor(
 
     const preferred = row["preferred_cleaner_id"];
     const incumbent = row["incumbent_cleaner_id"];
+    const agreedRate = row["agreed_payout_rate_cents"];
     byJob.set(jobId, {
       preferredCleanerId: typeof preferred === "string" ? preferred : null,
       incumbentCleanerId: typeof incumbent === "string" ? incumbent : null,
       priorVisits: typeof row["prior_visits"] === "number" ? row["prior_visits"] : 0,
+      agreedPayoutRateCents: typeof agreedRate === "number" ? agreedRate : null,
     });
   }
   return byJob;

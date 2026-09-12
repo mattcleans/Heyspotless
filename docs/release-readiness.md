@@ -84,11 +84,35 @@ Built (`0015`). Closes the two gaps this document listed above.
 | Continuity is honoured and priced | Implemented, tested | `lib/dispatch/continuity.ts`, pure and asserted without a database like the rest of dispatch. The incumbent is held for or assigned before anything else runs; what that costs against the cheapest alternative is recorded on every decision. |
 | Interventions are countable | Implemented | `dispatch_decisions.decided_by`. Null means the engine decided. **Nothing is reporting on it yet** — the column is populated, the metric is not calculated anywhere. |
 
-**Open:** the continuity premium cap (`MAX_CONTINUITY_PREMIUM_FRACTION`, 15% of
-the ticket) is a stated default in the absence of better information, in the
-same posture as the unattributed-refund split. It decides when a customer gets
-substituted to save money and **needs Matt or Maddie's number**, not an
-engineer's. The data to set it is now being recorded.
+**Settled (Matt, 12 September 2026).** The continuity premium cap was shipped
+at 15% of the ticket and applied to any incumbency the customer had not
+explicitly asked for. It fired constantly: the comparison that matters is
+almost always against an idle W-2 inside guaranteed hours, which costs nothing,
+so the premium was a contractor's whole payout — 33–36% of the ticket at every
+job size on the current pricelist. The effective rule was "a customer loses
+their cleaner whenever Shonda has a spare hour".
+
+The policy is now that a relationship ends for a **reason** — the customer asks
+for somebody else, the customer complains, the cleaner cannot take it, or she
+turns it down — and never on cost. `0017` gives the first two somewhere to live
+(`property_cleaner_blocks`) and turns the cap off by default. The premium is
+still recorded on every decision.
+
+**Follow-on, now open:** because a pairing that works lasts years, the spread
+agreed when it forms is the spread for years. `0017` locks the cleaner's half
+(`agreed_payout_rate_cents`) alongside the customer's. Two things still need a
+person:
+
+- **Nothing sets `agreed_payout_rate_cents` yet.** There is no UI for agreeing
+  a rate with a cleaner when a relationship forms; every plan is null, which
+  means the current opening rate applies. The lock works; nothing turns the key.
+- **What happens when the ladder escalates on a locked relationship.** Today an
+  escalated rung is a one-off for that visit and the agreed rate stands, which
+  is deliberate — silently ratcheting the payout up permanently is the margin
+  erosion this was built to stop. But a relationship that escalates every week
+  is one whose agreed rate is below market, and that should surface as an
+  exception for a person to re-agree rather than repeat forever. Nothing
+  surfaces it yet.
 
 ## Customer and operations gates
 

@@ -207,39 +207,39 @@ export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDe
     // priced at her marginal cost; a contractor at what we would have to offer
     // her, which is the opening rate — the ladder is for finding the clearing
     // price of an UNKNOWN job, and this one is not unknown to her.
+    // The rate this relationship was agreed at, where it has one. Reaching for
+    // the global opening rate on an established pairing is what let a change
+    // made to attract new supply quietly re-cut the margin on every existing
+    // customer.
+    const incumbentRateCents =
+      job.continuity?.agreedPayoutRateCents ?? config0.openingRateCents;
+
     const w2Cost = w2MarginalCost(cleaner, inputsFor(cleaner));
     const incumbentCents =
-      w2Cost?.marginalCents ??
-      payoutForRate(config0.openingRateCents, job.estimatedCleanMinutes);
+      w2Cost?.marginalCents ?? payoutForRate(incumbentRateCents, job.estimatedCleanMinutes);
 
     const premium = premiumFor(cleaner, incumbentCents);
     const cap = context.continuityPremiumCapCents ?? continuityPremiumCapCents(job.priceCents);
 
     /**
-     * A STATED preference is a commitment and is not priced.
+     * CONTINUITY IS NOT GIVEN UP ON PRICE.
      *
-     * This is the one place the cost engine does not get a vote, and the line
-     * is drawn between the two continuity signals rather than at a number.
-     * The customer ASKED for this cleaner. Quietly sending someone else
-     * because an idle guaranteed hour made it cheaper is not an optimisation,
-     * it is breaking the promise the customer is paying for — and it is
-     * precisely the experience that makes a customer take their cleaner's
-     * phone number and stop paying us at all.
+     * A cleaner who has been to a house before keeps going to that house. What
+     * ends that is a reason — the customer asks for somebody else, the customer
+     * complains (0017 records both), the cleaner stops clearing the eligibility
+     * gate, or she turns the visit down. Never that payroll had an idle hour
+     * this week.
      *
-     * If honouring a stated preference is genuinely untenable, that is a
-     * conversation with the customer or a change to their plan. It is an
-     * exception for a person, not an override for a sweep.
-     *
-     * A REVEALED incumbency is different: nobody promised anything, and
-     * continuity is being chosen because it is usually better. Usually better
-     * can lose to a big enough number, so the cap applies there.
+     * The cap below is off by default and exists as a manual safety valve, not
+     * as policy. The premium is still computed and recorded on every decision,
+     * because what continuity costs is a number the business should be able to
+     * read back — it is simply not a number that reassigns anybody.
      */
-    const pricedAgainstCap = basis === "incumbent";
-
-    if (pricedAgainstCap && premium !== null && premium > cap) {
-      // Continuity has a price and this is over it. The job goes to market —
-      // and the fact that it did is recorded against the cleaner and the
-      // amount, so "we keep substituting Mrs Smith" is answerable.
+    if (cap !== null && premium !== null && premium > cap) {
+      // Only reachable when somebody has set a ceiling deliberately. The job
+      // goes to market, and the fact that it did is recorded against the
+      // cleaner and the amount, so "we keep substituting Mrs Smith" is
+      // answerable rather than something the board has to be caught doing.
       continuity = {
         status: "waived_too_costly",
         cleanerId: cleaner.id,
@@ -278,7 +278,7 @@ export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDe
     } else {
       // A contractor. Offered, not assigned — and to her alone until the hold
       // lapses.
-      const payoutCents = payoutForRate(config0.openingRateCents, job.estimatedCleanMinutes);
+      const payoutCents = payoutForRate(incumbentRateCents, job.estimatedCleanMinutes);
       continuity = {
         status: "held",
         cleanerId: cleaner.id,
@@ -292,7 +292,7 @@ export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDe
         cleaner,
         basis,
         payoutCents,
-        hourlyRateCents: config0.openingRateCents,
+        hourlyRateCents: incumbentRateCents,
         exclusiveUntil: resolution.expiresAt,
         fallback: isUrgent(job, now) ? "waterfall" : "open_board",
         continuity,
