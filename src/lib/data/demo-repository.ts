@@ -12,6 +12,7 @@ import {
   DEMO_JOBS,
   DEMO_PAYMENT_METHODS,
 } from "../demo/fixtures";
+import { OPENING_RATE_CENTS_PER_HOUR, payoutForRate } from "../dispatch/ladder";
 import type { Repository } from "./repository";
 import type {
   Cleaner,
@@ -20,6 +21,7 @@ import type {
   InvoiceFilter,
   Job,
   JobFilter,
+  Offer,
   Payment,
   PaymentMethod,
   Profile,
@@ -101,8 +103,57 @@ export class DemoRepository implements Repository {
   }
 
   async getCleanerByProfile(): Promise<Cleaner | null> {
-    // Demo mode has no auth; the cleaner view shows the first W-2 cleaner.
-    return DEMO_CLEANERS.find((c) => c.type === "w2_core") ?? null;
+    // Demo mode has no auth. The cleaner view signs in as a CONTRACTOR rather
+    // than a W-2: offers, countdowns and an exclusive hold are the contractor
+    // experience, and a W-2 cleaner is assigned her work rather than offered
+    // it. Demoing the offer screen as an employee would be demoing something
+    // that does not happen.
+    return (
+      DEMO_CLEANERS.find((c) => c.type === "contractor_1099") ??
+      DEMO_CLEANERS[0] ??
+      null
+    );
+  }
+
+  /**
+   * Two live offers, built from the fixture jobs at the published opening
+   * rate, so the screen shows the two cases that actually differ: a customer
+   * who is already hers and is being held for her, and an ordinary job off the
+   * open board.
+   *
+   * Expiries are relative to now, so the countdowns are live every time the
+   * page is loaded rather than long expired.
+   */
+  async listLiveOffers(cleanerId: string): Promise<Offer[]> {
+    const now = Date.now();
+
+    const offerFor = (
+      jobId: string,
+      isExclusive: boolean,
+      expiresInMinutes: number,
+    ): Offer | null => {
+      const demo = DEMO_JOBS.find((j) => j.id === jobId);
+      if (!demo) return null;
+      return {
+        id: `offer-${jobId}`,
+        jobId: demo.id,
+        cleanerId,
+        payoutCents: payoutForRate(OPENING_RATE_CENTS_PER_HOUR, demo.estimatedCleanMinutes),
+        estimatedMinutes: demo.estimatedCleanMinutes,
+        expiresAt: new Date(now + expiresInMinutes * 60_000),
+        isExclusive,
+        customerName: demo.customerName,
+        street: demo.street,
+        city: demo.city,
+        zip: demo.zip,
+        scheduledStart: demo.scheduledStart,
+      };
+    };
+
+    return [
+      offerFor("j-2", true, 8 * 60), // Ann is weekly — hers, held for her.
+      offerFor("j-5", false, 22),
+    ].filter((o): o is Offer => o !== null);
   }
 
   async listCustomers(limit?: number): Promise<Customer[]> {

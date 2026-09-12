@@ -164,3 +164,31 @@ export interface JobFilter {
   customerId?: string;
   limit?: number;
 }
+
+/**
+ * A live offer, as the cleaner's screen needs it.
+ *
+ * Deliberately carries no rung index, no ceiling, and nothing that hints the
+ * payout might improve — the same rule `presentOffer` follows in the dispatch
+ * ladder, for the same reason: a visible ascending ladder teaches every
+ * rational cleaner to decline the opening rate and wait.
+ *
+ * `isExclusive` is not that. It says the job is being held for her because
+ * this is her customer, which is information she is entitled to and which is
+ * the whole reason the hold exists.
+ */
+export interface Offer {
+  id: string;
+  jobId: string;
+  cleanerId: string;
+  payoutCents: number;
+  estimatedMinutes: number;
+  expiresAt: Date;
+  isExclusive: boolean;
+  /** Enough of the job to decide on it. */
+  customerName: string;
+  street: string;
+  city: string;
+  zip: string;
+  scheduledStart: Date | null;
+}

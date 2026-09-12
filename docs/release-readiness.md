@@ -66,14 +66,29 @@ rest. The agreed rate lives on the plan, which closes gate 5 below and the
 overbilling exposure in `docs/setup.md` item 7 **for future visits** — it does
 nothing about invoices already sent.
 
-Remaining gaps, neither blocking a pilot:
+Remaining gap, not blocking a pilot:
 
 - Customers cannot yet see their own schedule; the plan and its skips are
   admin-only surfaces.
-- Dispatch does not read `preferred_cleaner_id`. The column is written and
-  the continuity intent is recorded, but the offer ladder still treats every
-  visit as a fresh auction. For a marketplace whose core promise is "the same
-  person comes back", this is the highest-value next piece.
+
+## The offer lifecycle and continuity
+
+Built (`0015`). Closes the two gaps this document listed above.
+
+| Gate | Status | Evidence |
+|---|---|---|
+| An offer can be answered | Implemented, verified | `respond_to_offer`. Accept, decline, expire, supersede and "taken" are five outcomes, not two. The payout on the assignment is read off the offer row; the function takes no amount, which is what stops the endpoint handing back the permission `0007` removed. |
+| One job, one assignment | Implemented, verified | The function locks the **job**, not the offer — locking each cleaner's own row would let both through. Two concurrent accepts produce exactly one assignment and one `taken`, asserted with genuinely concurrent connections. |
+| The eligibility gate still holds | Implemented, verified | `record_offer` cannot write an offer the `0003` CHECK would refuse. Asserted against a cleaner below the 3.9 floor. |
+| A losing cleaner is not penalised | Implemented, verified | A cleaner who loses a race has her offer **withdrawn**, not declined. Acceptance rate drives ranking, so counting work that no longer existed against her would punish the cleaners who answer fastest. |
+| Continuity is honoured and priced | Implemented, tested | `lib/dispatch/continuity.ts`, pure and asserted without a database like the rest of dispatch. The incumbent is held for or assigned before anything else runs; what that costs against the cheapest alternative is recorded on every decision. |
+| Interventions are countable | Implemented | `dispatch_decisions.decided_by`. Null means the engine decided. **Nothing is reporting on it yet** — the column is populated, the metric is not calculated anywhere. |
+
+**Open:** the continuity premium cap (`MAX_CONTINUITY_PREMIUM_FRACTION`, 15% of
+the ticket) is a stated default in the absence of better information, in the
+same posture as the unattributed-refund split. It decides when a customer gets
+substituted to save money and **needs Matt or Maddie's number**, not an
+engineer's. The data to set it is now being recorded.
 
 ## Customer and operations gates
 

@@ -9,6 +9,7 @@ import type {
   InvoiceFilter,
   Job,
   JobFilter,
+  Offer,
   Payment,
   PaymentMethod,
   Profile,
@@ -19,6 +20,7 @@ import {
   toCustomer,
   toInvoice,
   toJob,
+  toOffer,
   toPayment,
   toPaymentMethod,
   toProfile,
@@ -40,6 +42,19 @@ const JOB_SELECT = `
  * assigned to drop out rather than coming back unfiltered.
  */
 const JOB_SELECT_FOR_CLEANER = `${JOB_SELECT}, job_assignments!inner ( cleaner_id )`;
+
+/**
+ * An offer plus the part of the job she needs to decide on it. Nothing about
+ * the ladder is selected, because none of it is hers to see.
+ */
+const OFFER_SELECT = `
+  id, job_id, cleaner_id, payout_cents, estimated_minutes, expires_at, is_exclusive,
+  jobs!inner (
+    scheduled_start,
+    customers ( first_name, last_name ),
+    properties ( street, city, zip )
+  )
+`;
 
 const CUSTOMER_SELECT = `
   id, first_name, last_name, email, phone, notes, lifetime_value_cents,
@@ -122,6 +137,24 @@ export class SupabaseRepository implements Repository {
    * PostgREST to traverse, and the roster is small enough that a second round
    * trip costs less than the complexity of embedding it.
    */
+  async listLiveOffers(cleanerId: string): Promise<Offer[]> {
+    // `expires_at` bounds it as well as `status`, because an offer whose
+    // countdown has run out is not a decision she still has to make — and the
+    // sweep that flips it to `expired` runs on a schedule, so there is always
+    // a window where the row says `sent` and the clock disagrees. The clock
+    // wins.
+    const { data, error } = await this.db
+      .from("offers")
+      .select(OFFER_SELECT)
+      .eq("cleaner_id", cleanerId)
+      .eq("status", "sent")
+      .gt("expires_at", new Date().toISOString())
+      .order("expires_at", { ascending: true });
+    if (error) throw new Error(`listLiveOffers: ${error.message}`);
+
+    return rows(data).map(toOffer);
+  }
+
   async listCleaners(): Promise<Cleaner[]> {
     const [rosterResult, loadResult] = await Promise.all([
       this.db.from("cleaners").select(CLEANER_SELECT).order("full_name"),
