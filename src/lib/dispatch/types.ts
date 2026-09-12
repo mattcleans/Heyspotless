@@ -80,20 +80,23 @@ export interface DispatchJob {
    */
   continuity?: ContinuityContext;
   /**
-   * Who has already said no to this job, and at what hourly rate.
+   * Who has already been asked about this job at what rate, and did not take
+   * it — whether she said no or simply never answered.
    *
-   * Without this the sweep re-offers a declined job to the same cleaner every
-   * hour for ever: a decline is not a status the offer table can express as
-   * "do not ask again", because asking again at a HIGHER rate is legitimate
-   * and is the entire mechanism of the ladder.
+   * Both have to count. The sweep runs hourly and the engine is stateless, so
+   * without this it re-asks the same cleaner the same question every hour for
+   * ever; and for an incumbent, an unanswered exclusive hold would renew
+   * itself on every sweep and the visit would never reach the open board at
+   * all. A hold that cannot lapse is not a hold.
    *
-   * So the rate is carried with the decline, and the rule is the narrow one:
-   * she is not asked again at a rate she has already refused. A later rung can
-   * still reach her, which matters most for the incumbent — a cleaner who
-   * watches a stranger take her own customer at a rate she was never offered
-   * learns to stop answering honestly.
+   * The RATE is carried because "do not ask again" is the wrong rule: asking
+   * again HIGHER up is legitimate and is the entire mechanism of the ladder.
+   * She is not asked again at a rate she has already passed on; a later rung
+   * still reaches her. That matters most for the incumbent, because a cleaner
+   * who watches a stranger take her own customer at a rate she was never
+   * offered learns to stop answering honestly.
    */
-  declines?: readonly { cleanerId: string; hourlyRateCents: number }[];
+  passedOver?: readonly { cleanerId: string; hourlyRateCents: number }[];
 }
 
 /** A drive leg between two points, estimated or measured. */

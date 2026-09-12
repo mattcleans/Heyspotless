@@ -331,36 +331,42 @@ function toDate(value: unknown): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-export interface Decline {
+export interface PassedOver {
   cleanerId: string;
   hourlyRateCents: number;
 }
 
 /**
- * Who has already said no to each of these jobs, and at what rate.
+ * Who has already been asked about each of these jobs, at what rate, and did
+ * not take it.
  *
- * The sweep runs hourly and the engine is stateless, so without this it
- * re-offers a declined visit to the same cleaner every hour until the visit
- * happens — and, for an incumbent, keeps the job held off the board while she
- * does not answer a question she has already answered.
+ * DECLINED AND EXPIRED BOTH COUNT. The sweep runs hourly and the engine is
+ * stateless, so without this it re-asks the same cleaner the same question
+ * every hour until the visit happens. For an incumbent it is worse than
+ * repetitive: an unanswered exclusive hold would renew itself on every sweep
+ * and the visit would never reach the open board. A hold that cannot lapse is
+ * not a hold.
  *
- * The RATE is carried with the decline rather than a bare "asked already",
- * because asking again higher up is legitimate and is the entire mechanism of
- * the ladder.
+ * WITHDRAWN is deliberately excluded. That is not her answer — it means
+ * somebody else took the job, or we pulled the offer — and holding it against
+ * her would punish a cleaner for a race she lost.
+ *
+ * The RATE is carried rather than a bare "asked already", because asking again
+ * higher up is legitimate and is the entire mechanism of the ladder.
  */
-export async function declinesFor(
+export async function passedOverFor(
   db: SupabaseClient,
   jobIds: readonly string[],
-): Promise<Map<string, Decline[]>> {
-  const byJob = new Map<string, Decline[]>();
+): Promise<Map<string, PassedOver[]>> {
+  const byJob = new Map<string, PassedOver[]>();
   if (jobIds.length === 0) return byJob;
 
   const { data, error } = await db
     .from("offers")
     .select("job_id, cleaner_id, hourly_rate_cents")
     .in("job_id", [...jobIds])
-    .eq("status", "declined");
-  if (error) throw new Error(`declinesFor: ${error.message}`);
+    .in("status", ["declined", "expired"]);
+  if (error) throw new Error(`passedOverFor: ${error.message}`);
 
   for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
     const jobId = row["job_id"];
@@ -368,10 +374,10 @@ export async function declinesFor(
     const rate = row["hourly_rate_cents"];
     if (typeof jobId !== "string" || typeof cleanerId !== "string") continue;
 
-    const decline = { cleanerId, hourlyRateCents: typeof rate === "number" ? rate : 0 };
+    const entry = { cleanerId, hourlyRateCents: typeof rate === "number" ? rate : 0 };
     const existing = byJob.get(jobId);
-    if (existing) existing.push(decline);
-    else byJob.set(jobId, [decline]);
+    if (existing) existing.push(entry);
+    else byJob.set(jobId, [entry]);
   }
   return byJob;
 }

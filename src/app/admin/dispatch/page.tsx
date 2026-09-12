@@ -137,11 +137,12 @@ function ContinuityNote({ decision }: { decision: DispatchDecision }) {
     );
   }
 
-  if (c.status === "none" && c.reason === "incumbent_declined") {
+  if (c.status === "none" && c.reason === "incumbent_passed") {
     return (
       <p className="mt-2 text-xs text-ink-3">
-        <Pill tone="warn">Declined</Pill>{" "}
-        Their usual cleaner has already passed on this visit — it is on the open market now.
+        <Pill tone="warn">Passed</Pill>{" "}
+        Their usual cleaner has already turned this visit down, or did not answer in time — it
+        is on the open market now.
       </p>
     );
   }

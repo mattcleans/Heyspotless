@@ -215,15 +215,15 @@ describe("everything without a relationship behaves exactly as it did", () => {
   });
 });
 
-describe("a cleaner who says no is not asked the same question again", () => {
-  it("stops holding the job for an incumbent who declined at this rate", () => {
+describe("a cleaner is not asked a question she has already answered", () => {
+  it("stops holding the job for an incumbent who passed at this rate", () => {
     // Without this the hourly sweep re-offers a declined visit to the same
     // cleaner every hour until it happens, and keeps it off the board while
     // she does not answer.
     const decision = dispatch(
       job({
         continuity: asked(),
-        declines: [{ cleanerId: "sarah", hourlyRateCents: 2500 }],
+        passedOver: [{ cleanerId: "sarah", hourlyRateCents: 2500 }],
       }),
       context([sarah(), contractor({ id: "stranger" })]),
     );
@@ -231,14 +231,14 @@ describe("a cleaner who says no is not asked the same question again", () => {
     expect(decision.kind).toBe("open_board");
     expect(decision.continuity.status).toBe("none");
     if (decision.continuity.status !== "none") return;
-    expect(decision.continuity.reason).toBe("incumbent_declined");
+    expect(decision.continuity.reason).toBe("incumbent_passed");
   });
 
   it("keeps her out of the pool at that rate too", () => {
     const decision = dispatch(
       job({
         continuity: asked(),
-        declines: [{ cleanerId: "sarah", hourlyRateCents: 2500 }],
+        passedOver: [{ cleanerId: "sarah", hourlyRateCents: 2500 }],
       }),
       context([sarah(), contractor({ id: "stranger" })]),
     );
@@ -248,11 +248,11 @@ describe("a cleaner who says no is not asked the same question again", () => {
     expect(decision.eligible.map((c) => c.id)).toContain("stranger");
   });
 
-  it("treats a decline at a higher rate as settling the lower one", () => {
+  it("treats passing at a higher rate as settling the lower one", () => {
     // Refusing $30/h obviously answers $25/h as well, and re-asking downward
     // is the fastest way to teach a cleaner that answering means nothing.
     const decision = dispatch(
-      job({ continuity: asked(), declines: [{ cleanerId: "sarah", hourlyRateCents: 3000 }] }),
+      job({ continuity: asked(), passedOver: [{ cleanerId: "sarah", hourlyRateCents: 3000 }] }),
       context([sarah(), contractor({ id: "stranger" })]),
     );
     expect(decision.kind).toBe("open_board");
@@ -260,20 +260,39 @@ describe("a cleaner who says no is not asked the same question again", () => {
     expect(decision.eligible.map((c) => c.id)).not.toContain("sarah");
   });
 
-  it("still reaches her at a rate she has not refused", () => {
+  it("still reaches her at a rate she has not passed on", () => {
     // The ladder's entire mechanism. An incumbent who declined the opening
     // rate must stay reachable higher up, or she watches a stranger take her
     // own customer at a rate she was never offered.
     const decision = dispatch(
-      job({ continuity: asked(), declines: [{ cleanerId: "sarah", hourlyRateCents: 2400 }] }),
+      job({ continuity: asked(), passedOver: [{ cleanerId: "sarah", hourlyRateCents: 2400 }] }),
       context([sarah(), contractor({ id: "stranger" })]),
     );
     expect(decision.kind).toBe("hold_for_incumbent");
   });
 
-  it("does not confuse one cleaner's decline with another's", () => {
+  it("lets an UNANSWERED hold lapse to the board instead of renewing it", () => {
+    // The failure this is really guarding. A hold that expires unanswered
+    // looks identical to a fresh job to a stateless engine, so the next sweep
+    // would hold it for her again — and the one after that. The visit would
+    // never reach the open board at all, and a hold that cannot lapse is not
+    // a hold.
     const decision = dispatch(
-      job({ continuity: asked(), declines: [{ cleanerId: "stranger", hourlyRateCents: 2500 }] }),
+      job({
+        continuity: asked(),
+        passedOver: [{ cleanerId: "sarah", hourlyRateCents: 2500 }],
+      }),
+      context([sarah(), contractor({ id: "stranger" })]),
+    );
+
+    expect(decision.kind).toBe("open_board");
+    if (decision.kind !== "open_board") return;
+    expect(decision.eligible.map((c) => c.id)).toEqual(["stranger"]);
+  });
+
+  it("does not confuse one cleaner's answer with another's", () => {
+    const decision = dispatch(
+      job({ continuity: asked(), passedOver: [{ cleanerId: "stranger", hourlyRateCents: 2500 }] }),
       context([sarah(), contractor({ id: "stranger" })]),
     );
     expect(decision.kind).toBe("hold_for_incumbent");

@@ -134,7 +134,7 @@ export type ContinuityMissReason =
   | "no_relationship"
   | "too_few_visits"
   | "incumbent_ineligible"
-  | "incumbent_declined"
+  | "incumbent_passed"
   | "no_lead_time";
 
 export interface ContinuityMiss {
@@ -187,8 +187,8 @@ export function resolveContinuity(
   const byId = (id: string | null) =>
     id === null ? undefined : cleaners.find((c) => c.id === id);
 
-  const declined = (cleaner: Cleaner) =>
-    hasDeclinedAtOrAbove(job, cleaner.id, options.offerRateCents ?? 0);
+  const passed = (cleaner: Cleaner) =>
+    hasPassedAtOrAbove(job, cleaner.id, options.offerRateCents ?? 0);
 
   const hold = (cleaner: Cleaner, basis: ContinuityBasis): ContinuityHold => ({
     held: true,
@@ -200,11 +200,11 @@ export function resolveContinuity(
 
   // Stated preference first, and with no visit threshold — the customer asked.
   const preferred = byId(continuity.preferredCleanerId);
-  if (preferred && declined(preferred)) {
-    // She has already said no at this rate. Holding the job for her again is
-    // asking the same question every hour, and it keeps the visit off the
-    // board while she does not answer it.
-    return { held: false, reason: "incumbent_declined" };
+  if (preferred && passed(preferred)) {
+    // She has already been asked at this rate and did not take it. Holding
+    // the job for her again asks the same question every hour, and keeps the
+    // visit off the open board while it goes unanswered.
+    return { held: false, reason: "incumbent_passed" };
   }
   if (eligible(preferred)) return hold(preferred, "preferred");
 
@@ -223,8 +223,8 @@ export function resolveContinuity(
   }
 
   const incumbent = byId(continuity.incumbentCleanerId);
-  if (incumbent && declined(incumbent)) {
-    return { held: false, reason: "incumbent_declined" };
+  if (incumbent && passed(incumbent)) {
+    return { held: false, reason: "incumbent_passed" };
   }
   if (eligible(incumbent)) return hold(incumbent, "incumbent");
 
@@ -245,19 +245,20 @@ export function resolveContinuity(
  * option, which is the ordinary case for a W-2 cleaner on a settled route.
  */
 /**
- * Has this cleaner already refused this job at this rate or better?
+ * Has this cleaner already been asked about this job at this rate or better,
+ * and not taken it?
  *
- * "Or better" rather than "exactly", because a decline at $30/h obviously
+ * "Or better" rather than "exactly", because passing on $30/h obviously
  * settles the question at $25/h too, and re-asking downward is the fastest way
  * to teach a cleaner that answering means nothing.
  */
-export function hasDeclinedAtOrAbove(
+export function hasPassedAtOrAbove(
   job: DispatchJob,
   cleanerId: string,
   hourlyRateCents: number,
 ): boolean {
-  return (job.declines ?? []).some(
-    (d) => d.cleanerId === cleanerId && d.hourlyRateCents >= hourlyRateCents,
+  return (job.passedOver ?? []).some(
+    (p) => p.cleanerId === cleanerId && p.hourlyRateCents >= hourlyRateCents,
   );
 }
 

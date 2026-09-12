@@ -27,7 +27,7 @@ import { cheapestW2Option, unspentGuaranteedHours, w2MarginalCost } from "./marg
 import { checkEligibility, type EligibilityContext } from "./eligibility";
 import {
   continuityPremiumCapCents,
-  hasDeclinedAtOrAbove,
+  hasPassedAtOrAbove,
   holdCostCents,
   resolveContinuity,
   type ContinuityBasis,
@@ -328,13 +328,14 @@ export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDe
   const cheapest = cheapestW2Option(w2Candidates, inputsFor);
   const w2CeilingCents = cheapest?.cost.marginalCents ?? null;
 
-  // A cleaner who has already refused this job at the opening rate is not
-  // asked again at the opening rate. She stays reachable by a HIGHER rung,
+  // A cleaner who has already passed on this job at the opening rate — said
+  // no, or never answered — is not asked again at the opening rate. She stays
+  // reachable by a HIGHER rung,
   // which is the whole mechanism of the ladder — and which matters most for an
   // incumbent, who would otherwise watch a stranger take her own customer at a
   // rate she was never offered.
   const marketplace = eligible.filter(
-    (c) => c.type === "contractor_1099" && !hasDeclinedAtOrAbove(job, c.id, openingRateCents),
+    (c) => c.type === "contractor_1099" && !hasPassedAtOrAbove(job, c.id, openingRateCents),
   );
 
   // If nobody is in the marketplace, the W-2 option is the only option.
