@@ -85,3 +85,36 @@ describe("demo offers", () => {
     expect(offers.some((o) => !o.isExclusive)).toBe(true);
   });
 });
+
+describe("demo continuity", () => {
+  const repo = new DemoRepository();
+
+  it("gives the recurring fixture customers a relationship", async () => {
+    // Demo mode is how this app is reviewed, and a board where every visit
+    // reads "no relationship" would demo the engine as it was before it had
+    // one.
+    const jobs = await repo.listJobs();
+    const ann = jobs.find((j) => j.id === "j-2");
+    expect(ann?.continuity?.preferredCleanerId).toBe("c-marisol");
+    expect(ann?.continuity?.priorVisits).toBeGreaterThan(0);
+  });
+
+  it("leaves the one-off jobs without one", async () => {
+    const jobs = await repo.listJobs();
+    const oneOff = jobs.find((j) => j.id === "j-3");
+    expect(oneOff?.continuity).toBeUndefined();
+  });
+
+  it("names only cleaners who are actually on the roster", async () => {
+    // A preference pointing at a cleaner who does not exist would resolve to
+    // no hold at all and quietly demo nothing.
+    const [jobs, cleaners] = await Promise.all([repo.listJobs(), repo.listCleaners()]);
+    const ids = new Set(cleaners.map((c) => c.id));
+
+    for (const job of jobs) {
+      for (const id of [job.continuity?.preferredCleanerId, job.continuity?.incumbentCleanerId]) {
+        if (id) expect(ids).toContain(id);
+      }
+    }
+  });
+});

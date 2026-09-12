@@ -13,6 +13,7 @@ import {
   DEMO_PAYMENT_METHODS,
 } from "../demo/fixtures";
 import { OPENING_RATE_CENTS_PER_HOUR, payoutForRate } from "../dispatch/ladder";
+import type { ContinuityContext } from "../dispatch/continuity";
 import type { Repository } from "./repository";
 import type {
   Cleaner,
@@ -74,13 +75,41 @@ function jobProperty(demo: (typeof DEMO_JOBS)[number]): Property {
   };
 }
 
+/**
+ * The relationships the fixture customers already have.
+ *
+ * Demo mode is how this app is reviewed, and continuity is most of what
+ * dispatch now does — a board where every visit reads "no relationship" would
+ * demo the engine as it was before it had one. These mirror the frequencies in
+ * DEMO_JOBS: the weekly and bi-weekly customers have a regular cleaner, and
+ * the one-off jobs do not, which is the distinction worth seeing.
+ */
+const DEMO_CONTINUITY: Record<string, ContinuityContext> = {
+  // Ann is weekly and asked for Marisol by name.
+  "j-2": { preferredCleanerId: "c-marisol", incumbentCleanerId: "c-marisol", priorVisits: 14 },
+  // Bonnie is fortnightly. Nobody wrote a preference down, but Dee has been
+  // six times — a revealed incumbency, which is priced rather than promised.
+  "j-1": { preferredCleanerId: null, incumbentCleanerId: "c-dee", priorVisits: 6 },
+  // Veena is monthly and has had two different cleaners. Not yet a
+  // relationship, and the board should say so rather than inventing one.
+  "j-7": { preferredCleanerId: null, incumbentCleanerId: "c-priya", priorVisits: 1 },
+};
+
+function withDemoContinuity(job: Job): Job {
+  const continuity = DEMO_CONTINUITY[job.id];
+  return continuity ? { ...job, continuity } : job;
+}
+
 export class DemoRepository implements Repository {
   readonly isDemo = true;
 
   async listJobs(filter: JobFilter = {}): Promise<Job[]> {
     // Booked first, so a job someone has just created is visible without
     // scrolling past the fixtures.
-    let jobs = [...demoJobs()].reverse().concat(DEMO_JOBS.map(toJob));
+    let jobs = [...demoJobs()]
+      .reverse()
+      .concat(DEMO_JOBS.map(toJob))
+      .map(withDemoContinuity);
     if (filter.customerId) jobs = jobs.filter((j) => j.customerId === filter.customerId);
     // Demo mode has no assignments table; every job is visible to the one
     // cleaner the demo signs in as.
@@ -91,7 +120,7 @@ export class DemoRepository implements Repository {
 
   async getJob(id: string): Promise<Job | null> {
     const found = DEMO_JOBS.find((j) => j.id === id);
-    return found ? toJob(found) : null;
+    return found ? withDemoContinuity(toJob(found)) : null;
   }
 
   async listCleaners(): Promise<Cleaner[]> {
