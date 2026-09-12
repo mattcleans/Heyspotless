@@ -169,3 +169,62 @@ export function FormError({ message }: { message?: string }) {
     </div>
   );
 }
+
+/**
+ * A checkbox with its explanation attached.
+ *
+ * The label is the thing being switched on; the hint is what it will actually
+ * do. For a control that starts a standing commitment — a recurring plan
+ * against somebody's card — "what will happen" is not optional detail.
+ */
+export function Checkbox({
+  name,
+  label,
+  hint,
+  defaultChecked,
+  onChange,
+  errors,
+}: {
+  name: string;
+  label: string;
+  hint?: string;
+  defaultChecked?: boolean;
+  /** Fires on every change, for a hint that has to keep up. Not control. */
+  onChange?: (checked: boolean) => void;
+  errors?: Record<string, string>;
+}) {
+  const error = errors?.[name];
+
+  return (
+    <div>
+      <label className="flex cursor-pointer items-start gap-2.5">
+        {/*
+          UNCONTROLLED, deliberately, and there is no `checked` prop to pass.
+
+          React resets a form's DOM after a server action returns. For a
+          CONTROLLED input whose value did not change across that render,
+          React's virtual DOM sees nothing to patch and the reset stands — so
+          the box comes back unticked while the component still believes it
+          is ticked. On this form that meant the button read "Start plan" and
+          the hint promised a standing plan, over a checkbox that would post
+          nothing: the next submit silently booked a one-off instead.
+
+          `defaultChecked` survives the reset, which is why every other field
+          here is uncontrolled and re-seeded from what was posted.
+        */}
+        <input
+          type="checkbox"
+          name={name}
+          defaultChecked={defaultChecked}
+          onChange={onChange ? (e) => onChange(e.currentTarget.checked) : undefined}
+          className="mt-0.5 h-4 w-4 shrink-0 rounded border-line accent-navy"
+        />
+        <span>
+          <span className="text-sm font-medium text-ink">{label}</span>
+          {hint ? <span className="mt-0.5 block text-xs text-ink-3">{hint}</span> : null}
+        </span>
+      </label>
+      {error ? <span className="mt-1 block text-xs text-bad">{error}</span> : null}
+    </div>
+  );
+}

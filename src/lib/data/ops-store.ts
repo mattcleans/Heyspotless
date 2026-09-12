@@ -1,7 +1,12 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { addDemoCustomer, addDemoJob, addDemoProperty } from "../demo/added";
+import {
+  addDemoCustomer,
+  addDemoJob,
+  addDemoProperty,
+  addDemoRecurringPlan,
+} from "../demo/added";
 import { toCustomer, toProperty } from "./mappers";
 import type { Customer, Property } from "./types";
 import type { CustomerInput, JobInput, PropertyInput } from "./validate";
@@ -29,6 +34,38 @@ export interface OpsStore {
    * property's rooms, which is a read — see bookJob() in the action.
    */
   createJob(input: PricedJob): Promise<void>;
+  /**
+   * Start a recurring plan, and return its id.
+   *
+   * The agreed rate is stored ON THE PLAN. That is the fix for the live
+   * overbilling bug in build-plan section 09: a recurring customer's price
+   * must never be silently re-derived from a price book that has since moved.
+   * What they said yes to is what they pay, until somebody changes it on
+   * purpose.
+   */
+  createRecurringPlan(input: PricedPlan): Promise<string>;
+}
+
+/**
+ * A recurring plan with its price resolved, and the first visit's date.
+ *
+ * Separate from PricedJob for the same reason PricedJob is separate from
+ * JobInput: the price is computed server-side from the price book and the
+ * property's stored rooms, and keeping the priced shape distinct is what
+ * makes that impossible to forget.
+ */
+export interface PricedPlan {
+  customerId: string;
+  propertyId: string;
+  service: string;
+  frequency: string;
+  /** The first visit. The whole cadence derives from it. */
+  anchorDate: string;
+  /** Local wall clock in business time, `HH:mm`. */
+  startTime: string;
+  agreedPriceCents: number;
+  estimatedMinutes: number;
+  notes: string | null;
 }
 
 /**
@@ -121,6 +158,31 @@ export class SupabaseOpsStore implements OpsStore {
     return toProperty(data as unknown as Record<string, unknown>);
   }
 
+  async createRecurringPlan(plan: PricedPlan): Promise<string> {
+    const { data, error } = await this.db
+      .from("recurring_plans")
+      .insert({
+        customer_id: plan.customerId,
+        property_id: plan.propertyId,
+        service: plan.service,
+        freq: plan.frequency,
+        anchor_date: plan.anchorDate,
+        start_time: plan.startTime,
+        agreed_price_cents: plan.agreedPriceCents,
+        estimated_minutes: plan.estimatedMinutes,
+        next_job_date: plan.anchorDate,
+        notes: plan.notes,
+        active: true,
+      })
+      .select("id")
+      .single();
+    if (error) throw new Error(`createRecurringPlan: ${error.message}`);
+
+    const id = (data as Record<string, unknown> | null)?.["id"];
+    if (typeof id !== "string") throw new Error("createRecurringPlan: no id returned");
+    return id;
+  }
+
   async createJob(job: PricedJob): Promise<void> {
     const { error } = await this.db.from("jobs").insert({
       customer_id: job.customerId,
@@ -162,5 +224,9 @@ export class DemoOpsStore implements OpsStore {
 
   async createJob(job: PricedJob): Promise<void> {
     addDemoJob(job);
+  }
+
+  async createRecurringPlan(plan: PricedPlan): Promise<string> {
+    return addDemoRecurringPlan(plan);
   }
 }

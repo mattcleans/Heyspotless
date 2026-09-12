@@ -184,12 +184,14 @@ async function apply(store: BillingStore, transition: BillingTransition): Promis
         amountCents: transition.amountCents,
         stripeRefundId: transition.stripeRefundId,
         // A refund we did not initiate — someone pressed refund in the Stripe
-        // dashboard — arrives with no stated intent. `goodwill` is the only
-        // safe reading: it gives the money back without turning the invoice
-        // into something the auto-charge sweep will collect again. An admin
-        // who meant a correction records it through the refund route, which
-        // asks.
-        kind: "goodwill",
+        // dashboard — arrives with no stated intent. `unattributed` gives the
+        // money back without turning the invoice into something the sweep
+        // will collect again, AND records honestly that nobody said why: it
+        // is credited in full but attributed half to service failure, half to
+        // goodwill (0013). Calling it pure goodwill would have quietly
+        // reported every botched clean as generosity. An admin who knows
+        // better records it through the refund route, which asks.
+        kind: "unattributed",
       });
       return refundId ? "applied" : "already_recorded";
     }

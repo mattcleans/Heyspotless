@@ -19,32 +19,74 @@ export type PaymentStatus =
 export type RefundStatus = "pending" | "succeeded" | "failed" | "canceled";
 
 /**
- * What a refund means for what is owed — the distinction 0006 did not make.
+ * What a refund means for what is owed, and what it says about the clean.
  *
- * Giving money back and deciding it is owed again are different acts, and
- * collapsing them meant a goodwill gesture turned into a fresh charge on the
- * customer's card. See 0011 for the policy in full.
+ * Two questions, not one. Giving money back and deciding it is owed again
+ * are different acts — that is the 0011 distinction. On top of it, 0013 adds:
+ * a refund also says something about whether the WORK was the problem, and a
+ * marketplace that records every refund as generosity can never see its own
+ * service failures.
  *
- *   goodwill     the work stands, the money goes back as a gesture, and a
- *                matching credit stops it becoming collectible. The DEFAULT,
- *                including for refunds issued from the Stripe dashboard,
- *                because a refund of unknown intent must never bill anyone.
- *   overpayment  returning money that was never owed.
- *   correction   taken the wrong way, still owed; deliberately collectible.
- *   dispute      restores the balance and PAUSES automatic collection.
+ *   unattributed   nobody said why. Fully credited, never re-collected, and
+ *                  split 50/50 between service failure and goodwill so the
+ *                  quality figure is neither zero nor invented. The DEFAULT,
+ *                  including for refunds issued from the Stripe dashboard.
+ *   service_refund someone looked and the clean was the problem. Fully
+ *                  credited; attributed undiluted, because this is the
+ *                  number that should drive quality work.
+ *   goodwill       the work was fine and we chose to give something back.
+ *                  Fully credited.
+ *   overpayment    returning money never owed; capped at what was overpaid.
+ *   correction     still owed, taken the wrong way. Deliberately collectible.
+ *   dispute        restores the balance and PAUSES automatic collection.
  */
-export type RefundKind = "goodwill" | "overpayment" | "correction" | "dispute";
+export type RefundKind =
+  | "unattributed"
+  | "service_refund"
+  | "goodwill"
+  | "overpayment"
+  | "correction"
+  | "dispute";
 
 export const REFUND_KINDS: readonly RefundKind[] = [
+  "unattributed",
+  "service_refund",
   "goodwill",
   "overpayment",
   "correction",
   "dispute",
 ];
 
-/** Whether a refund of this kind leaves the invoice collectible again. */
+/** What a credit is for. Same money effect; different story. */
+export type AdjustmentCategory = "service_refund" | "goodwill" | "discount" | "correction";
+
+/**
+ * How an unattributed refund is attributed, in the absence of anyone saying.
+ * A stated default, not a measurement — mirrors unattributed_service_share()
+ * in 0013, and the two are asserted against the same cases.
+ */
+export const UNATTRIBUTED_SERVICE_SHARE = 0.5;
+
+/**
+ * The split, in whole cents. The odd cent goes to goodwill: better to
+ * understate a clean's failures than overstate them, since that figure is
+ * what quality work is prioritised from.
+ */
+export function splitUnattributedRefund(amountCents: number): {
+  serviceRefundCents: number;
+  goodwillCents: number;
+} {
+  const serviceRefundCents = Math.floor(amountCents * UNATTRIBUTED_SERVICE_SHARE);
+  return { serviceRefundCents, goodwillCents: amountCents - serviceRefundCents };
+}
+
 export function restoresCollectibleBalance(kind: RefundKind): boolean {
   return kind === "correction" || kind === "dispute";
+}
+
+/** Whether this kind raises a credit, so the money can never be re-collected. */
+export function raisesCredit(kind: RefundKind): boolean {
+  return kind === "unattributed" || kind === "service_refund" || kind === "goodwill";
 }
 
 /**

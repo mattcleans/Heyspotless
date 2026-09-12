@@ -44,7 +44,7 @@ const JOB_SELECT_FOR_CLEANER = `${JOB_SELECT}, job_assignments!inner ( cleaner_i
 const CUSTOMER_SELECT = `
   id, first_name, last_name, email, phone, notes, lifetime_value_cents,
   stripe_customer_id, autopay_enabled, autopay_authorized_at,
-  autopay_suspended_at, autopay_suspended_reason
+  autopay_ended_at, autopay_ended_reason
 `;
 
 /** `balance_cents` is generated in the database; it is selected, never computed. */

@@ -38,10 +38,11 @@ export default async function CustomerPage() {
   const defaultCard = cards.find((c) => c.isDefault) ?? cards[0] ?? null;
   const billingLive = isBillingEnabled();
   const autopayOn = Boolean(customer?.autopayEnabled);
-  // Autopay switched on with nothing to charge. It is a real state — removing
-  // your last card gets you here — and the whole point of recording it is that
-  // the screen can say so instead of quietly showing "On" and charging nobody.
-  const autopaySuspended = autopayOn && customer?.autopaySuspendedAt != null;
+  // Autopay that WE switched off, rather than the customer. Removing your
+  // last card gets you here, and it withdraws consent with it — so the state
+  // to explain is not "paused", it is "off, and here is why, and turning it
+  // back on is your call".
+  const autopayEndedByUs = !autopayOn && customer?.autopayEndedAt != null;
 
   return (
     <>
@@ -50,13 +51,14 @@ export default async function CustomerPage() {
         straight back into who is eligible for future jobs.
       </PageHeader>
 
-      {autopaySuspended ? (
-        <Callout tone="warn" label="Autopay is paused">
-          {customer?.autopaySuspendedReason
-            ? `Autopay is on, but ${customer.autopaySuspendedReason}, so nothing can be charged.`
-            : "Autopay is on, but there is no card on file, so nothing can be charged."}{" "}
-          Save a card below and it resumes straight away — your existing authorisation still
-          stands, so there is nothing to agree to again.
+      {autopayEndedByUs ? (
+        <Callout tone="warn" label="Autopay was switched off">
+          {customer?.autopayEndedReason
+            ? `We switched autopay off because ${customer.autopayEndedReason}.`
+            : "We switched autopay off because there is no card on file."}{" "}
+          Save a card below and you can turn it back on. We will ask you to authorise it
+          again rather than reusing your old permission — it applied to a card you have
+          since removed.
         </Callout>
       ) : null}
 
@@ -86,13 +88,13 @@ export default async function CustomerPage() {
         />
         <Stat
           label="Autopay"
-          value={autopaySuspended ? "Paused" : autopayOn ? "On" : "Off"}
-          tone={autopaySuspended ? "warn" : autopayOn ? "good" : "default"}
+          value={autopayOn ? "On" : "Off"}
+          tone={autopayOn ? "good" : autopayEndedByUs ? "warn" : "default"}
           note={
-            autopaySuspended
-              ? "Save a card to resume — you will not be asked to opt in again"
-              : autopayOn
-                ? "Charged when a clean is invoiced"
+            autopayOn
+              ? "Charged when a clean is invoiced"
+              : autopayEndedByUs
+                ? "Switched off when your last card was removed — turn it back on any time"
                 : "You pay each invoice yourself"
           }
         />

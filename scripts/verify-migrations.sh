@@ -399,23 +399,30 @@ begin
   if detach_payment_method('pm_never_seen') is not null then
     v_fail := v_fail+1; raise warning 'detaching an unmirrored card returned a default'; end if;
 
-  -- THE LAST CARD. Autopay is suspended and SAID SO, rather than silently
-  -- becoming unusable. Consent is deliberately kept.
+  -- THE LAST CARD. Consent is WITHDRAWN with it (0013): an authorisation to
+  -- charge a card the customer has removed is stale, and stale consent is not
+  -- a position to defend a dispute from. The reason is recorded so the screen
+  -- can explain itself rather than just showing "Off".
   perform detach_payment_method('pm_b');
   perform detach_payment_method('pm_a');
   if exists (select 1 from payment_methods
              where customer_id = v_cust and detached_at is null) then
     v_fail := v_fail+1; raise warning 'a card survived detaching them all'; end if;
   if not exists (select 1 from customers where id = v_cust
-                 and autopay_suspended_at is not null
-                 and autopay_enabled and autopay_authorized_at is not null) then
+                 and autopay_enabled = false
+                 and autopay_authorized_at is null
+                 and autopay_ended_at is not null
+                 and autopay_ended_reason is not null) then
     v_fail := v_fail+1;
-    raise warning 'removing the last card did not suspend autopay, or dropped consent'; end if;
+    raise warning 'removing the last card did not withdraw autopay consent'; end if;
 
-  -- And saving a card resumes it without asking for consent again.
+  -- And saving a card does NOT resurrect it. Opting back in is a fresh
+  -- decision the customer makes; nothing here may make it for them.
   perform save_payment_method(v_cust, 'pm_d', 'visa', '4444', 9, 2034);
-  if exists (select 1 from customers where id = v_cust and autopay_suspended_at is not null) then
-    v_fail := v_fail+1; raise warning 'a new card did not lift the suspension'; end if;
+  if exists (select 1 from customers where id = v_cust
+             and (autopay_enabled or autopay_authorized_at is not null)) then
+    v_fail := v_fail+1;
+    raise warning 'saving a card silently re-enabled autopay without consent'; end if;
 
   -- A card moving to a different customer keeps that customer''s default
   -- arrangement intact rather than inheriting the old one''s.
@@ -815,6 +822,127 @@ echo "  refund policy verified"
 # that looked at the invoice saw an unpaid invoice and started another one:
 # two Checkout tabs, a repeated submission, or the nightly sweep landing on
 # an invoice a customer was in the middle of paying.
+# --- refund attribution (0013) ------------------------------------------------
+# A refund nobody explained is still fully credited and still never
+# re-collected — the money rule from 0011 is unchanged. What 0013 adds is
+# honest attribution: recording every unexplained refund as pure goodwill
+# hides the ones that were a service failure, and those are the ones a
+# marketplace has to be able to see.
+echo "  checking refund attribution"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_inv uuid; v_fail integer := 0;
+  v_bal integer; v_credit integer; v_service integer; v_goodwill integer;
+begin
+  insert into customers (first_name, last_name) values ('Attribute','Refund')
+    returning id into v_cust;
+
+  ----------------------------------------------------------------------
+  -- UNATTRIBUTED (the Stripe-dashboard default): 50/50, fully credited.
+  ----------------------------------------------------------------------
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_inv;
+  perform record_payment(v_inv, 17000, 0, 'pi_attr_1', null, null, false, 'card');
+  perform record_refund('pi_attr_1', 5000, 're_attr_1');   -- kind defaults
+
+  if not exists (select 1 from refunds
+                 where stripe_refund_id = 're_attr_1' and kind = 'unattributed') then
+    v_fail := v_fail+1; raise warning 'an unstated refund was not recorded as unattributed'; end if;
+
+  select coalesce(sum(amount_cents) filter (where category = 'service_refund'), 0),
+         coalesce(sum(amount_cents) filter (where category = 'goodwill'), 0)
+    into v_service, v_goodwill
+  from invoice_adjustments where invoice_id = v_inv;
+
+  if v_service <> 2500 then v_fail := v_fail+1;
+    raise warning 'service share: got %, want 2500', v_service; end if;
+  if v_goodwill <> 2500 then v_fail := v_fail+1;
+    raise warning 'goodwill share: got %, want 2500', v_goodwill; end if;
+
+  -- The money rule is untouched: fully credited, nothing collectible.
+  select credit_cents, balance_cents into v_credit, v_bal from invoices where id = v_inv;
+  if v_credit <> 5000 then v_fail := v_fail+1;
+    raise warning 'total credit: got %, want 5000', v_credit; end if;
+  if v_bal <> 0 then v_fail := v_fail+1;
+    raise warning 'an unattributed refund left % collectible, want 0', v_bal; end if;
+
+  -- Replay must not credit either half twice.
+  perform record_refund('pi_attr_1', 5000, 're_attr_1');
+  select credit_cents into v_credit from invoices where id = v_inv;
+  if v_credit <> 5000 then v_fail := v_fail+1;
+    raise warning 'a replayed unattributed refund credited twice: %', v_credit; end if;
+  if (select count(*) from invoice_adjustments where invoice_id = v_inv) <> 2 then
+    v_fail := v_fail+1; raise warning 'a replay produced extra adjustment rows'; end if;
+
+  ----------------------------------------------------------------------
+  -- The ODD CENT goes to goodwill, so the service-failure figure — which
+  -- is what drives quality work — is never overstated.
+  ----------------------------------------------------------------------
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_inv;
+  perform record_payment(v_inv, 17000, 0, 'pi_attr_odd', null, null, false, 'card');
+  perform record_refund('pi_attr_odd', 501, 're_attr_odd');
+
+  select coalesce(sum(amount_cents) filter (where category = 'service_refund'), 0),
+         coalesce(sum(amount_cents) filter (where category = 'goodwill'), 0)
+    into v_service, v_goodwill
+  from invoice_adjustments where invoice_id = v_inv;
+  if v_service <> 250 or v_goodwill <> 251 then v_fail := v_fail+1;
+    raise warning 'odd split: service %, goodwill %, want 250/251', v_service, v_goodwill; end if;
+  select credit_cents into v_credit from invoices where id = v_inv;
+  if v_credit <> 501 then v_fail := v_fail+1;
+    raise warning 'odd split lost a cent: credited %, refunded 501', v_credit; end if;
+
+  ----------------------------------------------------------------------
+  -- An admin who KNOWS the clean was the problem gets an undiluted number.
+  ----------------------------------------------------------------------
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_inv;
+  perform record_payment(v_inv, 17000, 0, 'pi_attr_svc', null, null, false, 'card');
+  perform record_refund('pi_attr_svc', 5000, 're_attr_svc', null,
+                        'bathroom was missed', 'service_refund');
+
+  select coalesce(sum(amount_cents) filter (where category = 'service_refund'), 0),
+         coalesce(sum(amount_cents) filter (where category = 'goodwill'), 0)
+    into v_service, v_goodwill
+  from invoice_adjustments where invoice_id = v_inv;
+  if v_service <> 5000 or v_goodwill <> 0 then v_fail := v_fail+1;
+    raise warning 'a stated service refund split: service %, goodwill %', v_service, v_goodwill; end if;
+  select balance_cents into v_bal from invoices where id = v_inv;
+  if v_bal <> 0 then v_fail := v_fail+1;
+    raise warning 'a service refund left % collectible, want 0', v_bal; end if;
+
+  ----------------------------------------------------------------------
+  -- A stated goodwill refund is still wholly goodwill.
+  ----------------------------------------------------------------------
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_inv;
+  perform record_payment(v_inv, 17000, 0, 'pi_attr_gw', null, null, false, 'card');
+  perform record_refund('pi_attr_gw', 5000, 're_attr_gw', null, 'thanks for your patience',
+                        'goodwill');
+  select coalesce(sum(amount_cents) filter (where category = 'goodwill'), 0)
+    into v_goodwill from invoice_adjustments where invoice_id = v_inv;
+  if v_goodwill <> 5000 then v_fail := v_fail+1;
+    raise warning 'a stated goodwill refund credited % to goodwill, want 5000', v_goodwill; end if;
+
+  ----------------------------------------------------------------------
+  -- The kinds that deliberately stay collectible raise no credit at all.
+  ----------------------------------------------------------------------
+  insert into invoices (customer_id, status, subtotal_cents, total_cents)
+    values (v_cust, 'sent', 17000, 17000) returning id into v_inv;
+  perform record_payment(v_inv, 17000, 0, 'pi_attr_corr', null, null, false, 'card');
+  perform record_refund('pi_attr_corr', 17000, 're_attr_corr', null, 'wrong card', 'correction');
+  select credit_cents, balance_cents into v_credit, v_bal from invoices where id = v_inv;
+  if v_credit <> 0 or v_bal <> 17000 then v_fail := v_fail+1;
+    raise warning 'a correction credited % and left balance %', v_credit, v_bal; end if;
+
+  if v_fail > 0 then raise exception '% refund-attribution assertions failed', v_fail; end if;
+  raise notice 'refund attribution passed';
+end $$;
+SQL
+echo "  refund attribution verified"
+
 echo "  checking payment operations"
 as_super $PSQL -d "$DB" <<'SQL'
 do $$
@@ -947,6 +1075,176 @@ if [ "$STARTED" != "1" ] || [ "$BLOCKED" != "1" ]; then
   exit 1
 fi
 echo "  concurrent collection verified"
+
+# --- recurring generation (0014) ----------------------------------------------
+# A recurring customer is the relationship the business is built on, so the
+# two failures that matter both repeat every cycle: a visit generated twice
+# is a double booking and a double charge, and a visit never generated is a
+# customer in a dirty house. The unique index on (plan, occurrence date) is
+# what makes the first impossible.
+echo "  checking recurring generation"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_prop uuid; v_plan uuid; v_cleaner uuid;
+  v_job uuid; v_again uuid; v_count integer; v_fail integer := 0;
+  v_price integer; v_status job_status; v_freq frequency;
+begin
+  insert into customers (first_name, last_name) values ('Recur','Ring')
+    returning id into v_cust;
+  insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+    values (v_cust, '18 Cedar Bend', 'Plano', '75024', 2, 2) returning id into v_prop;
+
+  insert into recurring_plans (customer_id, property_id, freq, service,
+                               agreed_price_cents, estimated_minutes, anchor_date,
+                               start_time)
+  values (v_cust, v_prop, 'biweekly', 'standard', 15900, 120, date '2026-09-15', '09:30')
+  returning id into v_plan;
+
+  -- Generating an occurrence creates exactly one job at the PLAN's rate.
+  v_job := materialise_recurring_job(v_plan, date '2026-09-15',
+                                     timestamptz '2026-09-15 14:30:00+00');
+  if v_job is null then v_fail := v_fail+1;
+    raise warning 'the first generation produced no job'; end if;
+
+  select price_cents, status, freq into v_price, v_status, v_freq
+    from jobs where id = v_job;
+  if v_price <> 15900 then v_fail := v_fail+1;
+    raise warning 'job priced at %, want the plan rate 15900', v_price; end if;
+  if v_status <> 'scheduled' then v_fail := v_fail+1;
+    raise warning 'generated job status %, want scheduled', v_status; end if;
+  if v_freq <> 'biweekly' then v_fail := v_fail+1;
+    raise warning 'generated job freq %, want biweekly', v_freq; end if;
+
+  -- THE GUARANTEE. The sweep runs daily across a six-week horizon, so every
+  -- occurrence is seen dozens of times before it happens. All no-ops.
+  v_again := materialise_recurring_job(v_plan, date '2026-09-15',
+                                       timestamptz '2026-09-15 14:30:00+00');
+  if v_again is distinct from v_job then v_fail := v_fail+1;
+    raise warning 'regenerating returned % instead of the existing %', v_again, v_job; end if;
+  select count(*) into v_count from jobs
+    where recurring_plan_id = v_plan and occurrence_date = date '2026-09-15';
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'one occurrence produced % jobs', v_count; end if;
+
+  -- The price on an ALREADY GENERATED job is not rewritten when the plan
+  -- rate changes. What they agreed to for that visit is what they pay.
+  update recurring_plans set agreed_price_cents = 20000 where id = v_plan;
+  perform materialise_recurring_job(v_plan, date '2026-09-15',
+                                    timestamptz '2026-09-15 14:30:00+00');
+  select price_cents into v_price from jobs where id = v_job;
+  if v_price <> 15900 then v_fail := v_fail+1;
+    raise warning 'a plan price change rewrote an existing visit to %', v_price; end if;
+  update recurring_plans set agreed_price_cents = 15900 where id = v_plan;
+
+  -- A RESCHEDULE moves the visit without freeing its slot to be regenerated.
+  update jobs set scheduled_start = timestamptz '2026-09-16 15:00:00+00' where id = v_job;
+  perform materialise_recurring_job(v_plan, date '2026-09-15',
+                                    timestamptz '2026-09-15 14:30:00+00');
+  select count(*) into v_count from jobs where recurring_plan_id = v_plan;
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'rescheduling a visit let its original slot regenerate (% jobs)', v_count; end if;
+
+  -- A SKIP cancels the visit and stops it coming back.
+  perform materialise_recurring_job(v_plan, date '2026-09-29',
+                                    timestamptz '2026-09-29 14:30:00+00');
+  perform skip_recurring_occurrence(v_plan, date '2026-09-29', 'customer away');
+  select status into v_status from jobs
+    where recurring_plan_id = v_plan and occurrence_date = date '2026-09-29';
+  if v_status <> 'canceled' then v_fail := v_fail+1;
+    raise warning 'a skipped visit is %, want canceled', v_status; end if;
+
+  if materialise_recurring_job(v_plan, date '2026-09-29',
+                               timestamptz '2026-09-29 14:30:00+00') is not null then
+    v_fail := v_fail+1; raise warning 'a skipped occurrence was regenerated'; end if;
+
+  -- Skipping twice is a no-op, not an error: a person clicking twice, or a
+  -- retry, must not blow up.
+  perform skip_recurring_occurrence(v_plan, date '2026-09-29', 'customer away');
+  select count(*) into v_count from recurring_plan_skips
+    where plan_id = v_plan and occurrence_date = date '2026-09-29';
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'skipping twice produced % rows', v_count; end if;
+
+  -- The skip is a ROW, so "why was there no clean on the 29th" has an answer
+  -- months later.
+  if not exists (select 1 from recurring_plan_skips
+                 where plan_id = v_plan and occurrence_date = date '2026-09-29'
+                   and reason = 'customer away') then
+    v_fail := v_fail+1; raise warning 'the skip did not record why'; end if;
+
+  -- UNSKIP puts it back in play.
+  if not unskip_recurring_occurrence(v_plan, date '2026-09-29') then
+    v_fail := v_fail+1; raise warning 'unskipping a skipped occurrence reported nothing'; end if;
+  if materialise_recurring_job(v_plan, date '2026-09-29',
+                               timestamptz '2026-09-29 14:30:00+00') is null then
+    v_fail := v_fail+1; raise warning 'an unskipped occurrence did not regenerate'; end if;
+
+  -- A visit that has already happened is not skippable. Cancelling a
+  -- completed clean is a different act with different money attached.
+  perform materialise_recurring_job(v_plan, date '2026-10-13',
+                                    timestamptz '2026-10-13 14:30:00+00');
+  update jobs set status = 'complete'
+    where recurring_plan_id = v_plan and occurrence_date = date '2026-10-13';
+  begin
+    perform skip_recurring_occurrence(v_plan, date '2026-10-13', 'too late');
+    v_fail := v_fail+1; raise warning 'a completed visit was skipped';
+  exception when others then null; end;
+
+  -- An inactive plan generates nothing.
+  update recurring_plans set active = false where id = v_plan;
+  begin
+    perform materialise_recurring_job(v_plan, date '2026-10-27',
+                                      timestamptz '2026-10-27 14:30:00+00');
+    v_fail := v_fail+1; raise warning 'an inactive plan generated a visit';
+  exception when others then null; end;
+  update recurring_plans set active = true where id = v_plan;
+
+  -- A plan cannot be active with no anchor: it could not say when anything
+  -- happens, and a silent no-op is worse than a refused write.
+  begin
+    update recurring_plans set anchor_date = null where id = v_plan;
+    v_fail := v_fail+1; raise warning 'an active plan was allowed with no anchor';
+  exception when check_violation then null; end;
+
+  if v_fail > 0 then raise exception '% recurring assertions failed', v_fail; end if;
+  raise notice 'recurring generation passed';
+end $$;
+SQL
+echo "  recurring generation verified"
+
+# --- concurrent recurring generation (0014) -----------------------------------
+# Two sweeps landing on the same occurrence at the same moment. The unique
+# index must leave exactly one job — a double booking here is a double charge
+# to a customer who has one every fortnight.
+echo "  checking concurrent recurring generation"
+RECUR_PLAN=$(as_super $PSQL -d "$DB" -tAc \
+  "with c as (insert into customers (first_name, last_name)
+              values ('Race','Recur') returning id),
+        p as (insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+              select id, '2 Race Way', 'Plano', '75024', 2, 2 from c returning id, customer_id)
+   insert into recurring_plans (customer_id, property_id, freq, service,
+                               agreed_price_cents, estimated_minutes, anchor_date, start_time)
+   select p.customer_id, p.id, 'weekly', 'standard', 15900, 120, date '2026-09-15', '09:30'
+   from p returning id")
+
+for i in 1 2 3; do
+  as_super $PSQL -d "$DB" -tAc \
+    "select materialise_recurring_job('$RECUR_PLAN', date '2026-09-22',
+                                      timestamptz '2026-09-22 14:30:00+00')" \
+    > /dev/null 2>&1 &
+done
+wait
+
+RECUR_JOBS=$(as_super $PSQL -d "$DB" -tAc \
+  "select count(*) from jobs where recurring_plan_id = '$RECUR_PLAN'
+   and occurrence_date = date '2026-09-22'")
+
+if [ "$RECUR_JOBS" != "1" ]; then
+  echo "  three concurrent sweeps created $RECUR_JOBS jobs for one occurrence — want 1" >&2
+  exit 1
+fi
+echo "  concurrent recurring generation verified"
 
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql

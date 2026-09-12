@@ -152,6 +152,7 @@ describe("parseJob", () => {
         frequency: "weekly",
         scheduledStart: null,
         notes: null,
+        repeats: false,
       },
     });
   });
@@ -230,5 +231,59 @@ describe("parseJob", () => {
     const result = parseJob({ ...booking, propertyId: "" });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.errors["propertyId"]).toMatch(/Choose a property/);
+  });
+});
+
+/**
+ * Frequency sets the RATE; repeating creates a standing plan. They were one
+ * control, and conflating them is how an operator ticks "Weekly", assumes
+ * the series is handled, and finds out a fortnight later when the customer
+ * rings to ask where the cleaner is.
+ */
+describe("starting a recurring plan", () => {
+  const booking: Fields = {
+    propertyId: "prop-1",
+    service: "standard",
+    frequency: "weekly",
+  };
+  const repeating: Fields = {
+    ...booking,
+    repeats: "on",
+    scheduledStart: "2026-09-15T09:30",
+  };
+
+  it("accepts a repeating booking with a first visit", () => {
+    const result = parseJob(repeating);
+    expect(result.ok && result.value.repeats).toBe(true);
+    expect(result.ok && result.value.scheduledStart?.toISOString()).toBe(
+      "2026-09-15T14:30:00.000Z",
+    );
+  });
+
+  it("refuses to repeat without a first date and time", () => {
+    // A plan derives its whole cadence from the anchor. Without one it is a
+    // plan that never happens, which is worse than a refusal because it
+    // looks like it worked.
+    const result = parseJob({ ...repeating, scheduledStart: "" });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors["scheduledStart"]).toMatch(/first date and time/);
+  });
+
+  it("refuses to repeat a one-time clean", () => {
+    const result = parseJob({
+      ...repeating,
+      service: "move_in_out",
+      frequency: "one_time",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors["repeats"]).toBeDefined();
+  });
+
+  it("still books a single visit when the box is not ticked", () => {
+    // The frequency alone must not start a plan — that was the old bug in
+    // the other direction.
+    const result = parseJob({ ...booking, scheduledStart: "2026-09-15T09:30" });
+    expect(result.ok && result.value.repeats).toBe(false);
+    expect(result.ok && result.value.frequency).toBe("weekly");
   });
 });

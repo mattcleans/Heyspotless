@@ -1,13 +1,14 @@
 "use client";
 
 import { useActionState, useState } from "react";
-import { Field, FormError, Select, SubmitButton, TextArea } from "@/components/form";
+import { Checkbox, Field, FormError, Select, SubmitButton, TextArea } from "@/components/form";
 import type { Property } from "@/lib/data/types";
 import {
   FREQUENCY_LABELS,
   SERVICE_LABELS,
   SERVICE_TYPES,
   frequenciesForService,
+  type Frequency,
   type ServiceType,
 } from "@/lib/pricing/price-book";
 import { bookJob, type FormState } from "./actions";
@@ -24,13 +25,15 @@ import { bookJob, type FormState } from "./actions";
  * There is no price field. The total is computed server-side from the price book
  * and the property's stored rooms, so it cannot be set from here.
  *
- * WHAT FREQUENCY DOES, AND DOES NOT, DO. It books ONE clean, at the recurring
- * rate. It does not create a schedule: choosing "Weekly" does not put next
- * week's visit on the board, and nothing here will. Recurring plans —
- * generating the series, skipping a week, changing the day, holding a rate
- * across a price change — are not built. The form says so, because an
- * operator who ticks Weekly and assumes the rest is handled will find out in
- * a fortnight when a customer rings to ask where the cleaner is.
+ * FREQUENCY AND REPEATING ARE TWO DIFFERENT CHOICES, and the form keeps them
+ * apart because they used to be conflated. The frequency sets the RATE — a
+ * fortnightly clean is priced fortnightly whether or not it repeats, because
+ * somebody booking a single visit at the fortnightly rate is a real thing.
+ * "Repeat this automatically" is what creates a standing plan.
+ *
+ * Ticking it starts a commitment against a customer's card, so the form says
+ * what will happen in full — how often, from when, at what rate — rather than
+ * leaving an operator to infer it from a checkbox.
  */
 export function BookingForm({
   customerId,
@@ -41,12 +44,51 @@ export function BookingForm({
 }) {
   const action = bookJob.bind(null, customerId);
   const [state, formAction] = useActionState<FormState, FormData>(action, {});
-  const [service, setService] = useState<ServiceType>("standard");
+
+  // What the last submission posted, echoed back by the action. Every field
+  // here re-seeds from it, so a rejected booking comes back as the operator
+  // left it rather than as a blank form.
+  const was = state.values;
+
+  const [service, setService] = useState<ServiceType>(
+    (was?.["service"] as ServiceType) ?? "standard",
+  );
+  const [frequency, setFrequency] = useState<Frequency>(
+    (was?.["frequency"] as Frequency) ?? "weekly",
+  );
+  const [repeats, setRepeats] = useState(was?.["repeats"] === "on");
+
+  /*
+    React resets the form's DOM when a server action returns. Uncontrolled
+    inputs come back as `defaultValue`/`defaultChecked`, which is why those
+    are seeded from `was` — but this component's own state does not reset,
+    so without the block below the hint and the button would go on
+    describing a choice the reset had already thrown away.
+
+    Re-seeding during render is the documented way to adjust state when a
+    prop-like input changes; `key` on the form then forces the inputs to
+    remount and pick the seeded values up, rather than keeping a DOM that
+    React thinks is already correct.
+  */
+  const [lastResult, setLastResult] = useState(state);
+  const [submissions, setSubmissions] = useState(0);
+  if (lastResult !== state) {
+    setLastResult(state);
+    setSubmissions((n) => n + 1);
+    setService((was?.["service"] as ServiceType) ?? "standard");
+    setFrequency((was?.["frequency"] as Frequency) ?? "weekly");
+    setRepeats(was?.["repeats"] === "on");
+  }
 
   const frequencies = frequenciesForService(service);
+  // Changing the service can make the chosen frequency unsellable — Deep is
+  // one-time or monthly only. Fall back to what this service actually offers
+  // rather than posting a pair the price book will refuse.
+  const effectiveFrequency = frequencies.includes(frequency) ? frequency : frequencies[0]!;
+  const canRepeat = effectiveFrequency !== "one_time";
 
   return (
-    <form action={formAction} className="space-y-4">
+    <form key={submissions} action={formAction} className="space-y-4">
       <FormError message={state.message} />
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -60,7 +102,11 @@ export function BookingForm({
           name="scheduledStart"
           label="Date and time"
           type="datetime-local"
-          hint="Leave empty to put it on the board unscheduled."
+          hint={
+            repeats
+              ? "The first visit. The whole schedule follows from it."
+              : "Leave empty to put it on the board unscheduled."
+          }
           errors={state.errors}
           defaultValue={state.values?.["scheduledStart"]}
         />
@@ -75,24 +121,38 @@ export function BookingForm({
         <Select
           name="frequency"
           label="Frequency"
+          value={effectiveFrequency}
+          onChange={(v) => setFrequency(v as Frequency)}
           errors={state.errors}
-          hint="Sets the rate for this one clean. It does not schedule a series."
+          hint="Sets the rate. Repeating is the separate choice below."
           options={frequencies.map((f) => ({ value: f, label: FREQUENCY_LABELS[f] }))}
         />
       </div>
 
-      {/*
-        Stated on the form rather than only in the docs. The dropdown reads
-        exactly like the one in a tool that does create the series, and the
-        cost of the wrong assumption is a customer waiting for a cleaner who
-        was never booked.
-      */}
-      <p className="rounded-lg border border-line-soft bg-surface-2 px-3 py-2 text-xs text-ink-3">
-        <strong className="font-semibold text-ink-2">One clean per booking.</strong> A
-        recurring frequency prices this visit at the recurring rate; it does not create
-        the following visits. Book each one, or keep the series in Housecall Pro until
-        recurring plans are built.
-      </p>
+      {canRepeat ? (
+        <div className="rounded-lg border border-line-soft bg-surface-2 px-3 py-2.5">
+          <Checkbox
+            name="repeats"
+            label="Repeat this automatically"
+            defaultChecked={repeats}
+            onChange={setRepeats}
+            errors={state.errors}
+            hint={
+              repeats
+                ? `Starts a standing ${FREQUENCY_LABELS[frequency].toLowerCase()} plan from the ` +
+                  `date above, at today's rate. Later price changes will not move it. ` +
+                  `Visits appear on the board about six weeks ahead, and any one can be ` +
+                  `skipped without touching the rest.`
+                : `Books a single visit, priced at the ` +
+                  `${FREQUENCY_LABELS[frequency].toLowerCase()} rate. Nothing follows it.`
+            }
+          />
+        </div>
+      ) : (
+        <p className="rounded-lg border border-line-soft bg-surface-2 px-3 py-2 text-xs text-ink-3">
+          {SERVICE_LABELS[service]} is sold one-time only, so this books a single visit.
+        </p>
+      )}
 
       <TextArea
         name="notes"
@@ -102,7 +162,7 @@ export function BookingForm({
       />
 
       <div className="flex items-center gap-3">
-        <SubmitButton>Book clean</SubmitButton>
+        <SubmitButton>{repeats ? "Start plan" : "Book clean"}</SubmitButton>
         {state.message && !state.errors ? (
           <span className="text-sm text-good">{state.message}</span>
         ) : null}

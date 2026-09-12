@@ -212,7 +212,8 @@ begin
   foreach signature in array array[
     'record_payment(uuid,integer,integer,text,text,text,boolean,text)',
     'record_refund(text,integer,text,uuid,text,refund_kind,refund_status)',
-    'record_invoice_credit(uuid,integer,text,uuid,uuid)',
+    'unattributed_service_share()',
+    'record_invoice_credit(uuid,integer,text,uuid,uuid,adjustment_category)',
     'settle_refund(text,refund_status)',
     'save_payment_method(uuid,text,text,text,integer,integer)',
     'detach_payment_method(text)',

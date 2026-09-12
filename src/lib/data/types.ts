@@ -49,16 +49,15 @@ export interface Customer {
   autopayEnabled: boolean;
   autopayAuthorizedAt: Date | null;
   /**
-   * Set when autopay is consented to but cannot run — today that means the
-   * last saved card was detached. Consent is deliberately NOT withdrawn, so
-   * saving a card resumes it without asking again.
+   * Set when the SYSTEM turned autopay off, and why — today that means the
+   * last saved card was removed, which withdraws consent with it (0013).
    *
-   * It exists so that "autopay is on and nothing is being charged" is a state
-   * the screen can name, rather than one the customer discovers from a
-   * dunning email.
+   * Null when the customer turned it off themselves. It exists so the screen
+   * can say "we switched this off because…" rather than a bare "Off" the
+   * customer has to work out for themselves.
    */
-  autopaySuspendedAt: Date | null;
-  autopaySuspendedReason: string | null;
+  autopayEndedAt: Date | null;
+  autopayEndedReason: string | null;
 }
 
 export interface Property {

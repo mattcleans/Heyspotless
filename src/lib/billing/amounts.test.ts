@@ -12,7 +12,13 @@ import {
   refundableCents,
   withTip,
 } from "./amounts";
-import { BillingError, restoresCollectibleBalance, type InvoiceAmounts } from "./types";
+import {
+  BillingError,
+  raisesCredit,
+  restoresCollectibleBalance,
+  splitUnattributedRefund,
+  type InvoiceAmounts,
+} from "./types";
 import { toCalendarDate } from "../time/zone";
 
 /**
@@ -244,10 +250,73 @@ describe("a refund that is not a gesture", () => {
 
 describe("restoresCollectibleBalance", () => {
   it("says which kinds make an invoice owed again", () => {
+    expect(restoresCollectibleBalance("unattributed")).toBe(false);
+    expect(restoresCollectibleBalance("service_refund")).toBe(false);
     expect(restoresCollectibleBalance("goodwill")).toBe(false);
     expect(restoresCollectibleBalance("overpayment")).toBe(false);
     expect(restoresCollectibleBalance("correction")).toBe(true);
     expect(restoresCollectibleBalance("dispute")).toBe(true);
+  });
+
+  it("credits exactly the kinds that must never be re-collected", () => {
+    expect(raisesCredit("unattributed")).toBe(true);
+    expect(raisesCredit("service_refund")).toBe(true);
+    expect(raisesCredit("goodwill")).toBe(true);
+    // An overpayment return needs no credit: the balance was already
+    // negative, and returning the excess brings it to zero on its own.
+    expect(raisesCredit("overpayment")).toBe(false);
+    expect(raisesCredit("correction")).toBe(false);
+    expect(raisesCredit("dispute")).toBe(false);
+  });
+});
+
+/**
+ * A refund nobody explained is still fully credited — the money rule is
+ * unchanged. What the split decides is only which bucket the business reads
+ * it in, and that matters because recording every unexplained refund as
+ * generosity would hide every clean that actually went wrong.
+ */
+describe("splitting an unattributed refund", () => {
+  it("halves an even amount", () => {
+    expect(splitUnattributedRefund(5000)).toEqual({
+      serviceRefundCents: 2500,
+      goodwillCents: 2500,
+    });
+  });
+
+  it("gives the odd cent to goodwill, never to the service figure", () => {
+    // The service-failure number drives quality work. Understating it by a
+    // cent is harmless; overstating it points attention at the wrong clean.
+    expect(splitUnattributedRefund(501)).toEqual({
+      serviceRefundCents: 250,
+      goodwillCents: 251,
+    });
+    expect(splitUnattributedRefund(1)).toEqual({
+      serviceRefundCents: 0,
+      goodwillCents: 1,
+    });
+  });
+
+  it("never loses or invents a cent", () => {
+    for (const amount of [1, 2, 3, 99, 100, 501, 4999, 5000, 17000, 123457]) {
+      const { serviceRefundCents, goodwillCents } = splitUnattributedRefund(amount);
+      expect(serviceRefundCents + goodwillCents).toBe(amount);
+      expect(serviceRefundCents).toBeGreaterThanOrEqual(0);
+      expect(goodwillCents).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it("leaves nothing collectible, whatever the split", () => {
+    // The whole refund is credited either way; the categories only divide it.
+    const paidInFull = invoice({ amountPaidCents: 17000 });
+    const { serviceRefundCents, goodwillCents } = splitUnattributedRefund(5000);
+    const after = {
+      ...paidInFull,
+      refundedCents: 5000,
+      creditCents: serviceRefundCents + goodwillCents,
+    };
+    expect(balanceCents(after)).toBe(0);
+    expect(netPaidCents(after)).toBe(12000);
   });
 });
 
