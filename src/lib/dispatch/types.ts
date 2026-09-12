@@ -79,6 +79,21 @@ export interface DispatchJob {
    * continuity.ts.
    */
   continuity?: ContinuityContext;
+  /**
+   * Who has already said no to this job, and at what hourly rate.
+   *
+   * Without this the sweep re-offers a declined job to the same cleaner every
+   * hour for ever: a decline is not a status the offer table can express as
+   * "do not ask again", because asking again at a HIGHER rate is legitimate
+   * and is the entire mechanism of the ladder.
+   *
+   * So the rate is carried with the decline, and the rule is the narrow one:
+   * she is not asked again at a rate she has already refused. A later rung can
+   * still reach her, which matters most for the incumbent — a cleaner who
+   * watches a stranger take her own customer at a rate she was never offered
+   * learns to stop answering honestly.
+   */
+  declines?: readonly { cleanerId: string; hourlyRateCents: number }[];
 }
 
 /** A drive leg between two points, estimated or measured. */

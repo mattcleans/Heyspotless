@@ -137,6 +137,15 @@ function ContinuityNote({ decision }: { decision: DispatchDecision }) {
     );
   }
 
+  if (c.status === "none" && c.reason === "incumbent_declined") {
+    return (
+      <p className="mt-2 text-xs text-ink-3">
+        <Pill tone="warn">Declined</Pill>{" "}
+        Their usual cleaner has already passed on this visit — it is on the open market now.
+      </p>
+    );
+  }
+
   if (c.status === "none" && c.reason === "no_lead_time") {
     return (
       <p className="mt-2 text-xs text-ink-3">

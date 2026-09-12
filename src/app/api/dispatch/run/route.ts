@@ -1,12 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SupabaseRepository } from "@/lib/data/supabase-repository";
 import { createAdminClient } from "@/lib/supabase/admin";
-import {
-  DispatchStore,
-  availabilityFor,
-  busyWindowsFor,
-  continuityFor,
-} from "@/lib/dispatch/store";
+import { DispatchStore, availabilityFor, busyWindowsFor } from "@/lib/dispatch/store";
 import { windowsOn } from "@/lib/dispatch/availability";
 import { dispatchBoard, type DispatchDecision } from "@/lib/dispatch/engine";
 import { OPENING_RATE_CENTS_PER_HOUR, payoutForRate, presentOffer } from "@/lib/dispatch/ladder";
@@ -71,16 +66,12 @@ export async function POST(request: NextRequest) {
     now,
   );
 
-  const [continuity, busy, availability] = await Promise.all([
-    continuityFor(db, jobs.map((j) => j.id)),
+  // `listJobs` already attaches continuity and declines, so the board and this
+  // sweep cannot disagree about a job.
+  const [busy, availability] = await Promise.all([
     busyWindowsFor(db, now, new Date(latest.getTime() + 24 * 3_600_000)),
     availabilityFor(db),
   ]);
-
-  const withContinuity: Job[] = jobs.map((job) => {
-    const found = continuity.get(job.id);
-    return found ? { ...job, continuity: found } : job;
-  });
 
   const context = {
     now,
@@ -105,14 +96,12 @@ export async function POST(request: NextRequest) {
     }),
     // Familiarity in the ranking, which was always zero in production because
     // nothing ever supplied this hook.
-    priorJobsFor: (c: Cleaner, j: DispatchJob) => {
-      const found = continuity.get(j.id);
-      return found && found.incumbentCleanerId === c.id ? found.priorVisits : 0;
-    },
+    priorJobsFor: (c: Cleaner, j: DispatchJob) =>
+      j.continuity && j.continuity.incumbentCleanerId === c.id ? j.continuity.priorVisits : 0,
   };
 
   const result = {
-    jobs: withContinuity.length,
+    jobs: jobs.length,
     expiredOffers: expired,
     assigned: 0,
     held: 0,
@@ -123,7 +112,7 @@ export async function POST(request: NextRequest) {
   };
   const problems: { jobId: string; error: string }[] = [];
 
-  for (const { job, decision } of dispatchBoard(withContinuity, context)) {
+  for (const { job, decision } of dispatchBoard(jobs, context)) {
     try {
       // Recorded BEFORE anything is acted on, and recorded even when the
       // decision is "nobody". A board that only writes down its successes

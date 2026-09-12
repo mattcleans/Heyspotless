@@ -26,6 +26,7 @@ import {
   toProfile,
   toProperty,
 } from "./mappers";
+import { continuityFor, declinesFor } from "../dispatch/store";
 
 /** Jobs in these states still need a cleaner — the dispatch board's working set. */
 const NEEDS_CLEANER = ["unscheduled", "scheduled", "dispatching"];
@@ -117,7 +118,34 @@ export class SupabaseRepository implements Repository {
     });
     if (error) throw new Error(`listJobs: ${error.message}`);
 
-    return rows(data).map(toJob);
+    return this.withRelationships(rows(data).map(toJob));
+  }
+
+  /**
+   * Attach who already cleans each home, and who has already said no.
+   *
+   * Done HERE rather than at each call site so the admin board and the
+   * dispatch sweep cannot disagree about a job. They were computing different
+   * answers for the same visit — the sweep held it for the incumbent while the
+   * board, recomputing the decision live with no continuity attached, showed a
+   * manager an open-board posting that was never going to happen.
+   *
+   * Two queries for the whole page rather than two per job.
+   */
+  private async withRelationships(jobs: Job[]): Promise<Job[]> {
+    if (jobs.length === 0) return jobs;
+
+    const ids = jobs.map((j) => j.id);
+    const [continuity, declines] = await Promise.all([
+      continuityFor(this.db, ids),
+      declinesFor(this.db, ids),
+    ]);
+
+    return jobs.map((job) => ({
+      ...job,
+      continuity: continuity.get(job.id),
+      declines: declines.get(job.id),
+    }));
   }
 
   async getJob(id: string): Promise<Job | null> {
@@ -127,7 +155,10 @@ export class SupabaseRepository implements Repository {
       .eq("id", id)
       .maybeSingle();
     if (error) throw new Error(`getJob: ${error.message}`);
-    return data ? toJob(data as unknown as Row) : null;
+    if (!data) return null;
+
+    const [job] = await this.withRelationships([toJob(data as unknown as Row)]);
+    return job ?? null;
   }
 
   /**

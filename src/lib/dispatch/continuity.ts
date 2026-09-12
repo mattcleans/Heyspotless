@@ -134,6 +134,7 @@ export type ContinuityMissReason =
   | "no_relationship"
   | "too_few_visits"
   | "incumbent_ineligible"
+  | "incumbent_declined"
   | "no_lead_time";
 
 export interface ContinuityMiss {
@@ -147,6 +148,12 @@ export interface ResolveContinuityOptions {
   now: Date;
   hoursUntilJob: number;
   eligibilityFor?: (cleaner: Cleaner, job: DispatchJob) => EligibilityContext;
+  /**
+   * The rate the hold would be offered at. A cleaner who has already refused
+   * this job at this rate is not held for again — otherwise the sweep asks her
+   * the same question every hour until the visit happens.
+   */
+  offerRateCents?: number;
 }
 
 /**
@@ -180,6 +187,9 @@ export function resolveContinuity(
   const byId = (id: string | null) =>
     id === null ? undefined : cleaners.find((c) => c.id === id);
 
+  const declined = (cleaner: Cleaner) =>
+    hasDeclinedAtOrAbove(job, cleaner.id, options.offerRateCents ?? 0);
+
   const hold = (cleaner: Cleaner, basis: ContinuityBasis): ContinuityHold => ({
     held: true,
     cleaner,
@@ -190,6 +200,12 @@ export function resolveContinuity(
 
   // Stated preference first, and with no visit threshold — the customer asked.
   const preferred = byId(continuity.preferredCleanerId);
+  if (preferred && declined(preferred)) {
+    // She has already said no at this rate. Holding the job for her again is
+    // asking the same question every hour, and it keeps the visit off the
+    // board while she does not answer it.
+    return { held: false, reason: "incumbent_declined" };
+  }
   if (eligible(preferred)) return hold(preferred, "preferred");
 
   // A named preference that cannot take the job is worth saying out loud: it
@@ -207,6 +223,9 @@ export function resolveContinuity(
   }
 
   const incumbent = byId(continuity.incumbentCleanerId);
+  if (incumbent && declined(incumbent)) {
+    return { held: false, reason: "incumbent_declined" };
+  }
   if (eligible(incumbent)) return hold(incumbent, "incumbent");
 
   return { held: false, reason: "incumbent_ineligible" };
@@ -225,6 +244,23 @@ export function resolveContinuity(
  * Negative means continuity is free or better: the incumbent WAS the cheapest
  * option, which is the ordinary case for a W-2 cleaner on a settled route.
  */
+/**
+ * Has this cleaner already refused this job at this rate or better?
+ *
+ * "Or better" rather than "exactly", because a decline at $30/h obviously
+ * settles the question at $25/h too, and re-asking downward is the fastest way
+ * to teach a cleaner that answering means nothing.
+ */
+export function hasDeclinedAtOrAbove(
+  job: DispatchJob,
+  cleanerId: string,
+  hourlyRateCents: number,
+): boolean {
+  return (job.declines ?? []).some(
+    (d) => d.cleanerId === cleanerId && d.hourlyRateCents >= hourlyRateCents,
+  );
+}
+
 export function holdCostCents(
   incumbentCents: number,
   cheapestAlternativeCents: number | null,

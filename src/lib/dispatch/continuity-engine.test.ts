@@ -215,6 +215,71 @@ describe("everything without a relationship behaves exactly as it did", () => {
   });
 });
 
+describe("a cleaner who says no is not asked the same question again", () => {
+  it("stops holding the job for an incumbent who declined at this rate", () => {
+    // Without this the hourly sweep re-offers a declined visit to the same
+    // cleaner every hour until it happens, and keeps it off the board while
+    // she does not answer.
+    const decision = dispatch(
+      job({
+        continuity: asked(),
+        declines: [{ cleanerId: "sarah", hourlyRateCents: 2500 }],
+      }),
+      context([sarah(), contractor({ id: "stranger" })]),
+    );
+
+    expect(decision.kind).toBe("open_board");
+    expect(decision.continuity.status).toBe("none");
+    if (decision.continuity.status !== "none") return;
+    expect(decision.continuity.reason).toBe("incumbent_declined");
+  });
+
+  it("keeps her out of the pool at that rate too", () => {
+    const decision = dispatch(
+      job({
+        continuity: asked(),
+        declines: [{ cleanerId: "sarah", hourlyRateCents: 2500 }],
+      }),
+      context([sarah(), contractor({ id: "stranger" })]),
+    );
+
+    if (decision.kind !== "open_board") return;
+    expect(decision.eligible.map((c) => c.id)).not.toContain("sarah");
+    expect(decision.eligible.map((c) => c.id)).toContain("stranger");
+  });
+
+  it("treats a decline at a higher rate as settling the lower one", () => {
+    // Refusing $30/h obviously answers $25/h as well, and re-asking downward
+    // is the fastest way to teach a cleaner that answering means nothing.
+    const decision = dispatch(
+      job({ continuity: asked(), declines: [{ cleanerId: "sarah", hourlyRateCents: 3000 }] }),
+      context([sarah(), contractor({ id: "stranger" })]),
+    );
+    expect(decision.kind).toBe("open_board");
+    if (decision.kind !== "open_board") return;
+    expect(decision.eligible.map((c) => c.id)).not.toContain("sarah");
+  });
+
+  it("still reaches her at a rate she has not refused", () => {
+    // The ladder's entire mechanism. An incumbent who declined the opening
+    // rate must stay reachable higher up, or she watches a stranger take her
+    // own customer at a rate she was never offered.
+    const decision = dispatch(
+      job({ continuity: asked(), declines: [{ cleanerId: "sarah", hourlyRateCents: 2400 }] }),
+      context([sarah(), contractor({ id: "stranger" })]),
+    );
+    expect(decision.kind).toBe("hold_for_incumbent");
+  });
+
+  it("does not confuse one cleaner's decline with another's", () => {
+    const decision = dispatch(
+      job({ continuity: asked(), declines: [{ cleanerId: "stranger", hourlyRateCents: 2500 }] }),
+      context([sarah(), contractor({ id: "stranger" })]),
+    );
+    expect(decision.kind).toBe("hold_for_incumbent");
+  });
+});
+
 describe("planning a whole board", () => {
   it("consumes the incumbent's capacity as it holds her, not after", () => {
     // Two visits for one customer whose cleaner is Shonda. Deciding each in

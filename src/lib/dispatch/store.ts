@@ -330,3 +330,48 @@ function toDate(value: unknown): Date | null {
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
+
+export interface Decline {
+  cleanerId: string;
+  hourlyRateCents: number;
+}
+
+/**
+ * Who has already said no to each of these jobs, and at what rate.
+ *
+ * The sweep runs hourly and the engine is stateless, so without this it
+ * re-offers a declined visit to the same cleaner every hour until the visit
+ * happens — and, for an incumbent, keeps the job held off the board while she
+ * does not answer a question she has already answered.
+ *
+ * The RATE is carried with the decline rather than a bare "asked already",
+ * because asking again higher up is legitimate and is the entire mechanism of
+ * the ladder.
+ */
+export async function declinesFor(
+  db: SupabaseClient,
+  jobIds: readonly string[],
+): Promise<Map<string, Decline[]>> {
+  const byJob = new Map<string, Decline[]>();
+  if (jobIds.length === 0) return byJob;
+
+  const { data, error } = await db
+    .from("offers")
+    .select("job_id, cleaner_id, hourly_rate_cents")
+    .in("job_id", [...jobIds])
+    .eq("status", "declined");
+  if (error) throw new Error(`declinesFor: ${error.message}`);
+
+  for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
+    const jobId = row["job_id"];
+    const cleanerId = row["cleaner_id"];
+    const rate = row["hourly_rate_cents"];
+    if (typeof jobId !== "string" || typeof cleanerId !== "string") continue;
+
+    const decline = { cleanerId, hourlyRateCents: typeof rate === "number" ? rate : 0 };
+    const existing = byJob.get(jobId);
+    if (existing) existing.push(decline);
+    else byJob.set(jobId, [decline]);
+  }
+  return byJob;
+}
