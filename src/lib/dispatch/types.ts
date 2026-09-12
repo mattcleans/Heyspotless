@@ -5,6 +5,8 @@
  * build plan without standing up infrastructure.
  */
 
+import type { ContinuityContext } from "./continuity";
+
 export type CleanerType = "w2_core" | "contractor_1099";
 export type DispatchChannel = "open_board" | "waterfall" | "direct_assign";
 
@@ -68,6 +70,15 @@ export interface DispatchJob {
   scheduledStart: Date | null;
   /** Windows this job could occupy, used by the clustering pass. */
   customerPreferredWindow?: { start: Date; end: Date };
+  /**
+   * Who already has a relationship with this home.
+   *
+   * Absent means a genuinely fresh job — a first clean, or a one-off from a
+   * customer with no history — and the engine auctions it normally. Present
+   * means the incumbent gets first refusal before anyone else sees it. See
+   * continuity.ts.
+   */
+  continuity?: ContinuityContext;
 }
 
 /** A drive leg between two points, estimated or measured. */

@@ -83,6 +83,19 @@ function DecisionSummary({ decision }: { decision: DispatchDecision }) {
           </p>
         </>
       );
+    case "hold_for_incumbent":
+      return (
+        <>
+          <Pill tone="good">
+            Held for {decision.cleaner.name} · {formatCents(decision.payoutCents)}
+          </Pill>
+          <p className="mt-2 text-sm text-ink-2">{decision.rationale}</p>
+          <p className="mt-1 text-xs text-ink-3">
+            Exclusive until {formatDateTimeInZone(decision.exclusiveUntil)} · then the{" "}
+            {decision.fallback === "waterfall" ? "waterfall" : "open board"}
+          </p>
+        </>
+      );
     case "no_eligible_cleaner":
       return (
         <>
@@ -91,6 +104,48 @@ function DecisionSummary({ decision }: { decision: DispatchDecision }) {
         </>
       );
   }
+}
+
+/**
+ * What happened to the continuity promise, shown on every job including the
+ * ones where nothing did.
+ *
+ * The two lines worth a manager's attention are the ones that are easy to
+ * miss: a customer whose cleaner has lapsed a requirement and is about to meet
+ * a stranger, and a customer we let go to market to save money. Both look like
+ * an ordinary board posting without this.
+ */
+function ContinuityNote({ decision }: { decision: DispatchDecision }) {
+  const c = decision.continuity;
+
+  if (c.status === "waived_too_costly") {
+    return (
+      <p className="mt-2 text-xs text-ink-3">
+        <Pill tone="warn">Substituting</Pill>{" "}
+        Their usual cleaner would have cost {formatCents(c.premiumCents)} more than the
+        alternative, over the {formatCents(c.capCents)} limit for this job.
+      </p>
+    );
+  }
+
+  if (c.status === "none" && c.reason === "incumbent_ineligible") {
+    return (
+      <p className="mt-2 text-xs text-ink-3">
+        <Pill tone="bad">Lost their cleaner</Pill>{" "}
+        This customer&apos;s cleaner did not clear the eligibility gate for this visit.
+      </p>
+    );
+  }
+
+  if (c.status === "none" && c.reason === "no_lead_time") {
+    return (
+      <p className="mt-2 text-xs text-ink-3">
+        <Pill tone="warn">No hold</Pill> Too close to the visit to wait on one answer.
+      </p>
+    );
+  }
+
+  return null;
 }
 
 function JobCard({ job, decision, now }: { job: Job; decision: DispatchDecision; now: Date }) {
@@ -116,6 +171,7 @@ function JobCard({ job, decision, now }: { job: Job; decision: DispatchDecision;
       </p>
       <div className="mt-3.5 border-t border-line-soft pt-3.5">
         <DecisionSummary decision={decision} />
+        <ContinuityNote decision={decision} />
       </div>
     </li>
   );
