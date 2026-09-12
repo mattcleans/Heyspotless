@@ -97,6 +97,16 @@ export interface DispatchJob {
    * offered learns to stop answering honestly.
    */
   passedOver?: readonly { cleanerId: string; hourlyRateCents: number }[];
+  /**
+   * The highest hourly rate this job has already been offered at.
+   *
+   * The ladder is a schedule spread across sweeps, not a broadcast: each run
+   * sends one rung. Without this the engine rebuilds the ladder from the
+   * opening rate every hour and sends the same rung for ever, so a job nobody
+   * wants at $25/h is offered at $25/h until it happens — the escalation the
+   * whole ladder exists for never occurs.
+   */
+  offeredUpToCents?: number;
 }
 
 /** A drive leg between two points, estimated or measured. */

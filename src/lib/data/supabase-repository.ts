@@ -26,7 +26,7 @@ import {
   toProfile,
   toProperty,
 } from "./mappers";
-import { continuityFor, passedOverFor } from "../dispatch/store";
+import { continuityFor, offeredUpToFor, passedOverFor } from "../dispatch/store";
 
 /** Jobs in these states still need a cleaner — the dispatch board's working set. */
 const NEEDS_CLEANER = ["unscheduled", "scheduled", "dispatching"];
@@ -122,7 +122,8 @@ export class SupabaseRepository implements Repository {
   }
 
   /**
-   * Attach who already cleans each home, and who has already been asked.
+   * Attach who already cleans each home, who has already been asked, and how
+   * far up the ladder this visit has already been carried.
    *
    * Done HERE rather than at each call site so the admin board and the
    * dispatch sweep cannot disagree about a job. They were computing different
@@ -136,15 +137,17 @@ export class SupabaseRepository implements Repository {
     if (jobs.length === 0) return jobs;
 
     const ids = jobs.map((j) => j.id);
-    const [continuity, passedOver] = await Promise.all([
+    const [continuity, passedOver, offeredUpTo] = await Promise.all([
       continuityFor(this.db, ids),
       passedOverFor(this.db, ids),
+      offeredUpToFor(this.db, ids),
     ]);
 
     return jobs.map((job) => ({
       ...job,
       continuity: continuity.get(job.id),
       passedOver: passedOver.get(job.id),
+      offeredUpToCents: offeredUpTo.get(job.id),
     }));
   }
 

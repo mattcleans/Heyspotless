@@ -361,6 +361,7 @@ export async function passedOverFor(
   const byJob = new Map<string, PassedOver[]>();
   if (jobIds.length === 0) return byJob;
 
+
   const { data, error } = await db
     .from("offers")
     .select("job_id, cleaner_id, hourly_rate_cents")
@@ -378,6 +379,35 @@ export async function passedOverFor(
     const existing = byJob.get(jobId);
     if (existing) existing.push(entry);
     else byJob.set(jobId, [entry]);
+  }
+  return byJob;
+}
+
+/**
+ * The highest hourly rate each job has already been offered at.
+ *
+ * Read from EVERY offer, whatever became of it — the question is how far up
+ * the ladder this job has been carried, and an offer that expired carried it
+ * just as far as one that was declined.
+ */
+export async function offeredUpToFor(
+  db: SupabaseClient,
+  jobIds: readonly string[],
+): Promise<Map<string, number>> {
+  const byJob = new Map<string, number>();
+  if (jobIds.length === 0) return byJob;
+
+  const { data, error } = await db
+    .from("offers")
+    .select("job_id, hourly_rate_cents")
+    .in("job_id", [...jobIds]);
+  if (error) throw new Error(`offeredUpToFor: ${error.message}`);
+
+  for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
+    const jobId = row["job_id"];
+    const rate = row["hourly_rate_cents"];
+    if (typeof jobId !== "string" || typeof rate !== "number") continue;
+    byJob.set(jobId, Math.max(byJob.get(jobId) ?? 0, rate));
   }
   return byJob;
 }

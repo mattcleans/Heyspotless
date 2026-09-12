@@ -171,11 +171,17 @@ export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDe
   // it, before anything below runs.
   const openingRateCents = (context.ladderConfig ?? DEFAULT_LADDER).openingRateCents;
 
+  // The rate this job is actually being offered at now: the opening rate the
+  // first time, and the next rung up on every sweep after that. A cleaner who
+  // passed at a LOWER rate is legitimately asked again here — that is the
+  // ladder working, not a bug.
+  const currentRateCents = Math.max(openingRateCents, (job.offeredUpToCents ?? 0) + 1);
+
   const resolution = resolveContinuity(job, eligible, {
     now,
     hoursUntilJob: hoursUntil(job, now),
     eligibilityFor,
-    offerRateCents: openingRateCents,
+    offerRateCents: currentRateCents,
   });
 
   // Priced against what we would otherwise have done. `null` means there was
@@ -335,7 +341,7 @@ export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDe
   // incumbent, who would otherwise watch a stranger take her own customer at a
   // rate she was never offered.
   const marketplace = eligible.filter(
-    (c) => c.type === "contractor_1099" && !hasPassedAtOrAbove(job, c.id, openingRateCents),
+    (c) => c.type === "contractor_1099" && !hasPassedAtOrAbove(job, c.id, currentRateCents),
   );
 
   // If nobody is in the marketplace, the W-2 option is the only option.
@@ -395,11 +401,38 @@ export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDe
     };
   }
 
+  // Rungs at or below what this job has already been offered at are spent.
+  // Re-sending one is asking a question that has already been answered, and
+  // the answer was no.
   const ladder = buildLadder(job, {
     config,
     w2CeilingCents,
     rng: context.rng,
-  });
+  }).filter((rung) => rung.hourlyRateCents >= currentRateCents);
+
+  if (ladder.length === 0) {
+    // The ladder is exhausted: every rate up to the ceiling has been offered
+    // and refused. Past the ceiling the cheapest W-2 is cheaper than buying
+    // the labour, which is the whole reason the ceiling is there.
+    if (cheapest) {
+      return {
+        kind: "assign_w2",
+        cleaner: cheapest.cleaner,
+        marginalCents: cheapest.cost.marginalCents,
+        continuity,
+        rationale:
+          `The marketplace was offered this job up to ` +
+          `$${((job.offeredUpToCents ?? 0) / 100).toFixed(2)}/h and did not take it. ` +
+          `${cheapest.cleaner.name} is cheaper than escalating further.`,
+      };
+    }
+    return {
+      kind: "no_eligible_cleaner",
+      continuity,
+      rationale:
+        "The ladder is exhausted and there is no W-2 fallback. This visit needs a person.",
+    };
+  }
 
   return {
     kind: "waterfall",

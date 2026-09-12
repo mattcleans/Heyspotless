@@ -85,10 +85,12 @@ actually went wrong:
   worth a look long before anybody complains.
 - **assigned** — W-2 cleaners scheduled directly. An employee is scheduled,
   not asked; only contractors are offered work.
-- **offered** — offers written to the board or the first waterfall rung. Only
-  the first rung goes out per sweep: writing the whole ladder at once would
-  put the highest payout on a cleaner's screen immediately and give away the
-  entire benefit of escalating.
+- **offered** — offers written to the board, or the next waterfall rung. ONE
+  RUNG PER SWEEP: writing the whole ladder at once would put the highest
+  payout on a cleaner's screen immediately and give away the entire benefit of
+  escalating. Each run picks up above the highest rate this job has already
+  been offered at, so an hourly sweep walks a job up the ladder rather than
+  re-asking the same question at the same price.
 - **refused** — offers the database declined because the cleaner stopped being
   eligible between the roster being read and the offer being written, usually
   because she took something else in the meantime. A few is normal on a busy

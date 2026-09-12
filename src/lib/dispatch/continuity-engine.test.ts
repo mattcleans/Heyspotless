@@ -337,3 +337,70 @@ describe("planning a whole board", () => {
     expect(second.decision.continuity.premiumCents).toBeGreaterThan(0);
   });
 });
+
+describe("the ladder is a schedule across sweeps, not a broadcast", () => {
+  const urgent = () => new Date(NOW.getTime() + 12 * 3_600_000);
+
+  it("opens at the opening rate when nothing has been offered yet", () => {
+    const decision = dispatch(
+      job({ scheduledStart: urgent() }),
+      context([contractor(), contractor({ id: "b" }), contractor({ id: "c" })]),
+    );
+    expect(decision.kind).toBe("waterfall");
+    if (decision.kind !== "waterfall") return;
+    expect(decision.ladder[0]?.hourlyRateCents).toBe(2500);
+  });
+
+  it("starts above whatever the job has already been offered at", () => {
+    // Without this the engine rebuilds from the opening rate every hour and
+    // sends the same rung for ever — a job nobody wants at $25/h is offered
+    // at $25/h until it happens, and the escalation the ladder exists for
+    // never occurs.
+    const decision = dispatch(
+      job({ scheduledStart: urgent(), offeredUpToCents: 2700 }),
+      context([contractor(), contractor({ id: "b" })]),
+    );
+
+    expect(decision.kind).toBe("waterfall");
+    if (decision.kind !== "waterfall") return;
+    expect(decision.ladder[0]?.hourlyRateCents).toBeGreaterThan(2700);
+  });
+
+  it("reaches a cleaner again at a rate above the one she passed on", () => {
+    // The ladder's whole mechanism. She said no at $25/h; $28/h is a
+    // different question and she is entitled to be asked it.
+    const decision = dispatch(
+      job({
+        scheduledStart: urgent(),
+        offeredUpToCents: 2700,
+        passedOver: [{ cleanerId: "sarah", hourlyRateCents: 2500 }],
+      }),
+      context([sarah(), contractor({ id: "b" })]),
+    );
+
+    if (decision.kind !== "waterfall") return;
+    expect(decision.tiers.flat().map((c) => c.id)).toContain("sarah");
+  });
+
+  it("falls back to the cheapest W-2 once the ladder is spent", () => {
+    // Past the ceiling, sending our own employee is cheaper than buying the
+    // labour. That is the entire reason the ceiling is a marginal cost rather
+    // than a percentage.
+    const decision = dispatch(
+      job({ scheduledStart: urgent(), offeredUpToCents: 100_000 }),
+      context([contractor(), shonda({ hoursScheduledThisWeek: 39 })]),
+    );
+
+    expect(decision.kind).toBe("assign_w2");
+    if (decision.kind !== "assign_w2") return;
+    expect(decision.cleaner.id).toBe("shonda");
+  });
+
+  it("says a spent ladder with no fallback needs a person", () => {
+    const decision = dispatch(
+      job({ scheduledStart: urgent(), offeredUpToCents: 100_000 }),
+      context([contractor()]),
+    );
+    expect(decision.kind).toBe("no_eligible_cleaner");
+  });
+});
