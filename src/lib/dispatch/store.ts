@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { DispatchDecision } from "./engine";
+import type { ContinuityContext } from "./continuity";
 import type { DispatchChannel } from "./types";
 
 /**
@@ -131,6 +132,32 @@ export class DispatchStore {
     return isOfferResponse(data) ? data : "not_found";
   }
 
+  /**
+   * Assign a W-2 cleaner directly, with no offer and no countdown.
+   *
+   * This is what employment IS: an employee is scheduled, not asked. The
+   * mirror of it is that a contractor is never assigned this way — she gets an
+   * offer she can decline, and a platform that skips that step is exercising
+   * the control that makes her an employee whatever the paperwork says. The
+   * engine enforces the split; this only executes it.
+   *
+   * Returns false when the job was claimed between the decision and the write,
+   * which the sweep treats as an ordinary outcome rather than a failure.
+   */
+  async assignDirectly(
+    jobId: string,
+    cleanerId: string,
+    payoutCents: number,
+  ): Promise<boolean> {
+    const { data, error } = await this.db.rpc("assign_job_directly", {
+      p_job_id: jobId,
+      p_cleaner_id: cleanerId,
+      p_payout_cents: payoutCents,
+    });
+    if (error) throw new Error(`assignDirectly: ${error.message}`);
+    return data === true;
+  }
+
   /** Time out every countdown that has run down. Returns how many. */
   async expireStaleOffers(): Promise<number> {
     const { data, error } = await this.db.rpc("expire_stale_offers");
@@ -171,4 +198,38 @@ const RESPONSES: readonly string[] = [
 
 function isOfferResponse(value: unknown): value is OfferResponse {
   return typeof value === "string" && RESPONSES.includes(value);
+}
+
+/**
+ * Continuity inputs for a set of jobs, from the `job_continuity` view.
+ *
+ * Fetched for the whole sweep in one query rather than per job: the board runs
+ * over every unfilled visit in the horizon, and one query beats N.
+ */
+export async function continuityFor(
+  db: SupabaseClient,
+  jobIds: readonly string[],
+): Promise<Map<string, ContinuityContext>> {
+  const byJob = new Map<string, ContinuityContext>();
+  if (jobIds.length === 0) return byJob;
+
+  const { data, error } = await db
+    .from("job_continuity")
+    .select("job_id, preferred_cleaner_id, incumbent_cleaner_id, prior_visits")
+    .in("job_id", [...jobIds]);
+  if (error) throw new Error(`continuityFor: ${error.message}`);
+
+  for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
+    const jobId = row["job_id"];
+    if (typeof jobId !== "string") continue;
+
+    const preferred = row["preferred_cleaner_id"];
+    const incumbent = row["incumbent_cleaner_id"];
+    byJob.set(jobId, {
+      preferredCleanerId: typeof preferred === "string" ? preferred : null,
+      incumbentCleanerId: typeof incumbent === "string" ? incumbent : null,
+      priorVisits: typeof row["prior_visits"] === "number" ? row["prior_visits"] : 0,
+    });
+  }
+  return byJob;
 }

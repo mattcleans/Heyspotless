@@ -1439,6 +1439,129 @@ end $$;
 SQL
 echo "  offer lifecycle verified"
 
+# --- continuity inputs and direct assignment (0016) ----------------------------
+# Incumbency is per PROPERTY, not per customer: a customer with a house and a
+# rental has two relationships, and the cleaner who does the rental every
+# fortnight has no claim on the house. Getting that wrong holds a visit for
+# somebody who has never been to the address.
+echo "  checking continuity inputs"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_house uuid; v_rental uuid;
+  v_ada uuid; v_ben uuid; v_job uuid; v_old uuid;
+  v_incumbent uuid; v_visits integer; v_pref uuid; v_fail integer := 0;
+begin
+  insert into customers (first_name, last_name) values ('Two','Homes')
+    returning id into v_cust;
+  insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+    values (v_cust, '1 House Way', 'Plano', '75024', 3, 2) returning id into v_house;
+  insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+    values (v_cust, '2 Rental Rd', 'Plano', '75024', 2, 1) returning id into v_rental;
+
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Ada', 'contractor_1099', 'active', 4.7, true) returning id into v_ada;
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Ben', 'contractor_1099', 'active', 4.7, true) returning id into v_ben;
+
+  -- Ada has done the RENTAL twice. Ben has done the HOUSE once.
+  for i in 1..2 loop
+    insert into jobs (customer_id, property_id, status, service, freq,
+                      scheduled_start, price_cents, estimated_clean_minutes)
+      values (v_cust, v_rental, 'complete', 'standard', 'biweekly',
+              now() - (i || ' weeks')::interval, 15900, 120)
+      returning id into v_old;
+    insert into job_assignments (job_id, cleaner_id, payout_cents)
+      values (v_old, v_ada, 5000);
+  end loop;
+
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes)
+    values (v_cust, v_house, 'complete', 'standard', 'biweekly',
+            now() - interval '1 week', 17000, 138)
+    returning id into v_old;
+  insert into job_assignments (job_id, cleaner_id, payout_cents)
+    values (v_old, v_ben, 5750);
+
+  -- A new visit at the HOUSE. Ben is the incumbent there; Ada's two rental
+  -- visits must not reach across.
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes)
+    values (v_cust, v_house, 'scheduled', 'standard', 'biweekly',
+            now() + interval '9 days', 17000, 138)
+    returning id into v_job;
+
+  select incumbent_cleaner_id, prior_visits into v_incumbent, v_visits
+    from job_continuity where job_id = v_job;
+  if v_incumbent is distinct from v_ben then v_fail := v_fail+1;
+    raise warning 'the house incumbent is %, want Ben', v_incumbent; end if;
+  if v_visits <> 1 then v_fail := v_fail+1;
+    raise warning 'the house incumbent has % prior visits, want 1', v_visits; end if;
+
+  -- A visit that was ASSIGNED but never completed is not a relationship.
+  -- Counting it would hold future visits for a cleaner the customer may have
+  -- asked never to see again.
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes)
+    values (v_cust, v_house, 'canceled', 'standard', 'biweekly',
+            now() - interval '2 days', 17000, 138)
+    returning id into v_old;
+  insert into job_assignments (job_id, cleaner_id, payout_cents)
+    values (v_old, v_ada, 5750);
+
+  select incumbent_cleaner_id into v_incumbent from job_continuity where job_id = v_job;
+  if v_incumbent is distinct from v_ben then v_fail := v_fail+1;
+    raise warning 'an uncompleted visit made % the incumbent', v_incumbent; end if;
+
+  -- A brand new property has no incumbent and no visits -- not a null count.
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes)
+    values (v_cust, v_rental, 'scheduled', 'standard', 'biweekly',
+            now() + interval '9 days', 15900, 120)
+    returning id into v_old;
+  select prior_visits into v_visits from job_continuity where job_id = v_old;
+  if v_visits <> 2 then v_fail := v_fail+1;
+    raise warning 'the rental incumbent has % prior visits, want 2', v_visits; end if;
+
+  -- 0015: the stated preference is a SNAPSHOT on the visit. A customer who
+  -- changes cleaners in March must not rewrite what February was dispatched
+  -- against, or every continuity number measures the current roster instead
+  -- of what actually happened.
+  update jobs set preferred_cleaner_id = v_ada where id = v_job;
+  select preferred_cleaner_id into v_pref from job_continuity where job_id = v_job;
+  if v_pref is distinct from v_ada then v_fail := v_fail+1;
+    raise warning 'the stated preference read back as %', v_pref; end if;
+
+  -- DIRECT ASSIGNMENT still answers the eligibility gate. It bypasses the
+  -- offers table entirely, so without its own check the gate would have a
+  -- hole exactly the width of every W-2 assignment the engine makes.
+  update cleaners set rating = 3.1 where id = v_ben;
+  begin
+    perform assign_job_directly(v_job, v_ben, 5750);
+    v_fail := v_fail+1; raise warning 'an ineligible cleaner was assigned directly';
+  exception when others then null; end;
+  update cleaners set rating = 4.7 where id = v_ben;
+
+  if not assign_job_directly(v_job, v_ben, 5750) then v_fail := v_fail+1;
+    raise warning 'assigning an unclaimed job reported failure'; end if;
+  if not exists (select 1 from jobs where id = v_job and status = 'assigned'
+                   and dispatch_channel = 'direct_assign') then
+    v_fail := v_fail+1; raise warning 'a directly assigned job is not assigned'; end if;
+
+  -- Somebody claimed it between the decision and the write. An ordinary race
+  -- on a board being swept, not an error.
+  if assign_job_directly(v_job, v_ada, 5750) then v_fail := v_fail+1;
+    raise warning 'a job was assigned twice'; end if;
+  select count(*) into v_visits from job_assignments where job_id = v_job;
+  if v_visits <> 1 then v_fail := v_fail+1;
+    raise warning 'a claimed job has % assignments, want 1', v_visits; end if;
+
+  if v_fail > 0 then raise exception '% continuity assertions failed', v_fail; end if;
+  raise notice 'continuity inputs passed';
+end $$;
+SQL
+echo "  continuity inputs verified"
+
 # --- two cleaners accepting at once (0015) ------------------------------------
 # The race the whole function exists for. respond_to_offer locks the JOB, not
 # the offer: locking each cleaner's own row would let both through and book two
