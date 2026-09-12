@@ -76,7 +76,7 @@ actually went wrong:
 
 ```json
 { "jobs": 18, "expiredOffers": 2, "assigned": 4, "held": 3,
-  "offered": 9, "unfilled": 1, "failed": 0 }
+  "offered": 9, "refused": 0, "unfilled": 1, "failed": 0 }
 ```
 
 - **held** — visits being kept for the cleaner who already has that customer,
@@ -89,6 +89,10 @@ actually went wrong:
   the first rung goes out per sweep: writing the whole ladder at once would
   put the highest payout on a cleaner's screen immediately and give away the
   entire benefit of escalating.
+- **refused** — offers the database declined because the cleaner stopped being
+  eligible between the roster being read and the offer being written, usually
+  because she took something else in the meantime. A few is normal on a busy
+  board. Persistently many means the sweep is working from a stale roster.
 - **expiredOffers** — countdowns that ran out before this sweep. A persistently
   large number means offers are being ignored, not that the sweep is broken.
 - **unfilled** — visits no eligible cleaner could take. This is the line the

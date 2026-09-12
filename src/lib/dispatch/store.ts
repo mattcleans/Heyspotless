@@ -233,3 +233,100 @@ export async function continuityFor(
   }
   return byJob;
 }
+
+export interface TimeWindow {
+  start: Date;
+  end: Date;
+}
+
+/**
+ * What each cleaner is already committed to, over the window the board covers.
+ *
+ * The engine has always had a slot for this and no caller ever filled it, so
+ * the `already_booked` check never fired in production. The database has been
+ * catching the overlap all along — `cleaner_is_eligible` is enforced as a
+ * CHECK on offers — but catching it there means the offer write RAISES, which
+ * is a poor way to discover that a cleaner is busy: one clash would abort the
+ * rest of that job's offers.
+ *
+ * So the engine is told first, and the CHECK goes back to being the backstop
+ * it was meant to be rather than the only line of defence.
+ */
+export async function busyWindowsFor(
+  db: SupabaseClient,
+  from: Date,
+  to: Date,
+): Promise<Map<string, TimeWindow[]>> {
+  const { data, error } = await db
+    .from("job_assignments")
+    .select("cleaner_id, jobs!inner ( scheduled_start, scheduled_end, estimated_clean_minutes, status )")
+    .gte("jobs.scheduled_start", from.toISOString())
+    .lte("jobs.scheduled_start", to.toISOString())
+    .in("jobs.status", ["scheduled", "assigned", "in_progress"]);
+  if (error) throw new Error(`busyWindowsFor: ${error.message}`);
+
+  const byCleaner = new Map<string, TimeWindow[]>();
+  for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
+    const cleanerId = row["cleaner_id"];
+    const job = (row["jobs"] ?? {}) as Record<string, unknown>;
+    if (typeof cleanerId !== "string") continue;
+
+    const start = toDate(job["scheduled_start"]);
+    if (!start) continue;
+
+    // An end time if the job has one, otherwise the estimate. A job with
+    // neither is treated as a point in time rather than skipped: it still
+    // means she is somewhere at that moment.
+    const minutes = typeof job["estimated_clean_minutes"] === "number"
+      ? job["estimated_clean_minutes"]
+      : 0;
+    const end = toDate(job["scheduled_end"]) ?? new Date(start.getTime() + minutes * 60_000);
+
+    const existing = byCleaner.get(cleanerId);
+    if (existing) existing.push({ start, end });
+    else byCleaner.set(cleanerId, [{ start, end }]);
+  }
+  return byCleaner;
+}
+
+/** A cleaner's declared working hours, by day of week (0 = Sunday). */
+export type WeeklyAvailability = Map<string, Map<number, { startsAt: string; endsAt: string }[]>>;
+
+/**
+ * Declared availability for the whole roster.
+ *
+ * A cleaner with NO rows is absent from the map entirely, and the engine reads
+ * that as unknown rather than as "works no hours" — see the note on
+ * `EligibilityContext.workingWindows`. Nobody has declared anything yet, and a
+ * check that read silence as refusal would empty the board on the day it
+ * shipped.
+ */
+export async function availabilityFor(db: SupabaseClient): Promise<WeeklyAvailability> {
+  const { data, error } = await db
+    .from("cleaner_availability")
+    .select("cleaner_id, day_of_week, starts_at, ends_at");
+  if (error) throw new Error(`availabilityFor: ${error.message}`);
+
+  const byCleaner: WeeklyAvailability = new Map();
+  for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
+    const cleanerId = row["cleaner_id"];
+    const day = row["day_of_week"];
+    const startsAt = row["starts_at"];
+    const endsAt = row["ends_at"];
+    if (typeof cleanerId !== "string" || typeof day !== "number") continue;
+    if (typeof startsAt !== "string" || typeof endsAt !== "string") continue;
+
+    const days = byCleaner.get(cleanerId) ?? new Map();
+    const windows = days.get(day) ?? [];
+    windows.push({ startsAt, endsAt });
+    days.set(day, windows);
+    byCleaner.set(cleanerId, days);
+  }
+  return byCleaner;
+}
+
+function toDate(value: unknown): Date | null {
+  if (typeof value !== "string") return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}

@@ -1,7 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SupabaseRepository } from "@/lib/data/supabase-repository";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { DispatchStore, continuityFor } from "@/lib/dispatch/store";
+import {
+  DispatchStore,
+  availabilityFor,
+  busyWindowsFor,
+  continuityFor,
+} from "@/lib/dispatch/store";
+import { windowsOn } from "@/lib/dispatch/availability";
 import { dispatchBoard, type DispatchDecision } from "@/lib/dispatch/engine";
 import { OPENING_RATE_CENTS_PER_HOUR, payoutForRate, presentOffer } from "@/lib/dispatch/ladder";
 import { zipCentroidEstimator } from "@/lib/dispatch/route";
@@ -55,8 +61,21 @@ export async function POST(request: NextRequest) {
     repo.listCleaners(),
   ]);
 
-  const continuity = await continuityFor(db, jobs.map((j) => j.id));
   const now = new Date();
+
+  // The window the board covers, for the double-booking check. Bounded by the
+  // furthest job rather than a fixed horizon, so a plan generating six weeks
+  // ahead does not quietly fall outside it.
+  const latest = jobs.reduce(
+    (max, j) => (j.scheduledStart && j.scheduledStart > max ? j.scheduledStart : max),
+    now,
+  );
+
+  const [continuity, busy, availability] = await Promise.all([
+    continuityFor(db, jobs.map((j) => j.id)),
+    busyWindowsFor(db, now, new Date(latest.getTime() + 24 * 3_600_000)),
+    availabilityFor(db),
+  ]);
 
   const withContinuity: Job[] = jobs.map((job) => {
     const found = continuity.get(job.id);
@@ -67,6 +86,23 @@ export async function POST(request: NextRequest) {
     now,
     cleaners,
     driveFor: (c: Cleaner, j: DispatchJob) => estimate(c.lastStopZip, j.zip),
+    /**
+     * The gate's own inputs, which had never had a caller — so neither the
+     * double-booking check nor working hours had any effect in production.
+     *
+     * The database has been catching overlaps all along, as a CHECK on the
+     * offers table, but catching it THERE means the offer write raises: one
+     * busy cleaner would abort the rest of that job's offers. Telling the
+     * engine first puts the CHECK back to being the backstop it was designed
+     * as.
+     */
+    eligibilityFor: (c: Cleaner, j: DispatchJob) => ({
+      busyWindows: busy.get(c.id) ?? [],
+      jobDurationMinutes: j.estimatedCleanMinutes,
+      workingWindows: j.scheduledStart
+        ? windowsOn(j.scheduledStart, availability.get(c.id))
+        : undefined,
+    }),
     // Familiarity in the ranking, which was always zero in production because
     // nothing ever supplied this hook.
     priorJobsFor: (c: Cleaner, j: DispatchJob) => {
@@ -81,6 +117,7 @@ export async function POST(request: NextRequest) {
     assigned: 0,
     held: 0,
     offered: 0,
+    refused: 0,
     unfilled: 0,
     failed: 0,
   };
@@ -109,8 +146,36 @@ type Result = {
   assigned: number;
   held: number;
   offered: number;
+  refused: number;
   unfilled: number;
 };
+
+/**
+ * Write one offer, treating a refusal as one cleaner's problem rather than the
+ * job's.
+ *
+ * The eligibility gate is a CHECK on the offers table, so an offer the engine
+ * thought was fine can still be refused by the database — the engine works
+ * from a roster read at the top of the sweep, and a cleaner who accepted
+ * something else thirty seconds ago has moved on since. Letting that abort the
+ * whole job would mean one cleaner going busy costs every other cleaner their
+ * look at the work.
+ */
+async function tryOffer(
+  store: DispatchStore,
+  offer: Parameters<DispatchStore["recordOffer"]>[0],
+  result: Result,
+): Promise<void> {
+  try {
+    await store.recordOffer(offer);
+    result.offered += 1;
+  } catch (error) {
+    result.refused += 1;
+    console.warn(
+      `offer refused for cleaner ${offer.cleanerId} on job ${offer.jobId}: ${messageOf(error)}`,
+    );
+  }
+}
 
 async function act(
   store: DispatchStore,
@@ -152,18 +217,21 @@ async function act(
       // what makes "first to claim it" true rather than a race the fastest
       // phone wins.
       for (const cleaner of decision.eligible) {
-        await store.recordOffer({
-          jobId: job.id,
-          cleanerId: cleaner.id,
-          decisionId,
-          channel: "open_board",
-          tier: 1,
-          hourlyRateCents: decision.hourlyRateCents,
-          payoutCents: decision.payoutCents,
-          estimatedMinutes: job.estimatedCleanMinutes,
-          expiresAt: decision.promoteToWaterfallAt,
-        });
-        result.offered += 1;
+        await tryOffer(
+          store,
+          {
+            jobId: job.id,
+            cleanerId: cleaner.id,
+            decisionId,
+            channel: "open_board",
+            tier: 1,
+            hourlyRateCents: decision.hourlyRateCents,
+            payoutCents: decision.payoutCents,
+            estimatedMinutes: job.estimatedCleanMinutes,
+            expiresAt: decision.promoteToWaterfallAt,
+          },
+          result,
+        );
       }
       return;
     }
@@ -183,18 +251,21 @@ async function act(
 
       const presented = presentOffer(job, rung, now);
       for (const cleaner of tier) {
-        await store.recordOffer({
-          jobId: job.id,
-          cleanerId: cleaner.id,
-          decisionId,
-          channel: "waterfall",
-          tier: 1,
-          hourlyRateCents: rung.hourlyRateCents,
-          payoutCents: rung.payoutCents,
-          estimatedMinutes: job.estimatedCleanMinutes,
-          expiresAt: presented.expiresAt,
-        });
-        result.offered += 1;
+        await tryOffer(
+          store,
+          {
+            jobId: job.id,
+            cleanerId: cleaner.id,
+            decisionId,
+            channel: "waterfall",
+            tier: 1,
+            hourlyRateCents: rung.hourlyRateCents,
+            payoutCents: rung.payoutCents,
+            estimatedMinutes: job.estimatedCleanMinutes,
+            expiresAt: presented.expiresAt,
+          },
+          result,
+        );
       }
       return;
     }
