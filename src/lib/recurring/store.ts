@@ -80,21 +80,31 @@ export class RecurringStore {
    *
    * Idempotent in the database, not here: `materialise_recurring_job` is
    * guarded by a unique index on (plan, occurrence date), so two sweeps
-   * racing on the same visit produce one job. Null means the occurrence is
-   * skipped and no visit should exist.
+   * racing on the same visit produce one job.
+   *
+   * `created` distinguishes the visit this run made from the dozens of times
+   * it re-saw one it had already made. Both return a job id, which is why the
+   * sweep used to report every occurrence it touched as newly created and
+   * overstated itself about fortyfold over a six-week horizon.
+   *
+   * A null `jobId` means the occurrence is skipped and no visit should exist.
    */
   async materialise(
     planId: string,
     occurrenceDate: CalendarDate,
     startsAt: Date,
-  ): Promise<string | null> {
+  ): Promise<{ jobId: string | null; created: boolean }> {
     const { data, error } = await this.db.rpc("materialise_recurring_job", {
       p_plan_id: planId,
       p_occurrence_date: occurrenceDate,
       p_scheduled_start: startsAt.toISOString(),
     });
     if (error) throw new Error(`materialise: ${error.message}`);
-    return typeof data === "string" ? data : null;
+
+    // A set-returning function comes back as an array of one row.
+    const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
+    const jobId = row && typeof row["job_id"] === "string" ? (row["job_id"] as string) : null;
+    return { jobId, created: row?.["created"] === true };
   }
 
   /** Call off one visit. The skip is a row; the job is cancelled, not deleted. */

@@ -112,3 +112,69 @@ describe("reporting", () => {
     expect(eligibleCleaners(roster, JOB).map((c) => c.id)).toEqual(["shonda", "ok"]);
   });
 });
+
+describe("declared working hours", () => {
+  const NOON = new Date("2026-09-10T17:00:00Z"); // 12:00 in Chicago
+
+  const job = (): DispatchJob => ({
+    id: "job-hours",
+    priceCents: 17000,
+    estimatedCleanMinutes: 120,
+    zip: "75024",
+    scheduledStart: NOON,
+  });
+
+  const window = (fromHours: number, toHours: number) => ({
+    start: new Date(NOON.getTime() + fromHours * 3_600_000),
+    end: new Date(NOON.getTime() + toHours * 3_600_000),
+  });
+
+  it("treats no declaration as unknown, not as 'works no hours'", () => {
+    // Nobody on the roster has declared availability yet. Reading that as
+    // "never available" would make every cleaner ineligible for everything
+    // the moment the check shipped.
+    const result = checkEligibility(contractor(), job(), {});
+    expect(result.eligible).toBe(true);
+  });
+
+  it("honours an empty declaration as 'not working that day'", () => {
+    const result = checkEligibility(contractor(), job(), { workingWindows: [] });
+    expect(result.eligible).toBe(false);
+    expect(result.reasons).toContain("outside_working_hours");
+  });
+
+  it("accepts a job that fits inside a declared window", () => {
+    const result = checkEligibility(contractor(), job(), {
+      workingWindows: [window(-3, 5)],
+    });
+    expect(result.eligible).toBe(true);
+  });
+
+  it("refuses a job that starts inside the window but runs past the end", () => {
+    // She works until 13:00 and the clean takes two hours. Offering it to her
+    // is offering her an hour of unpaid overtime she did not agree to.
+    const result = checkEligibility(contractor(), job(), {
+      workingWindows: [window(-3, 1)],
+    });
+    expect(result.eligible).toBe(false);
+    expect(result.reasons).toContain("outside_working_hours");
+  });
+
+  it("does not stitch two adjacent windows into one", () => {
+    // A split shift is two shifts. A clean spanning the gap is not a clean
+    // she can do, however tidily the hours add up.
+    const result = checkEligibility(contractor(), job(), {
+      workingWindows: [window(-3, 1), window(1, 5)],
+    });
+    expect(result.eligible).toBe(false);
+  });
+
+  it("says nothing about hours for a job with no scheduled start", () => {
+    const result = checkEligibility(
+      contractor(),
+      { ...job(), scheduledStart: null },
+      { workingWindows: [] },
+    );
+    expect(result.reasons).not.toContain("outside_working_hours");
+  });
+});

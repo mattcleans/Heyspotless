@@ -9,6 +9,7 @@ import type {
   InvoiceFilter,
   Job,
   JobFilter,
+  Offer,
   Payment,
   PaymentMethod,
   Profile,
@@ -19,11 +20,13 @@ import {
   toCustomer,
   toInvoice,
   toJob,
+  toOffer,
   toPayment,
   toPaymentMethod,
   toProfile,
   toProperty,
 } from "./mappers";
+import { continuityFor, offeredUpToFor, passedOverFor } from "../dispatch/store";
 
 /** Jobs in these states still need a cleaner — the dispatch board's working set. */
 const NEEDS_CLEANER = ["unscheduled", "scheduled", "dispatching"];
@@ -40,6 +43,19 @@ const JOB_SELECT = `
  * assigned to drop out rather than coming back unfiltered.
  */
 const JOB_SELECT_FOR_CLEANER = `${JOB_SELECT}, job_assignments!inner ( cleaner_id )`;
+
+/**
+ * An offer plus the part of the job she needs to decide on it. Nothing about
+ * the ladder is selected, because none of it is hers to see.
+ */
+const OFFER_SELECT = `
+  id, job_id, cleaner_id, payout_cents, estimated_minutes, expires_at, is_exclusive,
+  jobs!inner (
+    scheduled_start,
+    customers ( first_name, last_name ),
+    properties ( street, city, zip )
+  )
+`;
 
 const CUSTOMER_SELECT = `
   id, first_name, last_name, email, phone, notes, lifetime_value_cents,
@@ -102,7 +118,37 @@ export class SupabaseRepository implements Repository {
     });
     if (error) throw new Error(`listJobs: ${error.message}`);
 
-    return rows(data).map(toJob);
+    return this.withRelationships(rows(data).map(toJob));
+  }
+
+  /**
+   * Attach who already cleans each home, who has already been asked, and how
+   * far up the ladder this visit has already been carried.
+   *
+   * Done HERE rather than at each call site so the admin board and the
+   * dispatch sweep cannot disagree about a job. They were computing different
+   * answers for the same visit — the sweep held it for the incumbent while the
+   * board, recomputing the decision live with no continuity attached, showed a
+   * manager an open-board posting that was never going to happen.
+   *
+   * Two queries for the whole page rather than two per job.
+   */
+  private async withRelationships(jobs: Job[]): Promise<Job[]> {
+    if (jobs.length === 0) return jobs;
+
+    const ids = jobs.map((j) => j.id);
+    const [continuity, passedOver, offeredUpTo] = await Promise.all([
+      continuityFor(this.db, ids),
+      passedOverFor(this.db, ids),
+      offeredUpToFor(this.db, ids),
+    ]);
+
+    return jobs.map((job) => ({
+      ...job,
+      continuity: continuity.get(job.id),
+      passedOver: passedOver.get(job.id),
+      offeredUpToCents: offeredUpTo.get(job.id),
+    }));
   }
 
   async getJob(id: string): Promise<Job | null> {
@@ -112,7 +158,10 @@ export class SupabaseRepository implements Repository {
       .eq("id", id)
       .maybeSingle();
     if (error) throw new Error(`getJob: ${error.message}`);
-    return data ? toJob(data as unknown as Row) : null;
+    if (!data) return null;
+
+    const [job] = await this.withRelationships([toJob(data as unknown as Row)]);
+    return job ?? null;
   }
 
   /**
@@ -122,6 +171,24 @@ export class SupabaseRepository implements Repository {
    * PostgREST to traverse, and the roster is small enough that a second round
    * trip costs less than the complexity of embedding it.
    */
+  async listLiveOffers(cleanerId: string): Promise<Offer[]> {
+    // `expires_at` bounds it as well as `status`, because an offer whose
+    // countdown has run out is not a decision she still has to make — and the
+    // sweep that flips it to `expired` runs on a schedule, so there is always
+    // a window where the row says `sent` and the clock disagrees. The clock
+    // wins.
+    const { data, error } = await this.db
+      .from("offers")
+      .select(OFFER_SELECT)
+      .eq("cleaner_id", cleanerId)
+      .eq("status", "sent")
+      .gt("expires_at", new Date().toISOString())
+      .order("expires_at", { ascending: true });
+    if (error) throw new Error(`listLiveOffers: ${error.message}`);
+
+    return rows(data).map(toOffer);
+  }
+
   async listCleaners(): Promise<Cleaner[]> {
     const [rosterResult, loadResult] = await Promise.all([
       this.db.from("cleaners").select(CLEANER_SELECT).order("full_name"),

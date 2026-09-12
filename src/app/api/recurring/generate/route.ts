@@ -59,7 +59,11 @@ export async function POST(request: NextRequest) {
       const horizon = addCalendarDays(today, plan.horizonDays || DEFAULT_HORIZON_DAYS);
 
       for (const occurrence of occurrencesBetween(plan, today, horizon)) {
-        const jobId = await store.materialise(plan.id, occurrence.date, occurrence.startsAt);
+        const { jobId, created } = await store.materialise(
+          plan.id,
+          occurrence.date,
+          occurrence.startsAt,
+        );
 
         if (jobId === null) {
           // The occurrence is called off. Not a failure — the commonest
@@ -68,7 +72,15 @@ export async function POST(request: NextRequest) {
           continue;
         }
         if (occurrence.shiftedForDaylightSaving) result.shifted += 1;
-        result.created += 1;
+
+        // `created` and `existing` are different facts and both matter. A
+        // sweep over a six-week horizon re-sees almost every visit dozens of
+        // times before it happens, so counting those as creations made the
+        // one autonomous loop in the system look about forty times busier
+        // than it is — and made a run that genuinely created nothing
+        // indistinguishable from a healthy one.
+        if (created) result.created += 1;
+        else result.existing += 1;
       }
     } catch (error) {
       // One broken plan must not stop the book. A plan with a corrupted

@@ -16,6 +16,7 @@ import type {
   Customer,
   Invoice,
   Job,
+  Offer,
   Payment,
   PaymentMethod,
   Profile,
@@ -160,6 +161,37 @@ export function toJob(row: Row): Job {
     priceCents: num(row, "price_cents", 0),
     estimatedCleanMinutes: num(row, "estimated_clean_minutes", 0),
     scheduledStart: dateOrNull(row, "scheduled_start"),
+  };
+}
+
+/**
+ * An offer, with just enough of the job attached for the cleaner to decide.
+ *
+ * Nothing about the ladder crosses this boundary — no rung, no ceiling, no
+ * hint that the payout might improve. `presentOffer` in the dispatch ladder
+ * makes the same omission for the same reason.
+ */
+export function toOffer(row: Row): Offer {
+  const job = relation(row, "jobs");
+  const customer = relation(job, "customers");
+  const property = relation(job, "properties");
+
+  const firstName = strOrNull(customer, "first_name") ?? "";
+  const lastName = strOrNull(customer, "last_name") ?? "";
+
+  return {
+    id: str(row, "id"),
+    jobId: str(row, "job_id"),
+    cleanerId: str(row, "cleaner_id"),
+    payoutCents: num(row, "payout_cents", 0),
+    estimatedMinutes: num(row, "estimated_minutes", 0),
+    expiresAt: dateOrNull(row, "expires_at") ?? new Date(0),
+    isExclusive: row["is_exclusive"] === true,
+    customerName: `${firstName} ${lastName}`.trim() || "Unknown customer",
+    street: strOrNull(property, "street") ?? "",
+    city: strOrNull(property, "city") ?? "",
+    zip: strOrNull(property, "zip") ?? "",
+    scheduledStart: dateOrNull(job, "scheduled_start"),
   };
 }
 

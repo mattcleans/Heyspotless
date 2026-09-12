@@ -14,6 +14,7 @@ import type {
   InvoiceFilter,
   Job,
   JobFilter,
+  Offer,
   Payment,
   PaymentMethod,
   Profile,
@@ -24,6 +25,13 @@ export interface Repository {
   /** Jobs, optionally filtered. Ordered soonest-first; unscheduled last. */
   listJobs(filter?: JobFilter): Promise<Job[]>;
   getJob(id: string): Promise<Job | null>;
+
+  /**
+   * Offers still awaiting an answer from this cleaner, soonest to expire
+   * first. Only live ones — an offer she has answered, or whose countdown has
+   * run out, is not a decision she still has to make.
+   */
+  listLiveOffers(cleanerId: string): Promise<Offer[]>;
 
   /** The cleaner roster, with the fields dispatch eligibility needs. */
   listCleaners(): Promise<Cleaner[]>;

@@ -1089,6 +1089,7 @@ declare
   v_cust uuid; v_prop uuid; v_plan uuid; v_cleaner uuid;
   v_job uuid; v_again uuid; v_count integer; v_fail integer := 0;
   v_price integer; v_status job_status; v_freq frequency;
+  v_created boolean; v_created_again boolean;
 begin
   insert into customers (first_name, last_name) values ('Recur','Ring')
     returning id into v_cust;
@@ -1102,10 +1103,15 @@ begin
   returning id into v_plan;
 
   -- Generating an occurrence creates exactly one job at the PLAN's rate.
-  v_job := materialise_recurring_job(v_plan, date '2026-09-15',
-                                     timestamptz '2026-09-15 14:30:00+00');
+  select job_id, created into v_job, v_created
+    from materialise_recurring_job(v_plan, date '2026-09-15',
+                                   timestamptz '2026-09-15 14:30:00+00');
   if v_job is null then v_fail := v_fail+1;
     raise warning 'the first generation produced no job'; end if;
+  -- 0015: the sweep has to be able to tell a visit it MADE from one it merely
+  -- re-saw, or its own counters overstate it fortyfold over a six-week horizon.
+  if not v_created then v_fail := v_fail+1;
+    raise warning 'the first generation did not report itself as a creation'; end if;
 
   select price_cents, status, freq into v_price, v_status, v_freq
     from jobs where id = v_job;
@@ -1118,10 +1124,13 @@ begin
 
   -- THE GUARANTEE. The sweep runs daily across a six-week horizon, so every
   -- occurrence is seen dozens of times before it happens. All no-ops.
-  v_again := materialise_recurring_job(v_plan, date '2026-09-15',
-                                       timestamptz '2026-09-15 14:30:00+00');
+  select job_id, created into v_again, v_created_again
+    from materialise_recurring_job(v_plan, date '2026-09-15',
+                                   timestamptz '2026-09-15 14:30:00+00');
   if v_again is distinct from v_job then v_fail := v_fail+1;
     raise warning 'regenerating returned % instead of the existing %', v_again, v_job; end if;
+  if v_created_again then v_fail := v_fail+1;
+    raise warning 're-seeing an existing visit reported itself as a creation'; end if;
   select count(*) into v_count from jobs
     where recurring_plan_id = v_plan and occurrence_date = date '2026-09-15';
   if v_count <> 1 then v_fail := v_fail+1;
@@ -1130,8 +1139,8 @@ begin
   -- The price on an ALREADY GENERATED job is not rewritten when the plan
   -- rate changes. What they agreed to for that visit is what they pay.
   update recurring_plans set agreed_price_cents = 20000 where id = v_plan;
-  perform materialise_recurring_job(v_plan, date '2026-09-15',
-                                    timestamptz '2026-09-15 14:30:00+00');
+  perform * from materialise_recurring_job(v_plan, date '2026-09-15',
+                                           timestamptz '2026-09-15 14:30:00+00');
   select price_cents into v_price from jobs where id = v_job;
   if v_price <> 15900 then v_fail := v_fail+1;
     raise warning 'a plan price change rewrote an existing visit to %', v_price; end if;
@@ -1139,23 +1148,24 @@ begin
 
   -- A RESCHEDULE moves the visit without freeing its slot to be regenerated.
   update jobs set scheduled_start = timestamptz '2026-09-16 15:00:00+00' where id = v_job;
-  perform materialise_recurring_job(v_plan, date '2026-09-15',
-                                    timestamptz '2026-09-15 14:30:00+00');
+  perform * from materialise_recurring_job(v_plan, date '2026-09-15',
+                                           timestamptz '2026-09-15 14:30:00+00');
   select count(*) into v_count from jobs where recurring_plan_id = v_plan;
   if v_count <> 1 then v_fail := v_fail+1;
     raise warning 'rescheduling a visit let its original slot regenerate (% jobs)', v_count; end if;
 
   -- A SKIP cancels the visit and stops it coming back.
-  perform materialise_recurring_job(v_plan, date '2026-09-29',
-                                    timestamptz '2026-09-29 14:30:00+00');
+  perform * from materialise_recurring_job(v_plan, date '2026-09-29',
+                                           timestamptz '2026-09-29 14:30:00+00');
   perform skip_recurring_occurrence(v_plan, date '2026-09-29', 'customer away');
   select status into v_status from jobs
     where recurring_plan_id = v_plan and occurrence_date = date '2026-09-29';
   if v_status <> 'canceled' then v_fail := v_fail+1;
     raise warning 'a skipped visit is %, want canceled', v_status; end if;
 
-  if materialise_recurring_job(v_plan, date '2026-09-29',
-                               timestamptz '2026-09-29 14:30:00+00') is not null then
+  select job_id into v_job from materialise_recurring_job(v_plan, date '2026-09-29',
+                                  timestamptz '2026-09-29 14:30:00+00');
+  if v_job is not null then
     v_fail := v_fail+1; raise warning 'a skipped occurrence was regenerated'; end if;
 
   -- Skipping twice is a no-op, not an error: a person clicking twice, or a
@@ -1176,14 +1186,15 @@ begin
   -- UNSKIP puts it back in play.
   if not unskip_recurring_occurrence(v_plan, date '2026-09-29') then
     v_fail := v_fail+1; raise warning 'unskipping a skipped occurrence reported nothing'; end if;
-  if materialise_recurring_job(v_plan, date '2026-09-29',
-                               timestamptz '2026-09-29 14:30:00+00') is null then
+  select job_id into v_job from materialise_recurring_job(v_plan, date '2026-09-29',
+                                  timestamptz '2026-09-29 14:30:00+00');
+  if v_job is null then
     v_fail := v_fail+1; raise warning 'an unskipped occurrence did not regenerate'; end if;
 
   -- A visit that has already happened is not skippable. Cancelling a
   -- completed clean is a different act with different money attached.
-  perform materialise_recurring_job(v_plan, date '2026-10-13',
-                                    timestamptz '2026-10-13 14:30:00+00');
+  perform * from materialise_recurring_job(v_plan, date '2026-10-13',
+                                           timestamptz '2026-10-13 14:30:00+00');
   update jobs set status = 'complete'
     where recurring_plan_id = v_plan and occurrence_date = date '2026-10-13';
   begin
@@ -1194,8 +1205,8 @@ begin
   -- An inactive plan generates nothing.
   update recurring_plans set active = false where id = v_plan;
   begin
-    perform materialise_recurring_job(v_plan, date '2026-10-27',
-                                      timestamptz '2026-10-27 14:30:00+00');
+    perform * from materialise_recurring_job(v_plan, date '2026-10-27',
+                                             timestamptz '2026-10-27 14:30:00+00');
     v_fail := v_fail+1; raise warning 'an inactive plan generated a visit';
   exception when others then null; end;
   update recurring_plans set active = true where id = v_plan;
@@ -1230,7 +1241,7 @@ RECUR_PLAN=$(as_super $PSQL -d "$DB" -tAc \
 
 for i in 1 2 3; do
   as_super $PSQL -d "$DB" -tAc \
-    "select materialise_recurring_job('$RECUR_PLAN', date '2026-09-22',
+    "select job_id from materialise_recurring_job('$RECUR_PLAN', date '2026-09-22',
                                       timestamptz '2026-09-22 14:30:00+00')" \
     > /dev/null 2>&1 &
 done
@@ -1245,6 +1256,369 @@ if [ "$RECUR_JOBS" != "1" ]; then
   exit 1
 fi
 echo "  concurrent recurring generation verified"
+
+# --- the offer lifecycle (0015) ------------------------------------------------
+# Until this migration the dispatch engine decided who should get every job and
+# then threw the answer away when the request ended, so nothing was ever
+# offered and nothing could be accepted. These assert the half that cannot be
+# proved in TypeScript: that responding is atomic, that the payout comes from
+# the offer rather than the caller, and that two cleaners tapping Accept in the
+# same second produce one assignment.
+echo "  checking the offer lifecycle"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_prop uuid; v_job uuid; v_dec uuid;
+  v_sarah uuid; v_stranger uuid; v_barred uuid;
+  v_offer uuid; v_offer2 uuid; v_same uuid;
+  v_result text; v_count integer; v_fail integer := 0;
+  v_payout integer; v_status job_status; v_offer_status offer_status;
+begin
+  insert into customers (first_name, last_name) values ('Offer','Ledger')
+    returning id into v_cust;
+  insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+    values (v_cust, '9 Offer Lane', 'Plano', '75024', 2, 2) returning id into v_prop;
+
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Sarah', 'contractor_1099', 'active', 4.6, true) returning id into v_sarah;
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Stranger', 'contractor_1099', 'active', 4.5, true) returning id into v_stranger;
+  -- Below the 3.9 floor. The gate from 0003 is a CHECK on offers, so this
+  -- cleaner must be unofferable however the offer is written.
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Barred', 'contractor_1099', 'active', 3.1, true) returning id into v_barred;
+
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'scheduled', 'standard', 'biweekly',
+            now() + interval '9 days', 17000, 138)
+    returning id into v_job;
+
+  insert into dispatch_decisions (job_id, kind, cleaner_id, continuity_status,
+                                  continuity_basis, rationale)
+    values (v_job, 'hold_for_incumbent', v_sarah, 'held', 'preferred',
+            'Sarah is this customer''s requested cleaner.')
+    returning id into v_dec;
+
+  -- The intervention marker defaults to "the engine did it". The north-star
+  -- metric is manager interventions per 100 cleans and this column is its
+  -- whole numerator, so a decision nobody touched must not look touched.
+  if exists (select 1 from dispatch_decisions where id = v_dec and decided_by is not null) then
+    v_fail := v_fail+1; raise warning 'an engine decision recorded a human decider'; end if;
+
+  -- THE GATE. 0003 makes eligibility a CHECK on offers, so an offer below the
+  -- rating floor cannot be written -- not by the engine, not by hand.
+  begin
+    perform record_offer(v_job, v_barred, v_dec, 'waterfall', 1, 2500, 5750, 138,
+                         now() + interval '20 minutes', false);
+    v_fail := v_fail+1; raise warning 'an offer was written to an ineligible cleaner';
+  exception when check_violation then null; end;
+
+  v_offer := record_offer(v_job, v_sarah, v_dec, 'direct_assign', 1, 2500, 5750, 138,
+                          now() + interval '20 minutes', true);
+  if v_offer is null then v_fail := v_fail+1;
+    raise warning 'recording an offer produced nothing'; end if;
+
+  -- Sending an offer moves the job off the board and onto the wire.
+  select status into v_status from jobs where id = v_job;
+  if v_status <> 'dispatching' then v_fail := v_fail+1;
+    raise warning 'a job with a live offer is %, want dispatching', v_status; end if;
+
+  -- IDEMPOTENT while live. A re-run of the sweep must re-present the SAME
+  -- offer, not a second one she could accept twice.
+  v_same := record_offer(v_job, v_sarah, v_dec, 'direct_assign', 1, 2500, 5750, 138,
+                         now() + interval '20 minutes', true);
+  if v_same is distinct from v_offer then v_fail := v_fail+1;
+    raise warning 're-recording an offer produced % instead of %', v_same, v_offer; end if;
+  select count(*) into v_count from offers where job_id = v_job and cleaner_id = v_sarah;
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'one cleaner has % live offers on one job', v_count; end if;
+
+  -- Somebody else's offer is not hers to answer, and the failure is a flat
+  -- "no such offer" rather than anything that confirms it exists.
+  v_result := respond_to_offer(v_offer, v_stranger, true);
+  if v_result <> 'not_found' then v_fail := v_fail+1;
+    raise warning 'answering another cleaner''s offer returned %', v_result; end if;
+
+  -- DECLINING records the reason and assigns nobody.
+  v_offer2 := record_offer(v_job, v_stranger, v_dec, 'waterfall', 2, 2500, 5750, 138,
+                           now() + interval '20 minutes', false);
+  v_result := respond_to_offer(v_offer2, v_stranger, false, 'too far that morning');
+  if v_result <> 'declined' then v_fail := v_fail+1;
+    raise warning 'declining returned %', v_result; end if;
+  if not exists (select 1 from offers where id = v_offer2 and status = 'declined'
+                 and decline_reason = 'too far that morning') then
+    v_fail := v_fail+1; raise warning 'a decline did not record its reason'; end if;
+  if exists (select 1 from job_assignments where job_id = v_job) then
+    v_fail := v_fail+1; raise warning 'a decline created an assignment'; end if;
+
+  -- Answering twice changes nothing. A stale screen with a live button is the
+  -- ordinary case, not an edge case.
+  v_result := respond_to_offer(v_offer2, v_stranger, true);
+  if v_result <> 'superseded' then v_fail := v_fail+1;
+    raise warning 're-answering an offer returned %', v_result; end if;
+
+  -- ACCEPTING. The payout on the assignment comes from the OFFER ROW: 0007
+  -- removed the cleaner's UPDATE permission on offers precisely because it
+  -- doubled as permission to rewrite her own payout, and respond_to_offer
+  -- takes no amount at all.
+  v_result := respond_to_offer(v_offer, v_sarah, true);
+  if v_result <> 'accepted' then v_fail := v_fail+1;
+    raise warning 'accepting a live offer returned %', v_result; end if;
+
+  select payout_cents into v_payout from job_assignments
+    where job_id = v_job and cleaner_id = v_sarah;
+  if v_payout is distinct from 5750 then v_fail := v_fail+1;
+    raise warning 'the assignment paid %, want the offered 5750', v_payout; end if;
+
+  select status into v_status from jobs where id = v_job;
+  if v_status <> 'assigned' then v_fail := v_fail+1;
+    raise warning 'an accepted job is %, want assigned', v_status; end if;
+
+  select dispatch_channel::text into v_result from jobs where id = v_job;
+  if v_result <> 'direct_assign' then v_fail := v_fail+1;
+    raise warning 'the job recorded channel %, want the accepted offer''s', v_result; end if;
+
+  -- EXPIRY is checked against the database clock under the lock, so a device
+  -- with a slow clock cannot accept a countdown that ran out elsewhere.
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'scheduled', 'standard', 'biweekly',
+            now() + interval '9 days', 17000, 138)
+    returning id into v_job;
+  insert into offers (job_id, cleaner_id, channel, tier, hourly_rate_cents,
+                      payout_cents, payout_pct, estimated_minutes, expires_at)
+    values (v_job, v_sarah, 'waterfall', 1, 2500, 5750, 0.3382, 138,
+            now() - interval '1 minute')
+    returning id into v_offer;
+
+  v_result := respond_to_offer(v_offer, v_sarah, true);
+  if v_result <> 'expired' then v_fail := v_fail+1;
+    raise warning 'accepting a lapsed offer returned %', v_result; end if;
+  if exists (select 1 from job_assignments where job_id = v_job) then
+    v_fail := v_fail+1; raise warning 'a lapsed offer was accepted into an assignment'; end if;
+
+  -- The sweep times out countdowns so a lapsed exclusive hold is seen as
+  -- unheld rather than still waiting on somebody who never answered.
+  insert into offers (job_id, cleaner_id, channel, tier, hourly_rate_cents,
+                      payout_cents, payout_pct, estimated_minutes, expires_at)
+    values (v_job, v_stranger, 'waterfall', 1, 2500, 5750, 0.3382, 138,
+            now() - interval '1 minute');
+  if expire_stale_offers() < 1 then v_fail := v_fail+1;
+    raise warning 'the expiry sweep timed out nothing'; end if;
+  select status into v_offer_status from offers
+    where job_id = v_job and cleaner_id = v_stranger;
+  if v_offer_status <> 'expired' then v_fail := v_fail+1;
+    raise warning 'a lapsed offer is %, want expired', v_offer_status; end if;
+
+  -- A LOSER is withdrawn, not declined. Counting "declined work that no
+  -- longer existed" against a cleaner's acceptance rate would punish exactly
+  -- the cleaners who answer fastest, and acceptance rate drives ranking.
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'scheduled', 'standard', 'biweekly',
+            now() + interval '9 days', 17000, 138)
+    returning id into v_job;
+  v_offer := record_offer(v_job, v_sarah, null, 'waterfall', 1, 2500, 5750, 138,
+                          now() + interval '20 minutes', false);
+  v_offer2 := record_offer(v_job, v_stranger, null, 'waterfall', 1, 2500, 5750, 138,
+                           now() + interval '20 minutes', false);
+
+  perform respond_to_offer(v_offer, v_sarah, true);
+  select status into v_offer_status from offers where id = v_offer2;
+  if v_offer_status <> 'withdrawn' then v_fail := v_fail+1;
+    raise warning 'the other cleaner''s offer is %, want withdrawn', v_offer_status; end if;
+
+  v_result := respond_to_offer(v_offer2, v_stranger, true);
+  if v_result <> 'superseded' then v_fail := v_fail+1;
+    raise warning 'answering a withdrawn offer returned %', v_result; end if;
+
+  if v_fail > 0 then raise exception '% offer lifecycle assertions failed', v_fail; end if;
+  raise notice 'offer lifecycle passed';
+end $$;
+SQL
+echo "  offer lifecycle verified"
+
+# --- continuity inputs and direct assignment (0016) ----------------------------
+# Incumbency is per PROPERTY, not per customer: a customer with a house and a
+# rental has two relationships, and the cleaner who does the rental every
+# fortnight has no claim on the house. Getting that wrong holds a visit for
+# somebody who has never been to the address.
+echo "  checking continuity inputs"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_house uuid; v_rental uuid;
+  v_ada uuid; v_ben uuid; v_job uuid; v_old uuid;
+  v_incumbent uuid; v_visits integer; v_pref uuid; v_fail integer := 0;
+begin
+  insert into customers (first_name, last_name) values ('Two','Homes')
+    returning id into v_cust;
+  insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+    values (v_cust, '1 House Way', 'Plano', '75024', 3, 2) returning id into v_house;
+  insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+    values (v_cust, '2 Rental Rd', 'Plano', '75024', 2, 1) returning id into v_rental;
+
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Ada', 'contractor_1099', 'active', 4.7, true) returning id into v_ada;
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Ben', 'contractor_1099', 'active', 4.7, true) returning id into v_ben;
+
+  -- Ada has done the RENTAL twice. Ben has done the HOUSE once.
+  for i in 1..2 loop
+    insert into jobs (customer_id, property_id, status, service, freq,
+                      scheduled_start, price_cents, estimated_clean_minutes)
+      values (v_cust, v_rental, 'complete', 'standard', 'biweekly',
+              now() - (i || ' weeks')::interval, 15900, 120)
+      returning id into v_old;
+    insert into job_assignments (job_id, cleaner_id, payout_cents)
+      values (v_old, v_ada, 5000);
+  end loop;
+
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes)
+    values (v_cust, v_house, 'complete', 'standard', 'biweekly',
+            now() - interval '1 week', 17000, 138)
+    returning id into v_old;
+  insert into job_assignments (job_id, cleaner_id, payout_cents)
+    values (v_old, v_ben, 5750);
+
+  -- A new visit at the HOUSE. Ben is the incumbent there; Ada's two rental
+  -- visits must not reach across.
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes)
+    values (v_cust, v_house, 'scheduled', 'standard', 'biweekly',
+            now() + interval '9 days', 17000, 138)
+    returning id into v_job;
+
+  select incumbent_cleaner_id, prior_visits into v_incumbent, v_visits
+    from job_continuity where job_id = v_job;
+  if v_incumbent is distinct from v_ben then v_fail := v_fail+1;
+    raise warning 'the house incumbent is %, want Ben', v_incumbent; end if;
+  if v_visits <> 1 then v_fail := v_fail+1;
+    raise warning 'the house incumbent has % prior visits, want 1', v_visits; end if;
+
+  -- A visit that was ASSIGNED but never completed is not a relationship.
+  -- Counting it would hold future visits for a cleaner the customer may have
+  -- asked never to see again.
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes)
+    values (v_cust, v_house, 'canceled', 'standard', 'biweekly',
+            now() - interval '2 days', 17000, 138)
+    returning id into v_old;
+  insert into job_assignments (job_id, cleaner_id, payout_cents)
+    values (v_old, v_ada, 5750);
+
+  select incumbent_cleaner_id into v_incumbent from job_continuity where job_id = v_job;
+  if v_incumbent is distinct from v_ben then v_fail := v_fail+1;
+    raise warning 'an uncompleted visit made % the incumbent', v_incumbent; end if;
+
+  -- A brand new property has no incumbent and no visits -- not a null count.
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes)
+    values (v_cust, v_rental, 'scheduled', 'standard', 'biweekly',
+            now() + interval '9 days', 15900, 120)
+    returning id into v_old;
+  select prior_visits into v_visits from job_continuity where job_id = v_old;
+  if v_visits <> 2 then v_fail := v_fail+1;
+    raise warning 'the rental incumbent has % prior visits, want 2', v_visits; end if;
+
+  -- 0015: the stated preference is a SNAPSHOT on the visit. A customer who
+  -- changes cleaners in March must not rewrite what February was dispatched
+  -- against, or every continuity number measures the current roster instead
+  -- of what actually happened.
+  update jobs set preferred_cleaner_id = v_ada where id = v_job;
+  select preferred_cleaner_id into v_pref from job_continuity where job_id = v_job;
+  if v_pref is distinct from v_ada then v_fail := v_fail+1;
+    raise warning 'the stated preference read back as %', v_pref; end if;
+
+  -- DIRECT ASSIGNMENT still answers the eligibility gate. It bypasses the
+  -- offers table entirely, so without its own check the gate would have a
+  -- hole exactly the width of every W-2 assignment the engine makes.
+  update cleaners set rating = 3.1 where id = v_ben;
+  begin
+    perform assign_job_directly(v_job, v_ben, 5750);
+    v_fail := v_fail+1; raise warning 'an ineligible cleaner was assigned directly';
+  exception when others then null; end;
+  update cleaners set rating = 4.7 where id = v_ben;
+
+  if not assign_job_directly(v_job, v_ben, 5750) then v_fail := v_fail+1;
+    raise warning 'assigning an unclaimed job reported failure'; end if;
+  if not exists (select 1 from jobs where id = v_job and status = 'assigned'
+                   and dispatch_channel = 'direct_assign') then
+    v_fail := v_fail+1; raise warning 'a directly assigned job is not assigned'; end if;
+
+  -- Somebody claimed it between the decision and the write. An ordinary race
+  -- on a board being swept, not an error.
+  if assign_job_directly(v_job, v_ada, 5750) then v_fail := v_fail+1;
+    raise warning 'a job was assigned twice'; end if;
+  select count(*) into v_visits from job_assignments where job_id = v_job;
+  if v_visits <> 1 then v_fail := v_fail+1;
+    raise warning 'a claimed job has % assignments, want 1', v_visits; end if;
+
+  if v_fail > 0 then raise exception '% continuity assertions failed', v_fail; end if;
+  raise notice 'continuity inputs passed';
+end $$;
+SQL
+echo "  continuity inputs verified"
+
+# --- two cleaners accepting at once (0015) ------------------------------------
+# The race the whole function exists for. respond_to_offer locks the JOB, not
+# the offer: locking each cleaner's own row would let both through and book two
+# people onto one house.
+echo "  checking concurrent offer acceptance"
+RACE_SETUP=$(as_super $PSQL -d "$DB" -tAc \
+  "with c as (insert into customers (first_name, last_name)
+              values ('Race','Accept') returning id),
+        p as (insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+              select id, '4 Race Way', 'Plano', '75024', 2, 2 from c returning id, customer_id)
+   insert into jobs (customer_id, property_id, status, service, freq,
+                     scheduled_start, price_cents, estimated_clean_minutes)
+   select p.customer_id, p.id, 'scheduled', 'standard', 'biweekly',
+          now() + interval '9 days', 17000, 138
+   from p returning id")
+
+RACE_A_ID=$(as_super $PSQL -d "$DB" -tAc \
+  "insert into cleaners (full_name, type, status, rating, background_check_cleared)
+   values ('Race A', 'contractor_1099', 'active', 4.6, true) returning id")
+RACE_B_ID=$(as_super $PSQL -d "$DB" -tAc \
+  "insert into cleaners (full_name, type, status, rating, background_check_cleared)
+   values ('Race B', 'contractor_1099', 'active', 4.6, true) returning id")
+
+RACE_OFFER_A=$(as_super $PSQL -d "$DB" -tAc \
+  "select record_offer('$RACE_SETUP', '$RACE_A_ID', null, 'waterfall', 1, 2500, 5750, 138,
+                       now() + interval '20 minutes', false)")
+RACE_OFFER_B=$(as_super $PSQL -d "$DB" -tAc \
+  "select record_offer('$RACE_SETUP', '$RACE_B_ID', null, 'waterfall', 1, 2500, 5750, 138,
+                       now() + interval '20 minutes', false)")
+
+as_super $PSQL -d "$DB" -tAc \
+  "select respond_to_offer('$RACE_OFFER_A', '$RACE_A_ID', true)" \
+  > /tmp/spotless_accept_a.txt 2>&1 &
+ACCEPT_A=$!
+as_super $PSQL -d "$DB" -tAc \
+  "select respond_to_offer('$RACE_OFFER_B', '$RACE_B_ID', true)" \
+  > /tmp/spotless_accept_b.txt 2>&1 &
+ACCEPT_B=$!
+wait $ACCEPT_A
+wait $ACCEPT_B
+
+ACCEPTED=$(cat /tmp/spotless_accept_a.txt /tmp/spotless_accept_b.txt | grep -c '^accepted$' || true)
+TAKEN=$(cat /tmp/spotless_accept_a.txt /tmp/spotless_accept_b.txt | grep -c '^taken$' || true)
+rm -f /tmp/spotless_accept_a.txt /tmp/spotless_accept_b.txt
+
+ASSIGNMENTS=$(as_super $PSQL -d "$DB" -tAc \
+  "select count(*) from job_assignments where job_id = '$RACE_SETUP'")
+
+if [ "$ACCEPTED" != "1" ] || [ "$TAKEN" != "1" ]; then
+  echo "  concurrent acceptance: $ACCEPTED accepted, $TAKEN taken — want 1 and 1" >&2
+  exit 1
+fi
+if [ "$ASSIGNMENTS" != "1" ]; then
+  echo "  two cleaners accepting produced $ASSIGNMENTS assignments — want 1" >&2
+  exit 1
+fi
+echo "  concurrent offer acceptance verified"
 
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql

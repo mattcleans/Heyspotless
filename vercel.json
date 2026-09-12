@@ -6,6 +6,10 @@
       "schedule": "0 8 * * *"
     },
     {
+      "path": "/api/dispatch/run",
+      "schedule": "30 * * * *"
+    },
+    {
       "path": "/api/billing/autocharge",
       "schedule": "0 14 * * *"
     }

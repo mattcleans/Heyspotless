@@ -12,6 +12,8 @@ import {
   DEMO_JOBS,
   DEMO_PAYMENT_METHODS,
 } from "../demo/fixtures";
+import { OPENING_RATE_CENTS_PER_HOUR, payoutForRate } from "../dispatch/ladder";
+import type { ContinuityContext } from "../dispatch/continuity";
 import type { Repository } from "./repository";
 import type {
   Cleaner,
@@ -20,6 +22,7 @@ import type {
   InvoiceFilter,
   Job,
   JobFilter,
+  Offer,
   Payment,
   PaymentMethod,
   Profile,
@@ -72,13 +75,41 @@ function jobProperty(demo: (typeof DEMO_JOBS)[number]): Property {
   };
 }
 
+/**
+ * The relationships the fixture customers already have.
+ *
+ * Demo mode is how this app is reviewed, and continuity is most of what
+ * dispatch now does — a board where every visit reads "no relationship" would
+ * demo the engine as it was before it had one. These mirror the frequencies in
+ * DEMO_JOBS: the weekly and bi-weekly customers have a regular cleaner, and
+ * the one-off jobs do not, which is the distinction worth seeing.
+ */
+const DEMO_CONTINUITY: Record<string, ContinuityContext> = {
+  // Ann is weekly and asked for Marisol by name.
+  "j-2": { preferredCleanerId: "c-marisol", incumbentCleanerId: "c-marisol", priorVisits: 14 },
+  // Bonnie is fortnightly. Nobody wrote a preference down, but Dee has been
+  // six times — a revealed incumbency, which is priced rather than promised.
+  "j-1": { preferredCleanerId: null, incumbentCleanerId: "c-dee", priorVisits: 6 },
+  // Veena is monthly and has had two different cleaners. Not yet a
+  // relationship, and the board should say so rather than inventing one.
+  "j-7": { preferredCleanerId: null, incumbentCleanerId: "c-priya", priorVisits: 1 },
+};
+
+function withDemoContinuity(job: Job): Job {
+  const continuity = DEMO_CONTINUITY[job.id];
+  return continuity ? { ...job, continuity } : job;
+}
+
 export class DemoRepository implements Repository {
   readonly isDemo = true;
 
   async listJobs(filter: JobFilter = {}): Promise<Job[]> {
     // Booked first, so a job someone has just created is visible without
     // scrolling past the fixtures.
-    let jobs = [...demoJobs()].reverse().concat(DEMO_JOBS.map(toJob));
+    let jobs = [...demoJobs()]
+      .reverse()
+      .concat(DEMO_JOBS.map(toJob))
+      .map(withDemoContinuity);
     if (filter.customerId) jobs = jobs.filter((j) => j.customerId === filter.customerId);
     // Demo mode has no assignments table; every job is visible to the one
     // cleaner the demo signs in as.
@@ -89,7 +120,7 @@ export class DemoRepository implements Repository {
 
   async getJob(id: string): Promise<Job | null> {
     const found = DEMO_JOBS.find((j) => j.id === id);
-    return found ? toJob(found) : null;
+    return found ? withDemoContinuity(toJob(found)) : null;
   }
 
   async listCleaners(): Promise<Cleaner[]> {
@@ -101,8 +132,57 @@ export class DemoRepository implements Repository {
   }
 
   async getCleanerByProfile(): Promise<Cleaner | null> {
-    // Demo mode has no auth; the cleaner view shows the first W-2 cleaner.
-    return DEMO_CLEANERS.find((c) => c.type === "w2_core") ?? null;
+    // Demo mode has no auth. The cleaner view signs in as a CONTRACTOR rather
+    // than a W-2: offers, countdowns and an exclusive hold are the contractor
+    // experience, and a W-2 cleaner is assigned her work rather than offered
+    // it. Demoing the offer screen as an employee would be demoing something
+    // that does not happen.
+    return (
+      DEMO_CLEANERS.find((c) => c.type === "contractor_1099") ??
+      DEMO_CLEANERS[0] ??
+      null
+    );
+  }
+
+  /**
+   * Two live offers, built from the fixture jobs at the published opening
+   * rate, so the screen shows the two cases that actually differ: a customer
+   * who is already hers and is being held for her, and an ordinary job off the
+   * open board.
+   *
+   * Expiries are relative to now, so the countdowns are live every time the
+   * page is loaded rather than long expired.
+   */
+  async listLiveOffers(cleanerId: string): Promise<Offer[]> {
+    const now = Date.now();
+
+    const offerFor = (
+      jobId: string,
+      isExclusive: boolean,
+      expiresInMinutes: number,
+    ): Offer | null => {
+      const demo = DEMO_JOBS.find((j) => j.id === jobId);
+      if (!demo) return null;
+      return {
+        id: `offer-${jobId}`,
+        jobId: demo.id,
+        cleanerId,
+        payoutCents: payoutForRate(OPENING_RATE_CENTS_PER_HOUR, demo.estimatedCleanMinutes),
+        estimatedMinutes: demo.estimatedCleanMinutes,
+        expiresAt: new Date(now + expiresInMinutes * 60_000),
+        isExclusive,
+        customerName: demo.customerName,
+        street: demo.street,
+        city: demo.city,
+        zip: demo.zip,
+        scheduledStart: demo.scheduledStart,
+      };
+    };
+
+    return [
+      offerFor("j-2", true, 8 * 60), // Ann is weekly — hers, held for her.
+      offerFor("j-5", false, 22),
+    ].filter((o): o is Offer => o !== null);
   }
 
   async listCustomers(limit?: number): Promise<Customer[]> {
