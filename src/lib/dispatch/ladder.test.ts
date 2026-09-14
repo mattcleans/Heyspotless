@@ -2,16 +2,18 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_LADDER,
   ESCALATION_ALARM_THRESHOLD,
-  MAX_RATE_CENTS_PER_HOUR,
-  OPENING_RATE_CENTS_PER_HOUR,
   assignTiers,
   buildLadder,
-  ceilingRateFromW2Cost,
   escalationRate,
-  payoutForRate,
   presentOffer,
   rankScore,
 } from "./ladder";
+import {
+  CLEANER_SHARE_OF_TICKET,
+  MAX_SHARE_OF_TICKET,
+  ceilingShareFromW2Cost,
+  payoutForTicket,
+} from "../pricing/payout";
 import { buildQuote } from "../pricing/quote";
 import type { DispatchJob } from "./types";
 
@@ -35,79 +37,88 @@ function jobFrom(service: "standard" | "deep" | "move_in_out", freq: "one_time" 
   };
 }
 
-describe("the flat-percentage problem the ladder replaces (plan section 04)", () => {
+describe("what a share of the ticket costs, on the record", () => {
   /**
-   * A flat 35% buys wildly different hourly rates, and it points the wrong way:
-   * the worst-paid jobs are the weekly recurring customers — the relationships
-   * that most need to fill every week.
+   * The plan originally rejected a flat share for exactly this: it buys wildly
+   * different hourly rates, and it points the wrong way — the worst-paid jobs
+   * are the weekly recurring customers, the relationships that most need to
+   * fill every week.
+   *
+   * The policy (Matt, 14 September 2026) accepts that cost deliberately, for
+   * the reasons in lib/pricing/payout.ts. These stay as tests rather than
+   * being deleted, because the cost is real and it is the thing to watch: if
+   * new recurring customers start going unfilled, this block is the
+   * explanation, and MINIMUM_PAYOUT_CENTS is the lever.
    */
   const rows = [
-    { label: "Weekly 2bd/2ba",        job: jobFrom("standard", "weekly", 2, 2),      price: 16000, hours: 2.3,  payout: 5600,  perHour: 2435 },
-    { label: "Bi-weekly 2bd/2ba",     job: jobFrom("standard", "biweekly", 2, 2),    price: 17000, hours: 2.3,  payout: 5950,  perHour: 2587 },
-    { label: "Deep clean 3bd/2ba",    job: jobFrom("deep", "one_time", 3, 2),        price: 36200, hours: 4.82, payout: 12670, perHour: 2630 },
-    { label: "Move-out 4bd/4ba",      job: jobFrom("move_in_out", "one_time", 4, 4), price: 57600, hours: 8.05, payout: 20160, perHour: 2504 },
-    { label: "One-time std 3bd/2ba",  job: jobFrom("standard", "one_time", 3, 2),    price: 21900, hours: 2.55, payout: 7665,  perHour: 3006 },
+    { label: "Weekly 2bd/2ba",        job: jobFrom("standard", "weekly", 2, 2) },
+    { label: "Bi-weekly 2bd/2ba",     job: jobFrom("standard", "biweekly", 2, 2) },
+    { label: "Deep clean 3bd/2ba",    job: jobFrom("deep", "one_time", 3, 2) },
+    { label: "Move-out 4bd/4ba",      job: jobFrom("move_in_out", "one_time", 4, 4) },
+    { label: "One-time std 3bd/2ba",  job: jobFrom("standard", "one_time", 3, 2) },
   ];
 
-  for (const row of rows) {
-    it(`${row.label}: 35% = $${(row.payout / 100).toFixed(2)} = $${(row.perHour / 100).toFixed(2)}/hr`, () => {
-      expect(row.job.priceCents).toBe(row.price);
-      expect(row.job.estimatedCleanMinutes / 60).toBeCloseTo(row.hours, 2);
+  const perHour = (job: DispatchJob) =>
+    payoutForTicket(job.priceCents, CLEANER_SHARE_OF_TICKET) /
+    (job.estimatedCleanMinutes / 60);
 
-      const flat = Math.round(row.price * 0.35);
-      expect(flat).toBe(row.payout);
-
-      const perHour = flat / (row.job.estimatedCleanMinutes / 60);
-      expect(perHour).toBeCloseTo(row.perHour, 0);
-    });
-  }
-
-  it("is a 23% spread on an identical percentage", () => {
-    const perHour = rows.map((r) => (r.price * 0.35) / (r.job.estimatedCleanMinutes / 60));
-    const spread = Math.max(...perHour) / Math.min(...perHour) - 1;
-    expect(spread).toBeCloseTo(0.23, 2);
+  it("buys a materially different hourly rate on every job", () => {
+    const rates = rows.map((r) => perHour(r.job));
+    const spread = Math.max(...rates) / Math.min(...rates) - 1;
+    expect(spread).toBeGreaterThan(0.2);
   });
 
-  it("penalises weekly recurring work worst — exactly the wrong jobs to underpay", () => {
-    const perHour = (r: (typeof rows)[number]) => (r.price * 0.35) / (r.job.estimatedCleanMinutes / 60);
+  it("pays worst on the weekly recurring job — the one that must fill", () => {
+    // The known cost, asserted so it cannot quietly get worse. It is
+    // survivable because dispatch is no longer an open board for established
+    // customers: a recurring visit goes to its incumbent exclusively first.
+    // The exposure that remains is a NEW recurring customer, who has no
+    // incumbent.
     const weekly = rows.find((r) => r.label === "Weekly 2bd/2ba")!;
-    expect(perHour(weekly)).toBe(Math.min(...rows.map(perHour)));
+    expect(perHour(weekly.job)).toBe(Math.min(...rows.map((r) => perHour(r.job))));
   });
 
-  it("pricing per hour instead removes the spread entirely", () => {
-    const perHour = rows.map(
-      (r) => payoutForRate(OPENING_RATE_CENTS_PER_HOUR, r.job.estimatedCleanMinutes) /
-             (r.job.estimatedCleanMinutes / 60),
-    );
-    const spread = Math.max(...perHour) / Math.min(...perHour) - 1;
-    expect(spread).toBeLessThan(0.01);
+  it("moves the cleaner's fee with a discount to the customer", () => {
+    // The whole point of the model. Same house, same work; only our price
+    // differs, and her fee follows it.
+    const weekly = jobFrom("standard", "weekly", 2, 2);
+    const oneTime = jobFrom("standard", "one_time", 2, 2);
+
+    expect(weekly.estimatedCleanMinutes).toBe(oneTime.estimatedCleanMinutes);
+    expect(weekly.priceCents).toBeLessThan(oneTime.priceCents);
+
+    const weeklyPay = payoutForTicket(weekly.priceCents, CLEANER_SHARE_OF_TICKET);
+    const oneTimePay = payoutForTicket(oneTime.priceCents, CLEANER_SHARE_OF_TICKET);
+    expect(weeklyPay).toBeLessThan(oneTimePay);
+    expect(weeklyPay / weekly.priceCents).toBeCloseTo(oneTimePay / oneTime.priceCents, 5);
   });
 });
 
-describe("offers denominated in dollars per hour", () => {
-  it("a weekly 2bd/2ba opens at $57.50 — about 36% of the ticket", () => {
+describe("offers denominated as a share of the ticket", () => {
+  it("a weekly 2bd/2ba pays $52.80 — 33% of a $160 ticket", () => {
     const job = jobFrom("standard", "weekly", 2, 2);
-    const payout = payoutForRate(OPENING_RATE_CENTS_PER_HOUR, job.estimatedCleanMinutes);
-    expect(payout).toBe(5750);
-    expect(payout / job.priceCents).toBeCloseTo(0.36, 2);
+    const payout = payoutForTicket(job.priceCents, CLEANER_SHARE_OF_TICKET);
+    expect(payout).toBe(5280);
+    expect(payout / job.priceCents).toBeCloseTo(0.33, 5);
   });
 
-  it("a one-time 3bd/2ba opens at the same rate — about 29% of the ticket", () => {
+  it("a one-time 3bd/2ba pays $72.27 — the same 33% of a bigger ticket", () => {
     const job = jobFrom("standard", "one_time", 3, 2);
-    const payout = payoutForRate(OPENING_RATE_CENTS_PER_HOUR, job.estimatedCleanMinutes);
-    expect(payout).toBe(6375);
-    expect(payout / job.priceCents).toBeCloseTo(0.29, 2);
+    const payout = payoutForTicket(job.priceCents, CLEANER_SHARE_OF_TICKET);
+    expect(payout).toBe(7227);
+    expect(payout / job.priceCents).toBeCloseTo(0.33, 5);
   });
 });
 
 describe("the ladder", () => {
   const job = jobFrom("standard", "biweekly", 2, 2);
 
-  it("opens at the base rate and climbs", () => {
+  it("opens at the standard share and climbs", () => {
     const ladder = buildLadder(job, { rng: seeded(1) });
-    expect(ladder[0]!.hourlyRateCents).toBe(OPENING_RATE_CENTS_PER_HOUR);
+    expect(ladder[0]!.share).toBe(CLEANER_SHARE_OF_TICKET);
     for (let i = 1; i < ladder.length; i++) {
-      expect(ladder[i]!.hourlyRateCents).toBeGreaterThan(ladder[i - 1]!.hourlyRateCents);
+      expect(ladder[i]!.share).toBeGreaterThan(ladder[i - 1]!.share);
+      expect(ladder[i]!.payoutCents).toBeGreaterThan(ladder[i - 1]!.payoutCents);
       expect(ladder[i]!.offerAtSeconds).toBeGreaterThan(ladder[i - 1]!.offerAtSeconds);
     }
   });
@@ -116,32 +127,33 @@ describe("the ladder", () => {
     for (let seed = 1; seed <= 25; seed++) {
       const ladder = buildLadder(job, { rng: seeded(seed) });
       for (const rung of ladder) {
-        expect(rung.hourlyRateCents).toBeLessThanOrEqual(MAX_RATE_CENTS_PER_HOUR);
+        expect(rung.share).toBeLessThanOrEqual(MAX_SHARE_OF_TICKET);
       }
     }
   });
 
   it("is capped by the cheapest W-2 option, which is usually tighter", () => {
-    // Iggy at a 20-minute drive: $72.71 for a 2.3h job.
+    // Iggy at a 20-minute drive: $72.71 for this job.
     const ladder = buildLadder(job, { w2CeilingCents: 7271, rng: seeded(7) });
-    const ceilingRate = ceilingRateFromW2Cost(7271, job.estimatedCleanMinutes);
-    expect(ceilingRate).toBeLessThan(MAX_RATE_CENTS_PER_HOUR);
+    const ceilingShare = ceilingShareFromW2Cost(7271, job.priceCents);
+    expect(ceilingShare).toBeLessThan(MAX_SHARE_OF_TICKET);
     for (const rung of ladder) {
-      expect(rung.hourlyRateCents).toBeLessThanOrEqual(ceilingRate);
+      expect(rung.share).toBeLessThanOrEqual(ceilingShare);
     }
   });
 
-  it("holds the ceiling near 43% of a $170 ticket, not the 50% originally picked", () => {
-    const ceilingRate = ceilingRateFromW2Cost(7271, job.estimatedCleanMinutes);
-    const topPayout = payoutForRate(ceilingRate, job.estimatedCleanMinutes);
-    expect(topPayout / job.priceCents).toBeGreaterThan(0.42);
-    expect(topPayout / job.priceCents).toBeLessThan(0.44);
+  it("holds the ceiling near 43% of a $170 ticket, not the 50% aspirational cap", () => {
+    // The cap that actually binds is a cost, not a percentage: past it, our
+    // own employee is cheaper than buying the labour.
+    const ceilingShare = ceilingShareFromW2Cost(7271, job.priceCents);
+    expect(ceilingShare).toBeGreaterThan(0.42);
+    expect(ceilingShare).toBeLessThan(0.44);
   });
 
   it("randomises step size and dwell so the pattern cannot be learned", () => {
     const a = buildLadder(job, { rng: seeded(11) });
     const b = buildLadder(job, { rng: seeded(99) });
-    const shape = (l: typeof a) => l.map((r) => `${r.hourlyRateCents}:${r.dwellSeconds}`).join("|");
+    const shape = (l: typeof a) => l.map((r) => `${r.share}:${r.dwellSeconds}`).join("|");
     expect(shape(a)).not.toBe(shape(b));
   });
 
@@ -150,7 +162,7 @@ describe("the ladder", () => {
     // decides that — the builder still returns something coherent.
     const ladder = buildLadder(job, { w2CeilingCents: 100, rng: seeded(3) });
     expect(ladder).toHaveLength(1);
-    expect(ladder[0]!.hourlyRateCents).toBe(OPENING_RATE_CENTS_PER_HOUR);
+    expect(ladder[0]!.share).toBe(CLEANER_SHARE_OF_TICKET);
   });
 
   it("terminates for every seed", () => {
@@ -169,7 +181,8 @@ describe("what the cleaner is shown", () => {
     const start = new Date("2026-09-01T14:00:00Z");
     const offer = presentOffer(job, ladder[0]!, start);
 
-    expect(offer.payoutCents).toBe(5750);
+    // 33% of a $160.00 weekly ticket.
+    expect(offer.payoutCents).toBe(5280);
     expect(offer.estimatedMinutes).toBe(138);
     expect(offer.expiresAt.getTime()).toBeGreaterThan(start.getTime());
 
@@ -183,14 +196,14 @@ describe("what the cleaner is shown", () => {
 
 describe("escalation rate KPI", () => {
   it("is zero when everything clears at the base rate", () => {
-    const accepted = Array.from({ length: 10 }, () => ({ hourlyRateCents: 2500 }));
+    const accepted = Array.from({ length: 10 }, () => ({ share: 0.33 }));
     expect(escalationRate(accepted)).toBe(0);
   });
 
   it("flags a base rate below market", () => {
     const accepted = [
-      ...Array.from({ length: 6 }, () => ({ hourlyRateCents: 2500 })),
-      ...Array.from({ length: 4 }, () => ({ hourlyRateCents: 2900 })),
+      ...Array.from({ length: 6 }, () => ({ share: 0.33 })),
+      ...Array.from({ length: 4 }, () => ({ share: 0.38 })),
     ];
     expect(escalationRate(accepted)).toBeCloseTo(0.4, 5);
     expect(escalationRate(accepted)).toBeGreaterThan(ESCALATION_ALARM_THRESHOLD);
@@ -226,8 +239,8 @@ describe("tier ranking", () => {
 });
 
 describe("default configuration", () => {
-  it("opens at $25/hr and aspires to $32/hr", () => {
-    expect(DEFAULT_LADDER.openingRateCents).toBe(2500);
-    expect(DEFAULT_LADDER.maxRateCents).toBe(3200);
+  it("opens at 33% of the ticket and aspires to 49%", () => {
+    expect(DEFAULT_LADDER.openingShare).toBe(0.33);
+    expect(DEFAULT_LADDER.maxShare).toBe(0.49);
   });
 });

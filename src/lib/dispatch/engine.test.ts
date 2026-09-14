@@ -84,12 +84,12 @@ describe("step 1 — guaranteed hours are spent first", () => {
 describe("step 3 — board versus waterfall", () => {
   const full = () => shonda({ hoursScheduledThisWeek: 40 });
 
-  it("posts scheduled work to the open board at the base rate", () => {
+  it("posts scheduled work to the open board at the standard share", () => {
     const decision = dispatch(job(), context([full(), contractor()]));
     expect(decision.kind).toBe("open_board");
     if (decision.kind !== "open_board") return;
-    expect(decision.hourlyRateCents).toBe(2500);
-    expect(decision.payoutCents).toBe(5750); // $57.50 for 2h18m
+    expect(decision.share).toBe(0.33);
+    expect(decision.payoutCents).toBe(5610); // 33% of a $170.00 ticket
   });
 
   it("promotes an unclaimed board job to the waterfall at T-72h", () => {
@@ -105,7 +105,7 @@ describe("step 3 — board versus waterfall", () => {
     const decision = dispatch(urgent, context([full(), contractor()]));
     expect(decision.kind).toBe("waterfall");
     if (decision.kind !== "waterfall") return;
-    expect(decision.ladder[0]!.hourlyRateCents).toBe(2500);
+    expect(decision.ladder[0]!.share).toBe(0.33);
     expect(decision.ladder.length).toBeGreaterThan(1);
   });
 

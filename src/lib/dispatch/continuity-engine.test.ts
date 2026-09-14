@@ -103,45 +103,61 @@ describe("a requested cleaner is not made to bid for her own customer", () => {
   });
 });
 
-describe("an incumbency nobody asked for is priced", () => {
+describe("an incumbency nobody asked for is still an incumbency", () => {
   const revealed = {
     preferredCleanerId: null,
     incumbentCleanerId: "sarah",
     priorVisits: MIN_VISITS_FOR_INCUMBENCY + 3,
   };
 
-  it("holds for her when the premium is affordable", () => {
+  it("holds for her against another contractor", () => {
     const decision = dispatch(
       job({ continuity: revealed }),
       context([sarah(), contractor({ id: "stranger" })]),
     );
-    // Both are contractors priced at the same opening rate, so keeping the
-    // one who knows the house costs nothing.
     expect(decision.kind).toBe("hold_for_incumbent");
     if (decision.kind !== "hold_for_incumbent") return;
     expect(decision.basis).toBe("incumbent");
   });
 
-  it("lets the job go to market when the premium is too large, and says so", () => {
+  it("holds for her even when an idle W-2 would cost nothing", () => {
+    // THE POLICY. A cleaner who has been to a house before keeps going to that
+    // house. Payroll having a gap this week is not a reason to send somebody
+    // else, and under the old 15% cap this exact case reassigned the customer
+    // every time.
     const decision = dispatch(
       job({ continuity: revealed }),
       context([sarah(), shonda({ hoursScheduledThisWeek: 0 })]),
     );
 
-    // Shonda is free; Sarah is not; nobody promised the customer anything.
-    expect(decision.kind).toBe("assign_guaranteed");
-    expect(decision.continuity.status).toBe("waived_too_costly");
-    if (decision.continuity.status !== "waived_too_costly") return;
-    expect(decision.continuity.cleanerId).toBe("sarah");
-    expect(decision.continuity.premiumCents).toBeGreaterThan(decision.continuity.capCents);
+    expect(decision.kind).toBe("hold_for_incumbent");
+    if (decision.kind !== "hold_for_incumbent") return;
+    expect(decision.cleaner.id).toBe("sarah");
   });
 
-  it("respects an explicit cap from the caller", () => {
+  it("still records what that choice cost", () => {
+    // Not waived, but not invisible either: the spread agreed when a pairing
+    // forms is the spread for as long as it lasts, so the number has to be
+    // readable even though it reassigns nobody.
+    const decision = dispatch(
+      job({ continuity: revealed }),
+      context([sarah(), shonda({ hoursScheduledThisWeek: 0 })]),
+    );
+
+    expect(decision.continuity.status).toBe("held");
+    if (decision.continuity.status !== "held") return;
+    expect(decision.continuity.premiumCents).toBeGreaterThan(0);
+  });
+
+  it("gives the job up only when a ceiling is set deliberately", () => {
+    // The cap survives as a manual safety valve. It is off by default and
+    // nothing reaches this branch unless somebody turns it on.
     const decision = dispatch(job({ continuity: revealed }), {
       ...context([sarah(), shonda({ hoursScheduledThisWeek: 0 })]),
-      continuityPremiumCapCents: 100_000,
+      continuityPremiumCapCents: 100,
     });
-    expect(decision.kind).toBe("hold_for_incumbent");
+
+    expect(decision.continuity.status).toBe("waived_too_costly");
   });
 });
 
@@ -223,7 +239,7 @@ describe("a cleaner is not asked a question she has already answered", () => {
     const decision = dispatch(
       job({
         continuity: asked(),
-        passedOver: [{ cleanerId: "sarah", hourlyRateCents: 2500 }],
+        passedOver: [{ cleanerId: "sarah", share: 0.33 }],
       }),
       context([sarah(), contractor({ id: "stranger" })]),
     );
@@ -238,7 +254,7 @@ describe("a cleaner is not asked a question she has already answered", () => {
     const decision = dispatch(
       job({
         continuity: asked(),
-        passedOver: [{ cleanerId: "sarah", hourlyRateCents: 2500 }],
+        passedOver: [{ cleanerId: "sarah", share: 0.33 }],
       }),
       context([sarah(), contractor({ id: "stranger" })]),
     );
@@ -252,7 +268,7 @@ describe("a cleaner is not asked a question she has already answered", () => {
     // Refusing $30/h obviously answers $25/h as well, and re-asking downward
     // is the fastest way to teach a cleaner that answering means nothing.
     const decision = dispatch(
-      job({ continuity: asked(), passedOver: [{ cleanerId: "sarah", hourlyRateCents: 3000 }] }),
+      job({ continuity: asked(), passedOver: [{ cleanerId: "sarah", share: 0.38 }] }),
       context([sarah(), contractor({ id: "stranger" })]),
     );
     expect(decision.kind).toBe("open_board");
@@ -265,7 +281,7 @@ describe("a cleaner is not asked a question she has already answered", () => {
     // rate must stay reachable higher up, or she watches a stranger take her
     // own customer at a rate she was never offered.
     const decision = dispatch(
-      job({ continuity: asked(), passedOver: [{ cleanerId: "sarah", hourlyRateCents: 2400 }] }),
+      job({ continuity: asked(), passedOver: [{ cleanerId: "sarah", share: 0.32 }] }),
       context([sarah(), contractor({ id: "stranger" })]),
     );
     expect(decision.kind).toBe("hold_for_incumbent");
@@ -280,7 +296,7 @@ describe("a cleaner is not asked a question she has already answered", () => {
     const decision = dispatch(
       job({
         continuity: asked(),
-        passedOver: [{ cleanerId: "sarah", hourlyRateCents: 2500 }],
+        passedOver: [{ cleanerId: "sarah", share: 0.33 }],
       }),
       context([sarah(), contractor({ id: "stranger" })]),
     );
@@ -292,7 +308,7 @@ describe("a cleaner is not asked a question she has already answered", () => {
 
   it("does not confuse one cleaner's answer with another's", () => {
     const decision = dispatch(
-      job({ continuity: asked(), passedOver: [{ cleanerId: "stranger", hourlyRateCents: 2500 }] }),
+      job({ continuity: asked(), passedOver: [{ cleanerId: "stranger", share: 0.33 }] }),
       context([sarah(), contractor({ id: "stranger" })]),
     );
     expect(decision.kind).toBe("hold_for_incumbent");
@@ -348,32 +364,32 @@ describe("the ladder is a schedule across sweeps, not a broadcast", () => {
     );
     expect(decision.kind).toBe("waterfall");
     if (decision.kind !== "waterfall") return;
-    expect(decision.ladder[0]?.hourlyRateCents).toBe(2500);
+    expect(decision.ladder[0]?.share).toBe(0.33);
   });
 
   it("starts above whatever the job has already been offered at", () => {
-    // Without this the engine rebuilds from the opening rate every hour and
-    // sends the same rung for ever — a job nobody wants at $25/h is offered
-    // at $25/h until it happens, and the escalation the ladder exists for
-    // never occurs.
+    // Without this the engine rebuilds from the opening share every hour and
+    // sends the same rung for ever — a job nobody wants at 40% is offered at
+    // 40% until it happens, and the escalation the ladder exists for never
+    // occurs.
     const decision = dispatch(
-      job({ scheduledStart: urgent(), offeredUpToCents: 2700 }),
+      job({ scheduledStart: urgent(), offeredUpToShare: 0.43 }),
       context([contractor(), contractor({ id: "b" })]),
     );
 
     expect(decision.kind).toBe("waterfall");
     if (decision.kind !== "waterfall") return;
-    expect(decision.ladder[0]?.hourlyRateCents).toBeGreaterThan(2700);
+    expect(decision.ladder[0]?.share).toBeGreaterThan(0.43);
   });
 
-  it("reaches a cleaner again at a rate above the one she passed on", () => {
-    // The ladder's whole mechanism. She said no at $25/h; $28/h is a
-    // different question and she is entitled to be asked it.
+  it("reaches a cleaner again at a share above the one she passed on", () => {
+    // The ladder's whole mechanism. She said no at 40%; 43% is a different
+    // question and she is entitled to be asked it.
     const decision = dispatch(
       job({
         scheduledStart: urgent(),
-        offeredUpToCents: 2700,
-        passedOver: [{ cleanerId: "sarah", hourlyRateCents: 2500 }],
+        offeredUpToShare: 0.43,
+        passedOver: [{ cleanerId: "sarah", share: 0.33 }],
       }),
       context([sarah(), contractor({ id: "b" })]),
     );
@@ -387,7 +403,7 @@ describe("the ladder is a schedule across sweeps, not a broadcast", () => {
     // labour. That is the entire reason the ceiling is a marginal cost rather
     // than a percentage.
     const decision = dispatch(
-      job({ scheduledStart: urgent(), offeredUpToCents: 100_000 }),
+      job({ scheduledStart: urgent(), offeredUpToShare: 0.99 }),
       context([contractor(), shonda({ hoursScheduledThisWeek: 39 })]),
     );
 
@@ -398,9 +414,77 @@ describe("the ladder is a schedule across sweeps, not a broadcast", () => {
 
   it("says a spent ladder with no fallback needs a person", () => {
     const decision = dispatch(
-      job({ scheduledStart: urgent(), offeredUpToCents: 100_000 }),
+      job({ scheduledStart: urgent(), offeredUpToShare: 0.99 }),
       context([contractor()]),
     );
     expect(decision.kind).toBe("no_eligible_cleaner");
+  });
+});
+
+describe("a negotiated share is honoured", () => {
+  const agreedAt = (share: number | null) => ({
+    preferredCleanerId: "sarah",
+    incumbentCleanerId: "sarah",
+    priorVisits: 20,
+    agreedPayoutShare: share,
+  });
+
+  it("offers the incumbent her negotiated share of the ticket", () => {
+    const decision = dispatch(
+      job({ continuity: agreedAt(0.45) }),
+      context([sarah(), contractor({ id: "stranger" })]),
+    );
+
+    expect(decision.kind).toBe("hold_for_incumbent");
+    if (decision.kind !== "hold_for_incumbent") return;
+    expect(decision.share).toBe(0.45);
+    // 45% of a $170.00 ticket.
+    expect(decision.payoutCents).toBe(7650);
+  });
+
+  it("falls back to the standard share when nothing was negotiated", () => {
+    const decision = dispatch(
+      job({ continuity: agreedAt(null) }),
+      context([sarah(), contractor({ id: "stranger" })]),
+    );
+
+    if (decision.kind !== "hold_for_incumbent") return;
+    expect(decision.share).toBe(0.33);
+    expect(decision.payoutCents).toBe(5610);
+  });
+
+  it("keeps the spread fixed for a recurring relationship by construction", () => {
+    // The plan locks what the customer pays and the share is a constant, so
+    // the payout on a recurring visit cannot drift. Nothing guards this; it
+    // falls out of pricing off the ticket rather than off a global rate, and
+    // it is one of the better things about the model.
+    const priceCents = 17000;
+    const first = dispatch(
+      job({ priceCents, continuity: agreedAt(null) }),
+      context([sarah(), contractor({ id: "stranger" })]),
+    );
+    const later = dispatch(
+      job({ priceCents, continuity: agreedAt(null) }),
+      context([sarah(), contractor({ id: "stranger" })]),
+    );
+
+    if (first.kind !== "hold_for_incumbent" || later.kind !== "hold_for_incumbent") return;
+    expect(later.payoutCents).toBe(first.payoutCents);
+  });
+
+  it("prices the continuity premium at the negotiated share as well", () => {
+    // Or the recorded cost of keeping her would be measured against a share
+    // she is not actually being paid.
+    const cheap = dispatch(
+      job({ continuity: agreedAt(0.33) }),
+      context([sarah(), shonda({ hoursScheduledThisWeek: 0 })]),
+    );
+    const dear = dispatch(
+      job({ continuity: agreedAt(0.49) }),
+      context([sarah(), shonda({ hoursScheduledThisWeek: 0 })]),
+    );
+
+    if (cheap.continuity.status !== "held" || dear.continuity.status !== "held") return;
+    expect(dear.continuity.premiumCents).toBeGreaterThan(cheap.continuity.premiumCents ?? 0);
   });
 });

@@ -110,30 +110,55 @@ and is reimbursed nothing.
 So the order is **marketplace → Iggy → Shonda's overtime**, and past a 40-minute
 drive it flips. That is why it is recomputed per job rather than held as a ranking.
 
-### Offers are priced in dollars per hour
+### Offers are priced as a share of the ticket
 
-A flat 35% buys very different hourly rates, and it points the wrong way:
+**Superseded 14 September 2026.** This section originally argued for dollars per
+hour, and the argument is kept below because it is still true — it is the cost of
+the model, not a case against it.
 
-| Job | Price | Hours | 35% payout | Cleaner earns |
-|---|---|---|---|---|
-| Weekly 2bd/2ba | $160 | 2.30 | $56.00 | $24.35/hr — worst |
-| Bi-weekly 2bd/2ba | $170 | 2.30 | $59.50 | $25.87/hr |
-| Deep clean 3bd/2ba | $362 | 4.82 | $126.70 | $26.30/hr |
-| Move-out 4bd/4ba | $576 | 8.05 | $201.60 | $25.04/hr |
-| One-time std 3bd/2ba | $219 | 2.55 | $76.65 | $30.06/hr — best |
+A clean pays the cleaner **33% of whatever the customer pays**, escalating toward a
+ceiling of **49%** if nobody takes it. A discount to the customer reduces her fee in
+proportion, because the two are the same number scaled. The cap that usually binds is
+not 49% but the cheapest W-2 option for the specific job — past it, sending our own
+employee is cheaper than buying the labour, which is why the real ceiling is a cost
+rather than a percentage.
 
-A 23% spread on an identical percentage, and the worst-paid jobs are the **weekly
-recurring customers** — the most valuable relationships and the ones that must fill
-every week. Under a flat 35% those are the offers cleaners skip, so they escalate,
-and the premium lands exactly where margin is thinnest.
+**Why the reversal.** Paying a rate times *our* estimate of the job's length makes
+the cleaner's fee a function of our guess: estimate a 3bd/3ba at 173 minutes, and if
+it really takes 240 we have underpaid her by the size of our own error. It is also an
+employment marker, and worker classification is the largest legal exposure in this
+plan (§09). A published price per clean is how you buy a service from a business, and
+it makes the spread a single legible number per job — which matters because a pairing
+that works lasts years, so the margin agreed at formation is the margin for years.
 
-The ladder is therefore denominated in **$/hour**: it opens at $25/hr and climbs
-toward $32/hr, capped by the cheapest W-2 option. The percentage floats per job — 29%
-on a one-time 3/2, 36% on a weekly 2/2 — while take-home per hour stays flat, and the
-offer reads *"$57.50 for about 2h20m"*, which is what a cleaner actually decides on.
+**What it costs, unchanged from the original argument.** A flat share buys very
+different hourly rates, and it points the wrong way:
 
-This makes the duration estimate load-bearing, so the app recalibrates its per-room
-minutes from real clocked time as jobs complete.
+| Job | Price | Hours | Opens at 33% | Cleaner earns | Ceiling at 49% |
+|---|---|---|---|---|---|
+| Weekly 2bd/2ba | $160 | 2.30 | $52.80 | $22.96/hr — worst | $78.40 |
+| Bi-weekly 2bd/2ba | $170 | 2.30 | $56.10 | $24.39/hr | $83.30 |
+| Deep clean 3bd/2ba | $362 | 4.82 | $119.46 | $24.80/hr | $177.38 |
+| Move-out 4bd/4ba | $576 | 8.05 | $190.08 | $23.61/hr | $282.24 |
+| One-time std 3bd/2ba | $219 | 2.55 | $72.27 | $28.34/hr — best | $107.31 |
+
+The worst-paid jobs are the **weekly recurring customers** — the most valuable
+relationships and the ones that must fill every week.
+
+**Why that is survivable now and was not then.** When this was written, every visit
+was a fresh auction, so a cleaner picking off an open board would systematically skip
+the weeklies. Dispatch no longer works that way: a recurring visit goes to its
+incumbent *exclusively* before anyone else sees it, so she is not choosing it against
+a better-paying stranger's job.
+
+**What remains exposed is acquisition.** A *new* recurring customer has no incumbent,
+gets filled from the open board, and is the worst-paying thing on it. If new weeklies
+are slow to fill, that is the cause, and `MINIMUM_PAYOUT_CENTS` in
+`lib/pricing/payout.ts` is the lever — a floor under the payout regardless of share.
+It is off.
+
+The duration estimate is no longer load-bearing for pay, which removes a whole class
+of risk: a bad estimate now costs a scheduling error rather than an underpaid cleaner.
 
 ### The one real flaw, and four mitigations
 

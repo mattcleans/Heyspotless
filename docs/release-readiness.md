@@ -84,28 +84,38 @@ Built (`0015`). Closes the two gaps this document listed above.
 | Continuity is honoured and priced | Implemented, tested | `lib/dispatch/continuity.ts`, pure and asserted without a database like the rest of dispatch. The incumbent is held for or assigned before anything else runs; what that costs against the cheapest alternative is recorded on every decision. |
 | Interventions are countable | Implemented | `dispatch_decisions.decided_by`. Null means the engine decided. **Nothing is reporting on it yet** — the column is populated, the metric is not calculated anywhere. |
 
-**Open:** the continuity premium cap (`MAX_CONTINUITY_PREMIUM_FRACTION`, 15% of
-the ticket) is a stated default in the absence of better information, in the
-same posture as the unattributed-refund split. It decides when a customer gets
-substituted to save money and **needs Matt or Maddie's number**, not an
-engineer's. The data to set it is now being recorded.
+**Settled (Matt, 12 September 2026).** The continuity premium cap was shipped
+at 15% of the ticket and applied to any incumbency the customer had not
+explicitly asked for. It fired constantly: the comparison that matters is
+almost always against an idle W-2 inside guaranteed hours, which costs nothing,
+so the premium was a contractor's whole payout — 33–36% of the ticket at every
+job size on the current pricelist. The effective rule was "a customer loses
+their cleaner whenever Shonda has a spare hour".
 
-## Customer and operations gates
+The policy is now that a relationship ends for a **reason** — the customer asks
+for somebody else, the customer complains, the cleaner cannot take it, or she
+turns it down — and never on cost. `0017` gives the first two somewhere to live
+(`property_cleaner_blocks`) and turns the cap off by default. The premium is
+still recorded on every decision.
 
-1. Persist the accepted service scope, price and recurring discount.
-2. Create and change bookings through supported screens with capacity checks.
-3. Assign work and let the cleaner record completion through their own account.
-4. Show upcoming visits, invoices, receipts and payment authorization to customers.
-5. ~~Generate recurring visits without duplicates and preserve locked legacy rates.~~
-   Done — `0014`, verified against concurrent sweeps.
-6. Pilot a small, representative customer group with daily job and money reconciliation.
-7. Verify migrated history and future visits, rehearse rollback, and complete the
-   planned parallel run before retiring Housecall Pro.
+**Follow-on, settled 14 September 2026.** The spread question is closed by
+`0018`: the payout is 33% of the ticket, so `agreed_price_cents` times a
+constant share fixes the margin on a recurring relationship by construction.
+`agreed_payout_share` now records a *negotiated* exception and is almost always
+null — there is no rate to agree per relationship in the ordinary case, which
+removes the "nothing turns the key" gap this section previously listed.
 
-During parallel operation, identify the authoritative system for each job,
-message and payment. Only one platform may automatically collect for a visit.
+**Still open, and now sharper:**
 
-Track implemented, integrated, verified, piloted and accepted separately.
-Measure completed-customer acquisition cost, booking conversion, administration
-minutes per completed job, contribution per job and total software ownership
-cost against the existing business baseline.
+- **Acquisition on new recurring customers.** A flat share pays worst on the
+  discounted jobs. An existing recurring customer is protected — her visit goes
+  to her incumbent exclusively — but a NEW weekly has no incumbent and is the
+  worst-paying job on the open board. `MINIMUM_PAYOUT_CENTS` in
+  `lib/pricing/payout.ts` is the lever and is off. **Watch time-to-fill on new
+  recurring customers specifically**; if it is worse than one-time work of the
+  same size, that is this.
+- **Escalation on an established relationship.** An escalated rung is still a
+  one-off for that visit; the standard share stands next time. A pairing that
+  escalates every week is one whose share is below market for that customer,
+  and it should surface as an exception for a person to re-agree rather than
+  repeat forever. Nothing surfaces it yet — the data is in `offers.payout_pct`.

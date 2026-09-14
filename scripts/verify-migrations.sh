@@ -1309,12 +1309,12 @@ begin
   -- THE GATE. 0003 makes eligibility a CHECK on offers, so an offer below the
   -- rating floor cannot be written -- not by the engine, not by hand.
   begin
-    perform record_offer(v_job, v_barred, v_dec, 'waterfall', 1, 2500, 5750, 138,
+    perform record_offer(v_job, v_barred, v_dec, 'waterfall', 1, 0.33, 5610, 138,
                          now() + interval '20 minutes', false);
     v_fail := v_fail+1; raise warning 'an offer was written to an ineligible cleaner';
   exception when check_violation then null; end;
 
-  v_offer := record_offer(v_job, v_sarah, v_dec, 'direct_assign', 1, 2500, 5750, 138,
+  v_offer := record_offer(v_job, v_sarah, v_dec, 'direct_assign', 1, 0.33, 5610, 138,
                           now() + interval '20 minutes', true);
   if v_offer is null then v_fail := v_fail+1;
     raise warning 'recording an offer produced nothing'; end if;
@@ -1326,7 +1326,7 @@ begin
 
   -- IDEMPOTENT while live. A re-run of the sweep must re-present the SAME
   -- offer, not a second one she could accept twice.
-  v_same := record_offer(v_job, v_sarah, v_dec, 'direct_assign', 1, 2500, 5750, 138,
+  v_same := record_offer(v_job, v_sarah, v_dec, 'direct_assign', 1, 0.33, 5610, 138,
                          now() + interval '20 minutes', true);
   if v_same is distinct from v_offer then v_fail := v_fail+1;
     raise warning 're-recording an offer produced % instead of %', v_same, v_offer; end if;
@@ -1341,7 +1341,7 @@ begin
     raise warning 'answering another cleaner''s offer returned %', v_result; end if;
 
   -- DECLINING records the reason and assigns nobody.
-  v_offer2 := record_offer(v_job, v_stranger, v_dec, 'waterfall', 2, 2500, 5750, 138,
+  v_offer2 := record_offer(v_job, v_stranger, v_dec, 'waterfall', 2, 0.33, 5610, 138,
                            now() + interval '20 minutes', false);
   v_result := respond_to_offer(v_offer2, v_stranger, false, 'too far that morning');
   if v_result <> 'declined' then v_fail := v_fail+1;
@@ -1368,8 +1368,8 @@ begin
 
   select payout_cents into v_payout from job_assignments
     where job_id = v_job and cleaner_id = v_sarah;
-  if v_payout is distinct from 5750 then v_fail := v_fail+1;
-    raise warning 'the assignment paid %, want the offered 5750', v_payout; end if;
+  if v_payout is distinct from 5610 then v_fail := v_fail+1;
+    raise warning 'the assignment paid %, want the offered 5610', v_payout; end if;
 
   select status into v_status from jobs where id = v_job;
   if v_status <> 'assigned' then v_fail := v_fail+1;
@@ -1388,7 +1388,7 @@ begin
     returning id into v_job;
   insert into offers (job_id, cleaner_id, channel, tier, hourly_rate_cents,
                       payout_cents, payout_pct, estimated_minutes, expires_at)
-    values (v_job, v_sarah, 'waterfall', 1, 2500, 5750, 0.3382, 138,
+    values (v_job, v_sarah, 'waterfall', 1, 2439, 5610, 0.33, 138,
             now() - interval '1 minute')
     returning id into v_offer;
 
@@ -1402,7 +1402,7 @@ begin
   -- unheld rather than still waiting on somebody who never answered.
   insert into offers (job_id, cleaner_id, channel, tier, hourly_rate_cents,
                       payout_cents, payout_pct, estimated_minutes, expires_at)
-    values (v_job, v_stranger, 'waterfall', 1, 2500, 5750, 0.3382, 138,
+    values (v_job, v_stranger, 'waterfall', 1, 2439, 5610, 0.33, 138,
             now() - interval '1 minute');
   if expire_stale_offers() < 1 then v_fail := v_fail+1;
     raise warning 'the expiry sweep timed out nothing'; end if;
@@ -1419,9 +1419,9 @@ begin
     values (v_cust, v_prop, 'scheduled', 'standard', 'biweekly',
             now() + interval '9 days', 17000, 138)
     returning id into v_job;
-  v_offer := record_offer(v_job, v_sarah, null, 'waterfall', 1, 2500, 5750, 138,
+  v_offer := record_offer(v_job, v_sarah, null, 'waterfall', 1, 0.33, 5610, 138,
                           now() + interval '20 minutes', false);
-  v_offer2 := record_offer(v_job, v_stranger, null, 'waterfall', 1, 2500, 5750, 138,
+  v_offer2 := record_offer(v_job, v_stranger, null, 'waterfall', 1, 0.33, 5610, 138,
                            now() + interval '20 minutes', false);
 
   perform respond_to_offer(v_offer, v_sarah, true);
@@ -1586,10 +1586,10 @@ RACE_B_ID=$(as_super $PSQL -d "$DB" -tAc \
    values ('Race B', 'contractor_1099', 'active', 4.6, true) returning id")
 
 RACE_OFFER_A=$(as_super $PSQL -d "$DB" -tAc \
-  "select record_offer('$RACE_SETUP', '$RACE_A_ID', null, 'waterfall', 1, 2500, 5750, 138,
+  "select record_offer('$RACE_SETUP', '$RACE_A_ID', null, 'waterfall', 1, 0.33, 5610, 138,
                        now() + interval '20 minutes', false)")
 RACE_OFFER_B=$(as_super $PSQL -d "$DB" -tAc \
-  "select record_offer('$RACE_SETUP', '$RACE_B_ID', null, 'waterfall', 1, 2500, 5750, 138,
+  "select record_offer('$RACE_SETUP', '$RACE_B_ID', null, 'waterfall', 1, 0.33, 5610, 138,
                        now() + interval '20 minutes', false)")
 
 as_super $PSQL -d "$DB" -tAc \
@@ -1619,6 +1619,180 @@ if [ "$ASSIGNMENTS" != "1" ]; then
   exit 1
 fi
 echo "  concurrent offer acceptance verified"
+
+# --- relationships end for a reason (0017) ------------------------------------
+# The policy is that a cleaner who has been to a house keeps going to that
+# house, and what ends it is a reason -- the customer asks for somebody else,
+# the customer complains, she cannot take it, or she turns it down. Never a
+# price. These assert the reasons are recordable and that they actually bite.
+echo "  checking relationship blocks and the locked spread"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_prop uuid; v_plan uuid;
+  v_ada uuid; v_ben uuid; v_job uuid; v_old uuid;
+  v_incumbent uuid; v_rate integer; v_pref uuid; v_created boolean;
+  v_share numeric; v_fail integer := 0;
+begin
+  insert into customers (first_name, last_name) values ('Block','Test')
+    returning id into v_cust;
+  insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+    values (v_cust, '7 Block Way', 'Plano', '75024', 3, 2) returning id into v_prop;
+
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Ada Block', 'contractor_1099', 'active', 4.7, true) returning id into v_ada;
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Ben Block', 'contractor_1099', 'active', 4.7, true) returning id into v_ben;
+
+  -- Ada has cleaned it three times. She is the incumbent.
+  for i in 1..3 loop
+    insert into jobs (customer_id, property_id, status, service, freq,
+                      scheduled_start, price_cents, estimated_clean_minutes)
+      values (v_cust, v_prop, 'complete', 'standard', 'biweekly',
+              now() - (i || ' weeks')::interval, 17000, 138)
+      returning id into v_old;
+    insert into job_assignments (job_id, cleaner_id, payout_cents)
+      values (v_old, v_ada, 5750);
+  end loop;
+
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes,
+                    preferred_cleaner_id)
+    values (v_cust, v_prop, 'scheduled', 'standard', 'biweekly',
+            now() + interval '9 days', 17000, 138, v_ada)
+    returning id into v_job;
+
+  select incumbent_cleaner_id into v_incumbent from job_continuity where job_id = v_job;
+  if v_incumbent is distinct from v_ada then v_fail := v_fail+1;
+    raise warning 'before any block the incumbent is %, want Ada', v_incumbent; end if;
+
+  -- THE COMPLAINT. This is the thing that should end a relationship and had
+  -- nowhere to live before 0017.
+  perform block_cleaner_from_property(v_prop, v_ada, 'customer_complaint',
+                                      'left the back door unlocked');
+
+  select incumbent_cleaner_id into v_incumbent from job_continuity where job_id = v_job;
+  if v_incumbent is not null then v_fail := v_fail+1;
+    raise warning 'a blocked cleaner is still the incumbent (%)', v_incumbent; end if;
+
+  -- The stated preference goes with it. Leaving it pointing at somebody who
+  -- is not coming back would report "their requested cleaner is unavailable"
+  -- on every future visit for ever, which is true and useless.
+  select preferred_cleaner_id into v_pref from jobs where id = v_job;
+  if v_pref is not null then v_fail := v_fail+1;
+    raise warning 'the block left a stated preference pointing at the blocked cleaner'; end if;
+
+  -- The reason is on the record.
+  if not exists (select 1 from property_cleaner_blocks
+                 where property_id = v_prop and cleaner_id = v_ada
+                   and reason = 'customer_complaint'
+                   and note = 'left the back door unlocked') then
+    v_fail := v_fail+1; raise warning 'the block did not record why'; end if;
+
+  -- Blocking twice is a no-op, not a second block: "is she blocked" must not
+  -- be a question with two answers.
+  perform block_cleaner_from_property(v_prop, v_ada, 'customer_complaint');
+  select count(*) into v_rate from property_cleaner_blocks
+    where property_id = v_prop and cleaner_id = v_ada and lifted_at is null;
+  if v_rate <> 1 then v_fail := v_fail+1;
+    raise warning 'blocking twice produced % live blocks', v_rate; end if;
+
+  -- A block is per PROPERTY. A cleaner who was wrong for one house is not
+  -- thereby wrong for every house, and a blanket block would throw away a
+  -- working relationship to settle a different one.
+  declare v_other uuid;
+  begin
+    insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+      values (v_cust, '8 Other St', 'Plano', '75024', 2, 1) returning id into v_other;
+    insert into jobs (customer_id, property_id, status, service, freq,
+                      scheduled_start, price_cents, estimated_clean_minutes)
+      values (v_cust, v_other, 'complete', 'standard', 'biweekly',
+              now() - interval '1 week', 15900, 120)
+      returning id into v_old;
+    insert into job_assignments (job_id, cleaner_id, payout_cents)
+      values (v_old, v_ada, 5000);
+    insert into jobs (customer_id, property_id, status, service, freq,
+                      scheduled_start, price_cents, estimated_clean_minutes)
+      values (v_cust, v_other, 'scheduled', 'standard', 'biweekly',
+              now() + interval '9 days', 15900, 120)
+      returning id into v_old;
+
+    select incumbent_cleaner_id into v_incumbent from job_continuity where job_id = v_old;
+    if v_incumbent is distinct from v_ada then v_fail := v_fail+1;
+      raise warning 'a block at one property removed her incumbency at another'; end if;
+  end;
+
+  -- LIFTING brings her back, and keeps the row.
+  if not lift_cleaner_block(v_prop, v_ada) then v_fail := v_fail+1;
+    raise warning 'lifting a live block reported nothing'; end if;
+  select incumbent_cleaner_id into v_incumbent from job_continuity where job_id = v_job;
+  if v_incumbent is distinct from v_ada then v_fail := v_fail+1;
+    raise warning 'lifting the block did not restore her incumbency'; end if;
+  if not exists (select 1 from property_cleaner_blocks
+                 where property_id = v_prop and cleaner_id = v_ada
+                   and lifted_at is not null) then
+    v_fail := v_fail+1; raise warning 'a lifted block was deleted rather than kept'; end if;
+
+  -- Lifting twice reports nothing to lift rather than failing.
+  if lift_cleaner_block(v_prop, v_ada) then v_fail := v_fail+1;
+    raise warning 'lifting an already-lifted block reported a change'; end if;
+
+  -- ------------------------------------------------------- the spread -----
+  -- 0018: the spread is fixed by construction -- agreed_price_cents locks what
+  -- the customer pays and the share is a constant, so a recurring visit's
+  -- payout cannot drift. What the plan carries now is a NEGOTIATED share, for
+  -- the pairing that was agreed off-standard.
+  insert into recurring_plans (customer_id, property_id, freq, service,
+                               agreed_price_cents, estimated_minutes, anchor_date,
+                               start_time, preferred_cleaner_id,
+                               agreed_payout_share)
+  values (v_cust, v_prop, 'weekly', 'standard', 17000, 138, current_date + 7,
+          '09:30', v_ben, 0.45)
+  returning id into v_plan;
+
+  select job_id, created into v_job, v_created
+    from materialise_recurring_job(v_plan, current_date + 7,
+                                   (current_date + 7)::timestamptz + interval '9.5 hours');
+  if not v_created then v_fail := v_fail+1;
+    raise warning 'the spread-locked plan generated nothing'; end if;
+
+  select price_cents into v_rate from jobs where id = v_job;
+  if v_rate <> 17000 then v_fail := v_fail+1;
+    raise warning 'the customer half of the spread is %, want 17000', v_rate; end if;
+
+  select agreed_payout_share into v_share from jobs where id = v_job;
+  if v_share is distinct from 0.450 then v_fail := v_fail+1;
+    raise warning 'the negotiated share on the visit is %, want 0.450', v_share; end if;
+
+  select agreed_payout_share into v_share from job_continuity where job_id = v_job;
+  if v_share is distinct from 0.450 then v_fail := v_fail+1;
+    raise warning 'the view reports a negotiated share of %, want 0.450', v_share; end if;
+
+  -- Renegotiating the plan does NOT rewrite a visit already generated, the
+  -- same guarantee agreed_price_cents has had since 0014.
+  update recurring_plans set agreed_payout_share = 0.5 where id = v_plan;
+  perform * from materialise_recurring_job(v_plan, current_date + 7,
+                                           (current_date + 7)::timestamptz + interval '9.5 hours');
+  select agreed_payout_share into v_share from jobs where id = v_job;
+  if v_share is distinct from 0.450 then v_fail := v_fail+1;
+    raise warning 'a share renegotiation rewrote an existing visit to %', v_share; end if;
+
+  -- A share of zero is not "standard", it is a mistake, and a share above 1
+  -- pays the cleaner more than the customer paid. Null is standard.
+  begin
+    update recurring_plans set agreed_payout_share = 0 where id = v_plan;
+    v_fail := v_fail+1; raise warning 'a zero agreed payout share was accepted';
+  exception when check_violation then null; end;
+  begin
+    update recurring_plans set agreed_payout_share = 1.5 where id = v_plan;
+    v_fail := v_fail+1; raise warning 'an agreed payout share above 1 was accepted';
+  exception when check_violation then null; end;
+
+  if v_fail > 0 then raise exception '% relationship assertions failed', v_fail; end if;
+  raise notice 'relationship blocks and locked spread passed';
+end $$;
+SQL
+echo "  relationship blocks and locked spread verified"
 
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql

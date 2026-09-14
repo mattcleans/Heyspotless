@@ -130,12 +130,43 @@ scales with the lead time available, and disappears entirely on a same-day backf
 offered rather than assigned, because a platform that schedules a contractor without
 asking is exercising the control that makes her an employee.
 
-What continuity costs against the cheapest alternative is computed on every decision.
-A revealed incumbency ("she has come the last six times") is subject to a cap; a
-cleaner the customer explicitly **asked for** is not, at any price. The cap defaults
-to 15% of the ticket and is a policy number to set, not a measurement — see
-`MAX_CONTINUITY_PREMIUM_FRACTION` in
+**Continuity is not given up on price.** A cleaner who has been to a house before
+keeps going to that house. What ends it is a reason — the customer asks for somebody
+else, the customer complains, she stops clearing the eligibility gate, or she turns
+the visit down. `property_cleaner_blocks` (`0017`) is where the first two live, per
+property and as a row with a reason, so "why did Marisol stop coming in March" has an
+answer a year later.
+
+The cost of that choice is still computed and recorded on every decision. It reassigns
+nobody; it is there to be read. A cost ceiling survives as a manual safety valve and is
+**off by default** — see `MAX_CONTINUITY_PREMIUM_FRACTION` in
 [`src/lib/dispatch/continuity.ts`](src/lib/dispatch/continuity.ts).
+
+### What a clean pays
+
+**33% of whatever the customer pays** (`0018`), escalating to a ceiling of 49% if
+nobody takes it. A discount to the customer reduces the cleaner's fee in proportion,
+because the two are the same number scaled. The ceiling that usually binds is not 49%
+but the cheapest W-2 option for the specific job — past it, sending our own employee
+is cheaper than buying the labour.
+
+This replaced a dollars-per-hour ladder. Paying a rate times *our* estimate made her
+fee a function of our guess — estimate a job at 173 minutes and if it takes 240 we
+have underpaid her by the size of our own error — and paying by the hour is an
+employment marker, which matters given worker classification is the largest legal
+exposure in the plan.
+
+It also fixes the spread for free. `agreed_price_cents` locks what a recurring
+customer pays for the life of the plan, and a constant share of a locked price is a
+locked payout. `agreed_payout_share` exists only to record a *negotiated* exception,
+and is almost always null.
+
+The known cost is written down in `docs/build-plan.md` and asserted in
+`ladder.test.ts`: a flat share pays worst on the discounted jobs, which are the
+recurring ones. That is survivable because a recurring visit goes to its incumbent
+exclusively rather than onto a board — but a **new** recurring customer has no
+incumbent and is the worst-paying job on that board. `MINIMUM_PAYOUT_CENTS` is the
+lever if new weeklies are slow to fill. It is off.
 
 `dispatch_decisions.decided_by` is null when the engine decided and set when a person
 did. That one nullable column is the whole numerator of *manager interventions per

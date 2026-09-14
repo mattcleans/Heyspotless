@@ -89,24 +89,24 @@ export interface DispatchJob {
    * itself on every sweep and the visit would never reach the open board at
    * all. A hold that cannot lapse is not a hold.
    *
-   * The RATE is carried because "do not ask again" is the wrong rule: asking
+   * The SHARE is carried because "do not ask again" is the wrong rule: asking
    * again HIGHER up is legitimate and is the entire mechanism of the ladder.
-   * She is not asked again at a rate she has already passed on; a later rung
+   * She is not asked again at a share she has already passed on; a later rung
    * still reaches her. That matters most for the incumbent, because a cleaner
-   * who watches a stranger take her own customer at a rate she was never
+   * who watches a stranger take her own customer at a price she was never
    * offered learns to stop answering honestly.
    */
-  passedOver?: readonly { cleanerId: string; hourlyRateCents: number }[];
+  passedOver?: readonly { cleanerId: string; share: number }[];
   /**
-   * The highest hourly rate this job has already been offered at.
+   * The highest share of the ticket this job has already been offered at.
    *
    * The ladder is a schedule spread across sweeps, not a broadcast: each run
    * sends one rung. Without this the engine rebuilds the ladder from the
-   * opening rate every hour and sends the same rung for ever, so a job nobody
-   * wants at $25/h is offered at $25/h until it happens — the escalation the
-   * whole ladder exists for never occurs.
+   * opening share every hour and sends the same rung for ever, so a job nobody
+   * wants at 40% is offered at 40% until it happens — the escalation the whole
+   * ladder exists for never occurs.
    */
-  offeredUpToCents?: number;
+  offeredUpToShare?: number;
 }
 
 /** A drive leg between two points, estimated or measured. */

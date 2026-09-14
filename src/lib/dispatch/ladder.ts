@@ -1,55 +1,65 @@
 /**
  * The offer ladder.
  *
- * Offers are denominated in DOLLARS PER HOUR, not a percentage of the ticket.
- * A flat percentage produced a 23% spread in what a cleaner actually earned per
- * hour, and it pointed the wrong way: weekly recurring customers — the most
- * valuable relationships and the ones that must fill every week — paid the
- * worst hourly rate and so were the offers cleaners skipped.
+ * Offers are denominated as a SHARE OF THE TICKET — 40% of whatever the
+ * customer pays — and escalate in share, not in dollars per hour. The reasoning
+ * for that, and the honest cost of it, is in lib/pricing/payout.ts; this
+ * executes it.
  *
- * Under a per-hour ladder the percentage floats per job (about 29% on a
- * one-time 3bd/2ba, about 36% on a weekly 2bd/2ba) while take-home per hour
- * stays flat, and the offer reads "$57.50 for about 2h20m" — which is what a
- * cleaner actually decides on.
+ * What the cleaner sees is a price for a clean: "$77.60 for this job". Not a
+ * rate, not a percentage, and never a hint that either might move.
  *
- * The ceiling is not a fixed percentage either. It is the cheapest W-2 marginal
- * cost for this specific job, because past that point sending your own employee
- * is cheaper than buying the labor.
+ * The ceiling is not a fixed share. It is the cheapest W-2 marginal cost for
+ * this specific job, expressed as a share of this job's price, because past
+ * that point sending our own employee is cheaper than buying the labour.
  */
 
+import {
+  CLEANER_SHARE_OF_TICKET,
+  MAX_SHARE_OF_TICKET,
+  ceilingShareFromW2Cost,
+  impliedHourlyCents,
+  payoutForTicket,
+} from "../pricing/payout";
 import type { DispatchJob } from "./types";
 
-/** Opening rate. Below this the marketplace does not clear. */
-export const OPENING_RATE_CENTS_PER_HOUR = 2500;
-/** Aspirational ceiling. The real cap is usually the cheapest W-2 option. */
-export const MAX_RATE_CENTS_PER_HOUR = 3200;
-
 export interface LadderConfig {
-  openingRateCents: number;
-  maxRateCents: number;
-  /** Escalation step bounds, randomized within them so the pattern can't be learned. */
-  minStepCents: number;
-  maxStepCents: number;
-  /** Seconds a rung stays open before the next one, also randomized. */
+  /** Where every job opens. Below this the marketplace does not clear. */
+  openingShare: number;
+  /** Aspirational ceiling. The real cap is usually the cheapest W-2 option. */
+  maxShare: number;
+  /**
+   * Escalation step bounds in share, randomised within them so the pattern
+   * cannot be learned and waited out.
+   */
+  minStepShare: number;
+  maxStepShare: number;
+  /** Seconds a rung stays open before the next one, also randomised. */
   minDwellSeconds: number;
   maxDwellSeconds: number;
 }
 
 export const DEFAULT_LADDER: LadderConfig = {
-  openingRateCents: OPENING_RATE_CENTS_PER_HOUR,
-  maxRateCents: MAX_RATE_CENTS_PER_HOUR,
-  minStepCents: 100,
-  maxStepCents: 250,
+  openingShare: CLEANER_SHARE_OF_TICKET,
+  maxShare: MAX_SHARE_OF_TICKET,
+  minStepShare: 0.015,
+  maxStepShare: 0.03,
   minDwellSeconds: 8 * 60,
   maxDwellSeconds: 15 * 60,
 };
 
 export interface LadderRung {
   index: number;
-  hourlyRateCents: number;
+  /** The share of the ticket this rung offers. The escalation dimension. */
+  share: number;
   payoutCents: number;
-  /** Share of the ticket. Floats per job — informational, never the input. */
-  payoutPct: number;
+  /**
+   * What she effectively earns per hour at this rung. REPORTING ONLY — it is
+   * an output now, not an input, and it varies per job in a way the old
+   * per-hour ladder hid. It stays visible precisely because it is no longer
+   * controlled.
+   */
+  impliedHourlyRateCents: number;
   /** Seconds after dispatch starts that this rung goes out. */
   offerAtSeconds: number;
   dwellSeconds: number;
@@ -57,19 +67,6 @@ export interface LadderRung {
 
 /** Deterministic when you pass a seeded rng — the tests rely on that. */
 export type Rng = () => number;
-
-export function payoutForRate(hourlyRateCents: number, estimatedMinutes: number): number {
-  return Math.floor((hourlyRateCents * estimatedMinutes) / 60 + 0.5);
-}
-
-/**
- * Convert a W-2 marginal cost into the equivalent hourly rate for this job, so
- * it can cap the ladder.
- */
-export function ceilingRateFromW2Cost(w2MarginalCents: number, estimatedMinutes: number): number {
-  if (estimatedMinutes <= 0) return 0;
-  return Math.floor((w2MarginalCents * 60) / estimatedMinutes);
-}
 
 export interface BuildLadderOptions {
   config?: LadderConfig;
@@ -95,25 +92,27 @@ export function buildLadder(
   const rng = options.rng ?? Math.random;
   const minutes = job.estimatedCleanMinutes;
 
-  let ceiling = config.maxRateCents;
+  let ceiling = config.maxShare;
   if (options.w2CeilingCents != null) {
-    ceiling = Math.min(ceiling, ceilingRateFromW2Cost(options.w2CeilingCents, minutes));
+    ceiling = Math.min(ceiling, ceilingShareFromW2Cost(options.w2CeilingCents, job.priceCents));
   }
 
   const rungs: LadderRung[] = [];
-  let rate = config.openingRateCents;
+  let share = config.openingShare;
   let elapsed = 0;
   let index = 0;
 
   // The opening rung always goes out, even if the ceiling sits below it — the
   // caller decides whether to run an auction at all (see engine.ts).
-  while (index === 0 || rate <= ceiling) {
+  while (index === 0 || share <= ceiling) {
     const dwell = randomInt(rng, config.minDwellSeconds, config.maxDwellSeconds);
+    const payoutCents = payoutForTicket(job.priceCents, share);
+
     rungs.push({
       index,
-      hourlyRateCents: rate,
-      payoutCents: payoutForRate(rate, minutes),
-      payoutPct: job.priceCents > 0 ? payoutForRate(rate, minutes) / job.priceCents : 0,
+      share,
+      payoutCents,
+      impliedHourlyRateCents: impliedHourlyCents(payoutCents, minutes),
       offerAtSeconds: elapsed,
       dwellSeconds: dwell,
     });
@@ -121,10 +120,10 @@ export function buildLadder(
     elapsed += dwell;
     index += 1;
 
-    const step = randomInt(rng, config.minStepCents, config.maxStepCents);
-    const next = rate + step;
+    const step = randomShare(rng, config.minStepShare, config.maxStepShare);
+    const next = share + step;
     if (next > ceiling) break;
-    rate = next;
+    share = next;
 
     if (index > 64) break; // paranoia; the bounds make this unreachable
   }
@@ -164,11 +163,11 @@ export function presentOffer(job: DispatchJob, rung: LadderRung, dispatchStarted
 export const ESCALATION_ALARM_THRESHOLD = 0.3;
 
 export function escalationRate(
-  accepted: readonly { hourlyRateCents: number }[],
-  openingRateCents: number = OPENING_RATE_CENTS_PER_HOUR,
+  accepted: readonly { share: number }[],
+  openingShare: number = CLEANER_SHARE_OF_TICKET,
 ): number {
   if (accepted.length === 0) return 0;
-  const escalated = accepted.filter((o) => o.hourlyRateCents > openingRateCents).length;
+  const escalated = accepted.filter((o) => o.share > openingShare).length;
   return escalated / accepted.length;
 }
 
@@ -203,4 +202,13 @@ export function assignTiers<T>(ranked: readonly T[], tierSize = 3): T[][] {
 
 function randomInt(rng: Rng, min: number, max: number): number {
   return min + Math.floor(rng() * (max - min + 1));
+}
+
+/**
+ * A step in share space. Quantised to hundredths of a percentage point so a
+ * rung is a number somebody can read in a report, rather than 0.4150000000001.
+ */
+function randomShare(rng: Rng, min: number, max: number): number {
+  const steps = Math.round((max - min) * 10_000);
+  return min + randomInt(rng, 0, steps) / 10_000;
 }

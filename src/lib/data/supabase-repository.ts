@@ -147,7 +147,7 @@ export class SupabaseRepository implements Repository {
       ...job,
       continuity: continuity.get(job.id),
       passedOver: passedOver.get(job.id),
-      offeredUpToCents: offeredUpTo.get(job.id),
+      offeredUpToShare: offeredUpTo.get(job.id),
     }));
   }
 
