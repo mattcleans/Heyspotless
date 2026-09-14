@@ -1794,6 +1794,121 @@ end $$;
 SQL
 echo "  relationship blocks and locked spread verified"
 
+# --- offer notifications (0019) -----------------------------------------------
+# The dispatch sweep runs hourly and is deliberately safe to re-run. A
+# notification has no natural identity, so without a constraint a re-run texts
+# a cleaner again about a clean she is already looking at. Texting a contractor
+# four times about one job is how a platform gets muted, and a muted cleaner is
+# an unreachable one.
+echo "  checking offer notifications"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_prop uuid; v_job uuid; v_cleaner uuid; v_profile uuid;
+  v_offer uuid; v_msg uuid; v_again uuid; v_count integer; v_fail integer := 0;
+  v_delivered timestamptz; v_reason text; v_opted timestamptz; v_opted2 timestamptz;
+begin
+  insert into customers (first_name, last_name) values ('Notify','Test')
+    returning id into v_cust;
+  insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+    values (v_cust, '3 Notify Way', 'Plano', '75024', 2, 2) returning id into v_prop;
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Notify Cleaner', 'contractor_1099', 'active', 4.6, true) returning id into v_cleaner;
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'scheduled', 'standard', 'biweekly',
+            now() + interval '9 days', 17000, 138)
+    returning id into v_job;
+
+  v_offer := record_offer(v_job, v_cleaner, null, 'waterfall', 1, 0.33, 5610, 138,
+                          now() + interval '20 minutes', false);
+
+  -- FIRST SEND. Claimed before the provider is called, so a crash between
+  -- sending and recording cannot leave the next sweep sending again.
+  v_msg := record_outbound_message(v_offer, 'offer.sent', v_cleaner, v_job,
+                                   'sms', 'body', '+12145550100');
+  if v_msg is null then v_fail := v_fail+1;
+    raise warning 'the first notification recorded nothing'; end if;
+
+  -- THE GUARANTEE. Every sweep after the first must get null and send nothing.
+  v_again := record_outbound_message(v_offer, 'offer.sent', v_cleaner, v_job,
+                                     'sms', 'body', '+12145550100');
+  if v_again is not null then v_fail := v_fail+1;
+    raise warning 're-announcing an offer produced a second message (%)', v_again; end if;
+
+  select count(*) into v_count from messages
+    where offer_id = v_offer and kind = 'offer.sent';
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'one offer produced % announcements', v_count; end if;
+
+  -- A DIFFERENT KIND about the same offer is legitimate: announcing it and
+  -- later saying it was withdrawn are two real messages about one row.
+  v_again := record_outbound_message(v_offer, 'offer.withdrawn', v_cleaner, v_job,
+                                     'sms', 'gone', '+12145550100');
+  if v_again is null then v_fail := v_fail+1;
+    raise warning 'a withdrawal notice was blocked by the announcement'; end if;
+
+  -- SETTLING. Delivered and failed are different states, and the difference
+  -- matters: a cleaner we could not reach must not look like one who ignored
+  -- us, because acceptance rate drives ranking.
+  perform settle_outbound_message(v_msg, 'SM123');
+  select delivered_at, failed_reason into v_delivered, v_reason
+    from messages where id = v_msg;
+  if v_delivered is null then v_fail := v_fail+1;
+    raise warning 'a delivered message has no delivered_at'; end if;
+  if v_reason is not null then v_fail := v_fail+1;
+    raise warning 'a delivered message recorded a failure reason'; end if;
+
+  perform settle_outbound_message(v_msg, null, 'unreachable number');
+  select delivered_at, failed_reason into v_delivered, v_reason
+    from messages where id = v_msg;
+  if v_delivered is not null then v_fail := v_fail+1;
+    raise warning 'a failed message still reads as delivered'; end if;
+  if v_reason is distinct from 'unreachable number' then v_fail := v_fail+1;
+    raise warning 'the failure reason is %, want it recorded', v_reason; end if;
+
+  -- WHERE THE PHONE COMES FROM. A cleaner has no phone column of her own --
+  -- the number lives on her profile, created by the 0004 signup trigger. This
+  -- signs one up the way a real cleaner does, because the messaging store reads
+  -- the number from exactly here and an offer to somebody with no number on
+  -- file must never be written.
+  v_profile := uuid_generate_v4();
+  insert into auth.users (id, email, raw_user_meta_data)
+  values (v_profile, 'optout@example.com',
+          '{"role":"cleaner","full_name":"Opted Out","phone":"+12145550199"}'::jsonb);
+
+  select phone into v_reason from profiles where id = v_profile;
+  if v_reason is distinct from '+12145550199' then v_fail := v_fail+1;
+    raise warning 'signup put the phone at %, want it on the profile', v_reason; end if;
+
+  update cleaners set profile_id = v_profile where id = v_cleaner;
+
+  -- OPT-OUT. Carrier rules make honouring STOP mandatory; the reason to model
+  -- it is narrower -- an unreachable cleaner must not be offered work.
+
+  perform set_sms_opt_out(v_profile, true, 'replied STOP');
+  select sms_opted_out_at into v_opted from profiles where id = v_profile;
+  if v_opted is null then v_fail := v_fail+1;
+    raise warning 'STOP did not record an opt-out'; end if;
+
+  -- Replying twice is not twice as opted out, and must not move the timestamp:
+  -- when they opted out is the evidence if it is ever questioned.
+  perform set_sms_opt_out(v_profile, true, 'replied STOP again');
+  select sms_opted_out_at into v_opted2 from profiles where id = v_profile;
+  if v_opted2 <> v_opted then v_fail := v_fail+1;
+    raise warning 'a second STOP moved the opt-out timestamp'; end if;
+
+  perform set_sms_opt_out(v_profile, false);
+  select sms_opted_out_at into v_opted from profiles where id = v_profile;
+  if v_opted is not null then v_fail := v_fail+1;
+    raise warning 'START did not clear the opt-out'; end if;
+
+  if v_fail > 0 then raise exception '% notification assertions failed', v_fail; end if;
+  raise notice 'offer notifications passed';
+end $$;
+SQL
+echo "  offer notifications verified"
+
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql
 echo "  access controls verified"

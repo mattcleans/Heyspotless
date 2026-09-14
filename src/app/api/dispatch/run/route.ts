@@ -2,8 +2,18 @@ import { NextResponse, type NextRequest } from "next/server";
 import { SupabaseRepository } from "@/lib/data/supabase-repository";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { DispatchStore, availabilityFor, busyWindowsFor } from "@/lib/dispatch/store";
+import {
+  MessagingStore,
+  OFFER_SENT,
+  reachabilityOf,
+  type Recipient,
+} from "@/lib/messaging/store";
+import { sendWindowFor } from "@/lib/messaging/quiet-hours";
+import { offerMessage } from "@/lib/messaging/templates";
+import { sendSms } from "@/lib/messaging/gateway";
+import { isMessagingEnabled } from "@/lib/messaging/env";
 import { windowsOn } from "@/lib/dispatch/availability";
-import { dispatchBoard, type DispatchDecision } from "@/lib/dispatch/engine";
+import { dispatchBoard, hoursUntil, type DispatchDecision } from "@/lib/dispatch/engine";
 import { presentOffer } from "@/lib/dispatch/ladder";
 import { CLEANER_SHARE_OF_TICKET, payoutForTicket } from "@/lib/pricing/payout";
 import { zipCentroidEstimator } from "@/lib/dispatch/route";
@@ -46,6 +56,7 @@ export async function POST(request: NextRequest) {
   const db = createAdminClient();
   const repo = new SupabaseRepository(db);
   const store = new DispatchStore(db);
+  const messaging = new MessagingStore(db);
 
   // Time out lapsed countdowns FIRST. A job whose exclusive hold ran out
   // unanswered has to be seen as unheld, or the sweep keeps politely waiting
@@ -101,12 +112,20 @@ export async function POST(request: NextRequest) {
       j.continuity && j.continuity.incumbentCleanerId === c.id ? j.continuity.priorVisits : 0,
   };
 
+  // Who we can actually reach. An offer nobody is told about is not an offer:
+  // it starts a countdown the cleaner cannot answer and expires having taught
+  // the ranking she passed on work she was never shown.
+  const recipients = await messaging.recipientsFor(cleaners.map((c) => c.id));
+
   const result = {
     jobs: jobs.length,
     expiredOffers: expired,
     assigned: 0,
     held: 0,
     offered: 0,
+    notified: 0,
+    deferred: 0,
+    unreachable: 0,
     refused: 0,
     unfilled: 0,
     failed: 0,
@@ -119,7 +138,14 @@ export async function POST(request: NextRequest) {
       // decision is "nobody". A board that only writes down its successes
       // cannot answer why a visit went unfilled for three days.
       const { id: decisionId } = await store.recordDecision(job.id, decision);
-      await act(store, job, decision, decisionId, now, result);
+      await act(
+        { store, messaging, recipients, origin: request.nextUrl.origin },
+        job,
+        decision,
+        decisionId,
+        now,
+        result,
+      );
     } catch (error) {
       // One job must not stop the board. A visit that fails to dispatch is a
       // problem for a person; every other visit still needs filling tonight.
@@ -136,9 +162,19 @@ type Result = {
   assigned: number;
   held: number;
   offered: number;
+  notified: number;
+  deferred: number;
+  unreachable: number;
   refused: number;
   unfilled: number;
 };
+
+interface Deps {
+  store: DispatchStore;
+  messaging: MessagingStore;
+  recipients: Map<string, Recipient>;
+  origin: string;
+}
 
 /**
  * Write one offer, treating a refusal as one cleaner's problem rather than the
@@ -155,73 +191,69 @@ async function tryOffer(
   store: DispatchStore,
   offer: Parameters<DispatchStore["recordOffer"]>[0],
   result: Result,
-): Promise<void> {
+): Promise<string | null> {
   try {
-    await store.recordOffer(offer);
+    const offerId = await store.recordOffer(offer);
     result.offered += 1;
+    return offerId;
   } catch (error) {
     result.refused += 1;
     console.warn(
       `offer refused for cleaner ${offer.cleanerId} on job ${offer.jobId}: ${messageOf(error)}`,
     );
+    return null;
   }
 }
 
 async function act(
-  store: DispatchStore,
+  deps: Deps,
   job: Job,
   decision: DispatchDecision,
   decisionId: string,
   now: Date,
   result: Result,
 ): Promise<void> {
+  const { store } = deps;
+
   switch (decision.kind) {
     case "assign_guaranteed":
     case "assign_w2": {
-      // An employee is scheduled, not asked.
+      // An employee is scheduled, not asked — and scheduled work needs no
+      // countdown, so nothing here waits on being able to text her.
       const payout = payoutForTicket(job.priceCents, CLEANER_SHARE_OF_TICKET);
       if (await store.assignDirectly(job.id, decision.cleaner.id, payout)) result.assigned += 1;
       return;
     }
 
     case "hold_for_incumbent": {
-      await store.recordOffer({
-        jobId: job.id,
+      const sent = await offerAndNotify(deps, job, result, {
         cleanerId: decision.cleaner.id,
         decisionId,
         channel: "direct_assign",
         tier: 1,
         share: decision.share,
         payoutCents: decision.payoutCents,
-        estimatedMinutes: job.estimatedCleanMinutes,
         expiresAt: decision.exclusiveUntil,
         isExclusive: true,
+        now,
       });
-      result.held += 1;
+      if (sent) result.held += 1;
       return;
     }
 
     case "open_board": {
-      // The board is not a broadcast to everyone at once in practice — it is
-      // an offer to each eligible cleaner at the same standing rate, which is
-      // what makes "first to claim it" true rather than a race the fastest
-      // phone wins.
       for (const cleaner of decision.eligible) {
-        await tryOffer(
-          store,
-          {
-            jobId: job.id,
-            cleanerId: cleaner.id,
-            decisionId,
-            channel: "open_board",
-            tier: 1,
-            share: decision.share,
-            payoutCents: decision.payoutCents,
-            estimatedMinutes: job.estimatedCleanMinutes,
-            expiresAt: decision.promoteToWaterfallAt,
-          },
-          result,
-        );
+        await offerAndNotify(deps, job, result, {
+          cleanerId: cleaner.id,
+          decisionId,
+          channel: "open_board",
+          tier: 1,
+          share: decision.share,
+          payoutCents: decision.payoutCents,
+          expiresAt: decision.promoteToWaterfallAt,
+          isExclusive: false,
+          now,
+        });
       }
       return;
     }
@@ -241,21 +273,17 @@ async function act(
 
       const presented = presentOffer(job, rung, now);
       for (const cleaner of tier) {
-        await tryOffer(
-          store,
-          {
-            jobId: job.id,
-            cleanerId: cleaner.id,
-            decisionId,
-            channel: "waterfall",
-            tier: 1,
-            share: rung.share,
-            payoutCents: rung.payoutCents,
-            estimatedMinutes: job.estimatedCleanMinutes,
-            expiresAt: presented.expiresAt,
-          },
-          result,
-        );
+        await offerAndNotify(deps, job, result, {
+          cleanerId: cleaner.id,
+          decisionId,
+          channel: "waterfall",
+          tier: 1,
+          share: rung.share,
+          payoutCents: rung.payoutCents,
+          expiresAt: presented.expiresAt,
+          isExclusive: false,
+          now,
+        });
       }
       return;
     }
@@ -267,6 +295,120 @@ async function act(
       result.unfilled += 1;
       return;
   }
+}
+
+interface OfferPlan {
+  cleanerId: string;
+  decisionId: string;
+  channel: "open_board" | "waterfall" | "direct_assign";
+  tier: number;
+  share: number;
+  payoutCents: number;
+  expiresAt: Date;
+  isExclusive: boolean;
+  now: Date;
+}
+
+/**
+ * Write an offer and tell the cleaner it exists — or write neither.
+ *
+ * THE ORDER MATTERS AND SO DOES THE REFUSAL. An offer she cannot be told about
+ * is worse than no offer: it starts a countdown she has no way to answer, and
+ * when it lapses the system records that she passed on work she was never
+ * shown. Acceptance rate drives ranking, so that is not a cosmetic error — it
+ * is her standing in the marketplace, spent on a message we never sent.
+ *
+ * So both gates are checked BEFORE the offer is written:
+ *
+ *   * REACHABILITY — no number on file, or she has replied STOP.
+ *   * THE SEND WINDOW — quiet hours, unless the job is close enough that
+ *     waiting until morning is the worse outcome.
+ *
+ * A deferred job is not lost. The sweep runs hourly; the next one after 08:00
+ * writes the offer and sends it.
+ */
+async function offerAndNotify(
+  deps: Deps,
+  job: Job,
+  result: Result,
+  plan: OfferPlan,
+): Promise<boolean> {
+  const recipient = deps.recipients.get(plan.cleanerId);
+  const reach = reachabilityOf(recipient);
+
+  // Messaging switched off entirely — a local run, or a demo. Offers are still
+  // written, because the alternative is a dev environment where dispatch
+  // silently does nothing.
+  const announcing = isMessagingEnabled();
+
+  if (announcing && !reach.reachable) {
+    result.unreachable += 1;
+    return false;
+  }
+
+  if (announcing) {
+    const window = sendWindowFor(plan.now, {
+      hoursUntilJob: hoursUntil(job, plan.now),
+    });
+    if (!window.send) {
+      result.deferred += 1;
+      return false;
+    }
+  }
+
+  const offerId = await tryOffer(
+    deps.store,
+    {
+      jobId: job.id,
+      cleanerId: plan.cleanerId,
+      decisionId: plan.decisionId,
+      channel: plan.channel,
+      tier: plan.tier,
+      share: plan.share,
+      payoutCents: plan.payoutCents,
+      estimatedMinutes: job.estimatedCleanMinutes,
+      expiresAt: plan.expiresAt,
+      isExclusive: plan.isExclusive,
+    },
+    result,
+  );
+  if (!offerId || !announcing || !reach.reachable || !recipient) return Boolean(offerId);
+
+  const body = offerMessage({
+    cleanerFirstName: recipient.firstName,
+    customerName: job.customerName,
+    street: job.street,
+    city: job.city,
+    payoutCents: plan.payoutCents,
+    scheduledStart: job.scheduledStart,
+    expiresAt: plan.expiresAt,
+    isExclusive: plan.isExclusive,
+    offerUrl: `${deps.origin}/cleaner`,
+  });
+
+  // Claimed before the provider is called: a crash between sending and
+  // recording would otherwise leave no row, and the next sweep would send
+  // again. Null means an earlier sweep already told her.
+  const messageId = await deps.messaging.claim({
+    offerId,
+    kind: OFFER_SENT,
+    cleanerId: plan.cleanerId,
+    jobId: job.id,
+    body,
+    to: reach.phone,
+  });
+  if (!messageId) return true;
+
+  const sent = await sendSms(reach.phone, body);
+  if (sent.ok) {
+    await deps.messaging.settle(messageId, sent.providerId);
+    result.notified += 1;
+  } else {
+    // Recorded, never swallowed. A cleaner we could not reach must not end up
+    // indistinguishable from one who ignored us.
+    await deps.messaging.settle(messageId, null, sent.reason);
+  }
+  return true;
 }
 
 function messageOf(error: unknown): string {
