@@ -239,7 +239,7 @@ describe("a cleaner is not asked a question she has already answered", () => {
     const decision = dispatch(
       job({
         continuity: asked(),
-        passedOver: [{ cleanerId: "sarah", share: 0.4 }],
+        passedOver: [{ cleanerId: "sarah", share: 0.33 }],
       }),
       context([sarah(), contractor({ id: "stranger" })]),
     );
@@ -254,7 +254,7 @@ describe("a cleaner is not asked a question she has already answered", () => {
     const decision = dispatch(
       job({
         continuity: asked(),
-        passedOver: [{ cleanerId: "sarah", share: 0.4 }],
+        passedOver: [{ cleanerId: "sarah", share: 0.33 }],
       }),
       context([sarah(), contractor({ id: "stranger" })]),
     );
@@ -268,7 +268,7 @@ describe("a cleaner is not asked a question she has already answered", () => {
     // Refusing $30/h obviously answers $25/h as well, and re-asking downward
     // is the fastest way to teach a cleaner that answering means nothing.
     const decision = dispatch(
-      job({ continuity: asked(), passedOver: [{ cleanerId: "sarah", share: 0.45 }] }),
+      job({ continuity: asked(), passedOver: [{ cleanerId: "sarah", share: 0.38 }] }),
       context([sarah(), contractor({ id: "stranger" })]),
     );
     expect(decision.kind).toBe("open_board");
@@ -281,7 +281,7 @@ describe("a cleaner is not asked a question she has already answered", () => {
     // rate must stay reachable higher up, or she watches a stranger take her
     // own customer at a rate she was never offered.
     const decision = dispatch(
-      job({ continuity: asked(), passedOver: [{ cleanerId: "sarah", share: 0.39 }] }),
+      job({ continuity: asked(), passedOver: [{ cleanerId: "sarah", share: 0.32 }] }),
       context([sarah(), contractor({ id: "stranger" })]),
     );
     expect(decision.kind).toBe("hold_for_incumbent");
@@ -296,7 +296,7 @@ describe("a cleaner is not asked a question she has already answered", () => {
     const decision = dispatch(
       job({
         continuity: asked(),
-        passedOver: [{ cleanerId: "sarah", share: 0.4 }],
+        passedOver: [{ cleanerId: "sarah", share: 0.33 }],
       }),
       context([sarah(), contractor({ id: "stranger" })]),
     );
@@ -308,7 +308,7 @@ describe("a cleaner is not asked a question she has already answered", () => {
 
   it("does not confuse one cleaner's answer with another's", () => {
     const decision = dispatch(
-      job({ continuity: asked(), passedOver: [{ cleanerId: "stranger", share: 0.4 }] }),
+      job({ continuity: asked(), passedOver: [{ cleanerId: "stranger", share: 0.33 }] }),
       context([sarah(), contractor({ id: "stranger" })]),
     );
     expect(decision.kind).toBe("hold_for_incumbent");
@@ -364,7 +364,7 @@ describe("the ladder is a schedule across sweeps, not a broadcast", () => {
     );
     expect(decision.kind).toBe("waterfall");
     if (decision.kind !== "waterfall") return;
-    expect(decision.ladder[0]?.share).toBe(0.4);
+    expect(decision.ladder[0]?.share).toBe(0.33);
   });
 
   it("starts above whatever the job has already been offered at", () => {
@@ -389,7 +389,7 @@ describe("the ladder is a schedule across sweeps, not a broadcast", () => {
       job({
         scheduledStart: urgent(),
         offeredUpToShare: 0.43,
-        passedOver: [{ cleanerId: "sarah", share: 0.4 }],
+        passedOver: [{ cleanerId: "sarah", share: 0.33 }],
       }),
       context([sarah(), contractor({ id: "b" })]),
     );
@@ -449,8 +449,8 @@ describe("a negotiated share is honoured", () => {
     );
 
     if (decision.kind !== "hold_for_incumbent") return;
-    expect(decision.share).toBe(0.4);
-    expect(decision.payoutCents).toBe(6800);
+    expect(decision.share).toBe(0.33);
+    expect(decision.payoutCents).toBe(5610);
   });
 
   it("keeps the spread fixed for a recurring relationship by construction", () => {
@@ -476,11 +476,11 @@ describe("a negotiated share is honoured", () => {
     // Or the recorded cost of keeping her would be measured against a share
     // she is not actually being paid.
     const cheap = dispatch(
-      job({ continuity: agreedAt(0.4) }),
+      job({ continuity: agreedAt(0.33) }),
       context([sarah(), shonda({ hoursScheduledThisWeek: 0 })]),
     );
     const dear = dispatch(
-      job({ continuity: agreedAt(0.5) }),
+      job({ continuity: agreedAt(0.49) }),
       context([sarah(), shonda({ hoursScheduledThisWeek: 0 })]),
     );
 

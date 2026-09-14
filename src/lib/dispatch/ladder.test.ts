@@ -95,17 +95,18 @@ describe("what a share of the ticket costs, on the record", () => {
 });
 
 describe("offers denominated as a share of the ticket", () => {
-  it("a weekly 2bd/2ba pays $64.00 — 40% of a $160 ticket", () => {
+  it("a weekly 2bd/2ba pays $52.80 — 33% of a $160 ticket", () => {
     const job = jobFrom("standard", "weekly", 2, 2);
     const payout = payoutForTicket(job.priceCents, CLEANER_SHARE_OF_TICKET);
-    expect(payout).toBe(6400);
-    expect(payout / job.priceCents).toBeCloseTo(0.4, 5);
+    expect(payout).toBe(5280);
+    expect(payout / job.priceCents).toBeCloseTo(0.33, 5);
   });
 
-  it("a one-time 3bd/2ba pays $87.60 — the same 40% of a bigger ticket", () => {
+  it("a one-time 3bd/2ba pays $72.27 — the same 33% of a bigger ticket", () => {
     const job = jobFrom("standard", "one_time", 3, 2);
     const payout = payoutForTicket(job.priceCents, CLEANER_SHARE_OF_TICKET);
-    expect(payout / job.priceCents).toBeCloseTo(0.4, 5);
+    expect(payout).toBe(7227);
+    expect(payout / job.priceCents).toBeCloseTo(0.33, 5);
   });
 });
 
@@ -180,8 +181,8 @@ describe("what the cleaner is shown", () => {
     const start = new Date("2026-09-01T14:00:00Z");
     const offer = presentOffer(job, ladder[0]!, start);
 
-    // 40% of a $160.00 weekly ticket.
-    expect(offer.payoutCents).toBe(6400);
+    // 33% of a $160.00 weekly ticket.
+    expect(offer.payoutCents).toBe(5280);
     expect(offer.estimatedMinutes).toBe(138);
     expect(offer.expiresAt.getTime()).toBeGreaterThan(start.getTime());
 
@@ -195,14 +196,14 @@ describe("what the cleaner is shown", () => {
 
 describe("escalation rate KPI", () => {
   it("is zero when everything clears at the base rate", () => {
-    const accepted = Array.from({ length: 10 }, () => ({ share: 0.4 }));
+    const accepted = Array.from({ length: 10 }, () => ({ share: 0.33 }));
     expect(escalationRate(accepted)).toBe(0);
   });
 
   it("flags a base rate below market", () => {
     const accepted = [
-      ...Array.from({ length: 6 }, () => ({ share: 0.4 })),
-      ...Array.from({ length: 4 }, () => ({ share: 0.45 })),
+      ...Array.from({ length: 6 }, () => ({ share: 0.33 })),
+      ...Array.from({ length: 4 }, () => ({ share: 0.38 })),
     ];
     expect(escalationRate(accepted)).toBeCloseTo(0.4, 5);
     expect(escalationRate(accepted)).toBeGreaterThan(ESCALATION_ALARM_THRESHOLD);
@@ -238,8 +239,8 @@ describe("tier ranking", () => {
 });
 
 describe("default configuration", () => {
-  it("opens at 40% of the ticket and aspires to 50%", () => {
-    expect(DEFAULT_LADDER.openingShare).toBe(0.4);
-    expect(DEFAULT_LADDER.maxShare).toBe(0.5);
+  it("opens at 33% of the ticket and aspires to 49%", () => {
+    expect(DEFAULT_LADDER.openingShare).toBe(0.33);
+    expect(DEFAULT_LADDER.maxShare).toBe(0.49);
   });
 });

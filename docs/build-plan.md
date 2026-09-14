@@ -116,10 +116,12 @@ drive it flips. That is why it is recomputed per job rather than held as a ranki
 hour, and the argument is kept below because it is still true — it is the cost of
 the model, not a case against it.
 
-A clean pays the cleaner **40% of whatever the customer pays**. A discount to the
-customer reduces her fee in proportion, because the two are the same number scaled.
-The ladder escalates that share, capped as before by the cheapest W-2 option for the
-specific job.
+A clean pays the cleaner **33% of whatever the customer pays**, escalating toward a
+ceiling of **49%** if nobody takes it. A discount to the customer reduces her fee in
+proportion, because the two are the same number scaled. The cap that usually binds is
+not 49% but the cheapest W-2 option for the specific job — past it, sending our own
+employee is cheaper than buying the labour, which is why the real ceiling is a cost
+rather than a percentage.
 
 **Why the reversal.** Paying a rate times *our* estimate of the job's length makes
 the cleaner's fee a function of our guess: estimate a 3bd/3ba at 173 minutes, and if
@@ -132,13 +134,13 @@ that works lasts years, so the margin agreed at formation is the margin for year
 **What it costs, unchanged from the original argument.** A flat share buys very
 different hourly rates, and it points the wrong way:
 
-| Job | Price | Hours | 40% payout | Cleaner earns |
-|---|---|---|---|---|
-| Weekly 2bd/2ba | $160 | 2.30 | $64.00 | $27.83/hr — worst |
-| Bi-weekly 2bd/2ba | $170 | 2.30 | $68.00 | $29.57/hr |
-| Deep clean 3bd/2ba | $362 | 4.82 | $144.80 | $30.06/hr |
-| Move-out 4bd/4ba | $576 | 8.05 | $230.40 | $28.62/hr |
-| One-time std 3bd/2ba | $219 | 2.55 | $87.60 | $34.35/hr — best |
+| Job | Price | Hours | Opens at 33% | Cleaner earns | Ceiling at 49% |
+|---|---|---|---|---|---|
+| Weekly 2bd/2ba | $160 | 2.30 | $52.80 | $22.96/hr — worst | $78.40 |
+| Bi-weekly 2bd/2ba | $170 | 2.30 | $56.10 | $24.39/hr | $83.30 |
+| Deep clean 3bd/2ba | $362 | 4.82 | $119.46 | $24.80/hr | $177.38 |
+| Move-out 4bd/4ba | $576 | 8.05 | $190.08 | $23.61/hr | $282.24 |
+| One-time std 3bd/2ba | $219 | 2.55 | $72.27 | $28.34/hr — best | $107.31 |
 
 The worst-paid jobs are the **weekly recurring customers** — the most valuable
 relationships and the ones that must fill every week.

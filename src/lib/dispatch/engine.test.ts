@@ -88,8 +88,8 @@ describe("step 3 — board versus waterfall", () => {
     const decision = dispatch(job(), context([full(), contractor()]));
     expect(decision.kind).toBe("open_board");
     if (decision.kind !== "open_board") return;
-    expect(decision.share).toBe(0.4);
-    expect(decision.payoutCents).toBe(6800); // 40% of a $170.00 ticket
+    expect(decision.share).toBe(0.33);
+    expect(decision.payoutCents).toBe(5610); // 33% of a $170.00 ticket
   });
 
   it("promotes an unclaimed board job to the waterfall at T-72h", () => {
@@ -105,7 +105,7 @@ describe("step 3 — board versus waterfall", () => {
     const decision = dispatch(urgent, context([full(), contractor()]));
     expect(decision.kind).toBe("waterfall");
     if (decision.kind !== "waterfall") return;
-    expect(decision.ladder[0]!.share).toBe(0.4);
+    expect(decision.ladder[0]!.share).toBe(0.33);
     expect(decision.ladder.length).toBeGreaterThan(1);
   });
 

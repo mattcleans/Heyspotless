@@ -12,8 +12,8 @@ import { buildQuote } from "./quote";
 
 describe("payoutForTicket", () => {
   it("pays the standard share of whatever the customer pays", () => {
-    expect(payoutForTicket(17000)).toBe(6800);
-    expect(payoutForTicket(16000)).toBe(6400);
+    expect(payoutForTicket(17000)).toBe(5610);
+    expect(payoutForTicket(16000)).toBe(5280);
   });
 
   it("moves the cleaner's fee with a discount to the customer", () => {
@@ -31,10 +31,11 @@ describe("payoutForTicket", () => {
   });
 
   it("rounds to the cent rather than shaving in the platform's favour", () => {
-    // 40% of $10.01 is 400.4 cents. Rounding down by convention would take a
-    // fraction of a cent off every job in one direction, for ever.
-    expect(payoutForTicket(1001)).toBe(400);
-    expect(payoutForTicket(1004)).toBe(402);
+    // 33% of $10.01 is 330.33 cents; of $10.05 it is 331.65. Rounding down by
+    // convention would take a fraction of a cent off every job in one
+    // direction, for ever.
+    expect(payoutForTicket(1001)).toBe(330);
+    expect(payoutForTicket(1005)).toBe(332);
   });
 
   it("honours a negotiated share", () => {
@@ -58,9 +59,9 @@ describe("payoutForTicket", () => {
   });
 
   it("lifts a discounted job when a floor is set", () => {
-    expect(payoutForTicket(16000, CLEANER_SHARE_OF_TICKET, 7000)).toBe(7000);
+    expect(payoutForTicket(16000, CLEANER_SHARE_OF_TICKET, 6000)).toBe(6000);
     // And leaves a job already above it alone.
-    expect(payoutForTicket(30000, CLEANER_SHARE_OF_TICKET, 7000)).toBe(12000);
+    expect(payoutForTicket(30000, CLEANER_SHARE_OF_TICKET, 6000)).toBe(9900);
   });
 
   it("never lets a floor pay more than the customer paid", () => {
@@ -72,17 +73,17 @@ describe("payoutForTicket", () => {
 
 describe("readings, not prices", () => {
   it("reports the implied hourly rate without it being an input", () => {
-    // 40% of $194.00 over 173 minutes.
-    expect(impliedHourlyCents(7760, 173)).toBe(2691);
+    // 33% of $194.00 over 173 minutes.
+    expect(impliedHourlyCents(6402, 173)).toBe(2220);
   });
 
   it("returns zero rather than dividing by an absent estimate", () => {
-    expect(impliedHourlyCents(7760, 0)).toBe(0);
+    expect(impliedHourlyCents(6402, 0)).toBe(0);
   });
 
   it("inverts the share for reporting", () => {
-    expect(shareOfTicket(6800, 17000)).toBeCloseTo(0.4, 5);
-    expect(shareOfTicket(6800, 0)).toBe(0);
+    expect(shareOfTicket(5610, 17000)).toBeCloseTo(0.33, 5);
+    expect(shareOfTicket(5610, 0)).toBe(0);
   });
 });
 

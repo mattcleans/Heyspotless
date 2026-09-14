@@ -144,9 +144,11 @@ nobody; it is there to be read. A cost ceiling survives as a manual safety valve
 
 ### What a clean pays
 
-**40% of whatever the customer pays** (`0018`). A discount to the customer reduces the
-cleaner's fee in proportion, because the two are the same number scaled. The ladder
-escalates that share, capped by the cheapest W-2 option for the specific job.
+**33% of whatever the customer pays** (`0018`), escalating to a ceiling of 49% if
+nobody takes it. A discount to the customer reduces the cleaner's fee in proportion,
+because the two are the same number scaled. The ceiling that usually binds is not 49%
+but the cheapest W-2 option for the specific job — past it, sending our own employee
+is cheaper than buying the labour.
 
 This replaced a dollars-per-hour ladder. Paying a rate times *our* estimate made her
 fee a function of our guess — estimate a job at 173 minutes and if it takes 240 we

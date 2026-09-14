@@ -20,8 +20,8 @@
  * WHAT IT COSTS, HONESTLY. The build plan moved to per-hour because a flat
  * share pays the worst hourly rate on exactly the jobs that matter most: a
  * weekly 3bd/3ba and a one-time 3bd/3ba are the same house and the same work,
- * but the weekly is discounted, so at a flat share it pays $77.60 against
- * $96.40 — about $26.91/hr against $33.43/hr. On an open board a rational
+ * but the weekly is discounted, so at the opening share it pays $64.02 against
+ * $79.53 — about $22.20/hr against $27.58/hr. On an open board a rational
  * cleaner takes the one-time every time.
  *
  * That objection is weaker than it was, because dispatch no longer works like
@@ -35,7 +35,7 @@
  */
 
 /** The cleaner's share of every ticket. One number, deliberately. */
-export const CLEANER_SHARE_OF_TICKET = 0.4;
+export const CLEANER_SHARE_OF_TICKET = 0.33;
 
 /**
  * The most a job may escalate to when nobody takes it at the opening share.
@@ -45,7 +45,7 @@ export const CLEANER_SHARE_OF_TICKET = 0.4;
  * cheaper than buying the labour, which is the whole reason the cap is a cost
  * rather than a percentage.
  */
-export const MAX_SHARE_OF_TICKET = 0.5;
+export const MAX_SHARE_OF_TICKET = 0.49;
 
 /**
  * A floor under the payout, in cents, regardless of share. Null = off.

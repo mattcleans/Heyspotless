@@ -99,7 +99,7 @@ turns it down — and never on cost. `0017` gives the first two somewhere to liv
 still recorded on every decision.
 
 **Follow-on, settled 14 September 2026.** The spread question is closed by
-`0018`: the payout is 40% of the ticket, so `agreed_price_cents` times a
+`0018`: the payout is 33% of the ticket, so `agreed_price_cents` times a
 constant share fixes the margin on a recurring relationship by construction.
 `agreed_payout_share` now records a *negotiated* exception and is almost always
 null — there is no rate to agree per relationship in the ordinary case, which

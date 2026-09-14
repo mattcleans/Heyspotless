@@ -1309,12 +1309,12 @@ begin
   -- THE GATE. 0003 makes eligibility a CHECK on offers, so an offer below the
   -- rating floor cannot be written -- not by the engine, not by hand.
   begin
-    perform record_offer(v_job, v_barred, v_dec, 'waterfall', 1, 0.4, 6800, 138,
+    perform record_offer(v_job, v_barred, v_dec, 'waterfall', 1, 0.33, 5610, 138,
                          now() + interval '20 minutes', false);
     v_fail := v_fail+1; raise warning 'an offer was written to an ineligible cleaner';
   exception when check_violation then null; end;
 
-  v_offer := record_offer(v_job, v_sarah, v_dec, 'direct_assign', 1, 0.4, 6800, 138,
+  v_offer := record_offer(v_job, v_sarah, v_dec, 'direct_assign', 1, 0.33, 5610, 138,
                           now() + interval '20 minutes', true);
   if v_offer is null then v_fail := v_fail+1;
     raise warning 'recording an offer produced nothing'; end if;
@@ -1326,7 +1326,7 @@ begin
 
   -- IDEMPOTENT while live. A re-run of the sweep must re-present the SAME
   -- offer, not a second one she could accept twice.
-  v_same := record_offer(v_job, v_sarah, v_dec, 'direct_assign', 1, 0.4, 6800, 138,
+  v_same := record_offer(v_job, v_sarah, v_dec, 'direct_assign', 1, 0.33, 5610, 138,
                          now() + interval '20 minutes', true);
   if v_same is distinct from v_offer then v_fail := v_fail+1;
     raise warning 're-recording an offer produced % instead of %', v_same, v_offer; end if;
@@ -1341,7 +1341,7 @@ begin
     raise warning 'answering another cleaner''s offer returned %', v_result; end if;
 
   -- DECLINING records the reason and assigns nobody.
-  v_offer2 := record_offer(v_job, v_stranger, v_dec, 'waterfall', 2, 0.4, 6800, 138,
+  v_offer2 := record_offer(v_job, v_stranger, v_dec, 'waterfall', 2, 0.33, 5610, 138,
                            now() + interval '20 minutes', false);
   v_result := respond_to_offer(v_offer2, v_stranger, false, 'too far that morning');
   if v_result <> 'declined' then v_fail := v_fail+1;
@@ -1368,8 +1368,8 @@ begin
 
   select payout_cents into v_payout from job_assignments
     where job_id = v_job and cleaner_id = v_sarah;
-  if v_payout is distinct from 6800 then v_fail := v_fail+1;
-    raise warning 'the assignment paid %, want the offered 6800', v_payout; end if;
+  if v_payout is distinct from 5610 then v_fail := v_fail+1;
+    raise warning 'the assignment paid %, want the offered 5610', v_payout; end if;
 
   select status into v_status from jobs where id = v_job;
   if v_status <> 'assigned' then v_fail := v_fail+1;
@@ -1388,7 +1388,7 @@ begin
     returning id into v_job;
   insert into offers (job_id, cleaner_id, channel, tier, hourly_rate_cents,
                       payout_cents, payout_pct, estimated_minutes, expires_at)
-    values (v_job, v_sarah, 'waterfall', 1, 2957, 6800, 0.4, 138,
+    values (v_job, v_sarah, 'waterfall', 1, 2439, 5610, 0.33, 138,
             now() - interval '1 minute')
     returning id into v_offer;
 
@@ -1402,7 +1402,7 @@ begin
   -- unheld rather than still waiting on somebody who never answered.
   insert into offers (job_id, cleaner_id, channel, tier, hourly_rate_cents,
                       payout_cents, payout_pct, estimated_minutes, expires_at)
-    values (v_job, v_stranger, 'waterfall', 1, 2957, 6800, 0.4, 138,
+    values (v_job, v_stranger, 'waterfall', 1, 2439, 5610, 0.33, 138,
             now() - interval '1 minute');
   if expire_stale_offers() < 1 then v_fail := v_fail+1;
     raise warning 'the expiry sweep timed out nothing'; end if;
@@ -1419,9 +1419,9 @@ begin
     values (v_cust, v_prop, 'scheduled', 'standard', 'biweekly',
             now() + interval '9 days', 17000, 138)
     returning id into v_job;
-  v_offer := record_offer(v_job, v_sarah, null, 'waterfall', 1, 0.4, 6800, 138,
+  v_offer := record_offer(v_job, v_sarah, null, 'waterfall', 1, 0.33, 5610, 138,
                           now() + interval '20 minutes', false);
-  v_offer2 := record_offer(v_job, v_stranger, null, 'waterfall', 1, 0.4, 6800, 138,
+  v_offer2 := record_offer(v_job, v_stranger, null, 'waterfall', 1, 0.33, 5610, 138,
                            now() + interval '20 minutes', false);
 
   perform respond_to_offer(v_offer, v_sarah, true);
@@ -1586,10 +1586,10 @@ RACE_B_ID=$(as_super $PSQL -d "$DB" -tAc \
    values ('Race B', 'contractor_1099', 'active', 4.6, true) returning id")
 
 RACE_OFFER_A=$(as_super $PSQL -d "$DB" -tAc \
-  "select record_offer('$RACE_SETUP', '$RACE_A_ID', null, 'waterfall', 1, 0.4, 6800, 138,
+  "select record_offer('$RACE_SETUP', '$RACE_A_ID', null, 'waterfall', 1, 0.33, 5610, 138,
                        now() + interval '20 minutes', false)")
 RACE_OFFER_B=$(as_super $PSQL -d "$DB" -tAc \
-  "select record_offer('$RACE_SETUP', '$RACE_B_ID', null, 'waterfall', 1, 0.4, 6800, 138,
+  "select record_offer('$RACE_SETUP', '$RACE_B_ID', null, 'waterfall', 1, 0.33, 5610, 138,
                        now() + interval '20 minutes', false)")
 
 as_super $PSQL -d "$DB" -tAc \
