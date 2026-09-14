@@ -45,19 +45,19 @@ export interface ContinuityContext {
   /** Completed visits by the incumbent at this property. */
   priorVisits: number;
   /**
-   * The cleaner hourly rate agreed when this relationship formed, in cents.
+   * The share of the ticket agreed with this cleaner for this relationship.
    *
-   * The mirror of `recurring_plans.agreed_price_cents`. Together they fix the
-   * SPREAD for the life of the plan, which matters precisely because a pairing
-   * that works lasts years: the margin agreed at formation is the margin for
-   * years. Locking only the customer half — which is what shipped before 0017
-   * — meant a change to the global opening rate silently moved the margin on
-   * every existing relationship, with no record of what was ever agreed.
+   * Almost always null, and null is the ordinary case: the standard share
+   * applies. It exists for the pairing that was negotiated — a cleaner worth
+   * more than standard, or a customer nobody else will take.
    *
-   * Null means unlocked, not free: the current opening rate applies, which is
-   * the honest reading for a pairing that predates the column.
+   * The SPREAD is already fixed without this. `agreed_price_cents` locks what
+   * the customer pays for the life of the plan and the share is a constant, so
+   * the payout on a recurring visit cannot drift. That is a property of pricing
+   * off the ticket rather than off a global hourly rate, and it is one of the
+   * better things about the model.
    */
-  agreedPayoutRateCents?: number | null;
+  agreedPayoutShare?: number | null;
 }
 
 export type ContinuityBasis = "preferred" | "incumbent";
@@ -163,11 +163,11 @@ export interface ResolveContinuityOptions {
   hoursUntilJob: number;
   eligibilityFor?: (cleaner: Cleaner, job: DispatchJob) => EligibilityContext;
   /**
-   * The rate the hold would be offered at. A cleaner who has already refused
-   * this job at this rate is not held for again — otherwise the sweep asks her
-   * the same question every hour until the visit happens.
+   * The share the hold would be offered at. A cleaner who has already refused
+   * this job at this share is not held for again — otherwise the sweep asks
+   * her the same question every hour until the visit happens.
    */
-  offerRateCents?: number;
+  offerShare?: number;
 }
 
 /**
@@ -202,7 +202,7 @@ export function resolveContinuity(
     id === null ? undefined : cleaners.find((c) => c.id === id);
 
   const passed = (cleaner: Cleaner) =>
-    hasPassedAtOrAbove(job, cleaner.id, options.offerRateCents ?? 0);
+    hasPassedAtOrAbove(job, cleaner.id, options.offerShare ?? 0);
 
   const hold = (cleaner: Cleaner, basis: ContinuityBasis): ContinuityHold => ({
     held: true,
@@ -259,21 +259,19 @@ export function resolveContinuity(
  * option, which is the ordinary case for a W-2 cleaner on a settled route.
  */
 /**
- * Has this cleaner already been asked about this job at this rate or better,
+ * Has this cleaner already been asked about this job at this share or better,
  * and not taken it?
  *
- * "Or better" rather than "exactly", because passing on $30/h obviously
- * settles the question at $25/h too, and re-asking downward is the fastest way
- * to teach a cleaner that answering means nothing.
+ * "Or better" rather than "exactly", because passing at 45% obviously settles
+ * the question at 40% too, and re-asking downward is the fastest way to teach a
+ * cleaner that answering means nothing.
  */
 export function hasPassedAtOrAbove(
   job: DispatchJob,
   cleanerId: string,
-  hourlyRateCents: number,
+  share: number,
 ): boolean {
-  return (job.passedOver ?? []).some(
-    (p) => p.cleanerId === cleanerId && p.hourlyRateCents >= hourlyRateCents,
-  );
+  return (job.passedOver ?? []).some((p) => p.cleanerId === cleanerId && p.share >= share);
 }
 
 export function holdCostCents(

@@ -11,7 +11,11 @@ import {
   frequenciesForService,
 } from "@/lib/pricing/price-book";
 import { buildQuote } from "@/lib/pricing/quote";
-import { OPENING_RATE_CENTS_PER_HOUR, payoutForRate } from "@/lib/dispatch/ladder";
+import {
+  CLEANER_SHARE_OF_TICKET,
+  impliedHourlyCents,
+  payoutForTicket,
+} from "@/lib/pricing/payout";
 import { formatCents, formatHours, formatPct } from "@/lib/money";
 
 const COUNTS = [
@@ -61,7 +65,7 @@ export function QuoteBuilder() {
 
   const quote = result.quote;
   const offer = quote
-    ? payoutForRate(OPENING_RATE_CENTS_PER_HOUR, quote.estimatedMinutes)
+    ? payoutForTicket(quote.totalCents, CLEANER_SHARE_OF_TICKET)
     : 0;
 
   return (
@@ -212,9 +216,12 @@ export function QuoteBuilder() {
                 </span>
               </p>
               <p className="mt-1 text-xs text-ink-3">
-                {formatCents(OPENING_RATE_CENTS_PER_HOUR)}/hr ={" "}
-                {formatPct(offer / quote.totalCents)} of this ticket. The rate is what stays
-                flat; the percentage floats per job.
+                {formatPct(CLEANER_SHARE_OF_TICKET)} of this ticket. The share is what stays
+                flat — a discount to the customer moves the cleaner&apos;s fee with it.
+              </p>
+              <p className="mt-1 text-xs text-ink-3">
+                Works out at {formatCents(impliedHourlyCents(offer, quote.estimatedMinutes))}/hr
+                against the estimate. That is a reading, not the price.
               </p>
             </div>
           </>

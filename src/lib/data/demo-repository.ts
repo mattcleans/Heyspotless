@@ -12,7 +12,7 @@ import {
   DEMO_JOBS,
   DEMO_PAYMENT_METHODS,
 } from "../demo/fixtures";
-import { OPENING_RATE_CENTS_PER_HOUR, payoutForRate } from "../dispatch/ladder";
+import { CLEANER_SHARE_OF_TICKET, payoutForTicket } from "../pricing/payout";
 import type { ContinuityContext } from "../dispatch/continuity";
 import type { Repository } from "./repository";
 import type {
@@ -167,7 +167,7 @@ export class DemoRepository implements Repository {
         id: `offer-${jobId}`,
         jobId: demo.id,
         cleanerId,
-        payoutCents: payoutForRate(OPENING_RATE_CENTS_PER_HOUR, demo.estimatedCleanMinutes),
+        payoutCents: payoutForTicket(demo.priceCents, CLEANER_SHARE_OF_TICKET),
         estimatedMinutes: demo.estimatedCleanMinutes,
         expiresAt: new Date(now + expiresInMinutes * 60_000),
         isExclusive,

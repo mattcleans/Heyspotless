@@ -98,38 +98,24 @@ turns it down — and never on cost. `0017` gives the first two somewhere to liv
 (`property_cleaner_blocks`) and turns the cap off by default. The premium is
 still recorded on every decision.
 
-**Follow-on, now open:** because a pairing that works lasts years, the spread
-agreed when it forms is the spread for years. `0017` locks the cleaner's half
-(`agreed_payout_rate_cents`) alongside the customer's. Two things still need a
-person:
+**Follow-on, settled 14 September 2026.** The spread question is closed by
+`0018`: the payout is 40% of the ticket, so `agreed_price_cents` times a
+constant share fixes the margin on a recurring relationship by construction.
+`agreed_payout_share` now records a *negotiated* exception and is almost always
+null — there is no rate to agree per relationship in the ordinary case, which
+removes the "nothing turns the key" gap this section previously listed.
 
-- **Nothing sets `agreed_payout_rate_cents` yet.** There is no UI for agreeing
-  a rate with a cleaner when a relationship forms; every plan is null, which
-  means the current opening rate applies. The lock works; nothing turns the key.
-- **What happens when the ladder escalates on a locked relationship.** Today an
-  escalated rung is a one-off for that visit and the agreed rate stands, which
-  is deliberate — silently ratcheting the payout up permanently is the margin
-  erosion this was built to stop. But a relationship that escalates every week
-  is one whose agreed rate is below market, and that should surface as an
-  exception for a person to re-agree rather than repeat forever. Nothing
-  surfaces it yet.
+**Still open, and now sharper:**
 
-## Customer and operations gates
-
-1. Persist the accepted service scope, price and recurring discount.
-2. Create and change bookings through supported screens with capacity checks.
-3. Assign work and let the cleaner record completion through their own account.
-4. Show upcoming visits, invoices, receipts and payment authorization to customers.
-5. ~~Generate recurring visits without duplicates and preserve locked legacy rates.~~
-   Done — `0014`, verified against concurrent sweeps.
-6. Pilot a small, representative customer group with daily job and money reconciliation.
-7. Verify migrated history and future visits, rehearse rollback, and complete the
-   planned parallel run before retiring Housecall Pro.
-
-During parallel operation, identify the authoritative system for each job,
-message and payment. Only one platform may automatically collect for a visit.
-
-Track implemented, integrated, verified, piloted and accepted separately.
-Measure completed-customer acquisition cost, booking conversion, administration
-minutes per completed job, contribution per job and total software ownership
-cost against the existing business baseline.
+- **Acquisition on new recurring customers.** A flat share pays worst on the
+  discounted jobs. An existing recurring customer is protected — her visit goes
+  to her incumbent exclusively — but a NEW weekly has no incumbent and is the
+  worst-paying job on the open board. `MINIMUM_PAYOUT_CENTS` in
+  `lib/pricing/payout.ts` is the lever and is off. **Watch time-to-fill on new
+  recurring customers specifically**; if it is worse than one-time work of the
+  same size, that is this.
+- **Escalation on an established relationship.** An escalated rung is still a
+  one-off for that visit; the standard share stands next time. A pairing that
+  escalates every week is one whose share is below market for that customer,
+  and it should surface as an exception for a person to re-agree rather than
+  repeat forever. Nothing surfaces it yet — the data is in `offers.payout_pct`.

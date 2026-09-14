@@ -72,7 +72,7 @@ function DecisionSummary({ decision }: { decision: DispatchDecision }) {
               <span
                 key={rung.index}
                 className="nums rounded border border-line bg-surface-2 px-1.5 py-0.5 text-[11px] text-ink-2"
-                title={`${formatCents(rung.hourlyRateCents)}/hr · ${formatPct(rung.payoutPct)} of ticket · at +${Math.round(rung.offerAtSeconds / 60)}m`}
+                title={`${formatPct(rung.share)} of ticket · about ${formatCents(rung.impliedHourlyRateCents)}/hr against the estimate · at +${Math.round(rung.offerAtSeconds / 60)}m`}
               >
                 {formatCents(rung.payoutCents)}
               </span>

@@ -40,7 +40,8 @@ export interface OfferToRecord {
   decisionId: string | null;
   channel: DispatchChannel;
   tier: number;
-  hourlyRateCents: number;
+  /** The share of the ticket this offer represents — the escalation dimension. */
+  share: number;
   payoutCents: number;
   estimatedMinutes: number;
   expiresAt: Date;
@@ -102,7 +103,7 @@ export class DispatchStore {
       p_decision_id: offer.decisionId,
       p_channel: offer.channel,
       p_tier: offer.tier,
-      p_hourly_rate_cents: offer.hourlyRateCents,
+      p_share: offer.share,
       p_payout_cents: offer.payoutCents,
       p_estimated_minutes: offer.estimatedMinutes,
       p_expires_at: offer.expiresAt.toISOString(),
@@ -216,7 +217,7 @@ export async function continuityFor(
   const { data, error } = await db
     .from("job_continuity")
     .select(
-      "job_id, preferred_cleaner_id, incumbent_cleaner_id, prior_visits, agreed_payout_rate_cents",
+      "job_id, preferred_cleaner_id, incumbent_cleaner_id, prior_visits, agreed_payout_share",
     )
     .in("job_id", [...jobIds]);
   if (error) throw new Error(`continuityFor: ${error.message}`);
@@ -227,12 +228,12 @@ export async function continuityFor(
 
     const preferred = row["preferred_cleaner_id"];
     const incumbent = row["incumbent_cleaner_id"];
-    const agreedRate = row["agreed_payout_rate_cents"];
+    const agreedShare = row["agreed_payout_share"];
     byJob.set(jobId, {
       preferredCleanerId: typeof preferred === "string" ? preferred : null,
       incumbentCleanerId: typeof incumbent === "string" ? incumbent : null,
       priorVisits: typeof row["prior_visits"] === "number" ? row["prior_visits"] : 0,
-      agreedPayoutRateCents: typeof agreedRate === "number" ? agreedRate : null,
+      agreedPayoutShare: agreedShare == null ? null : Number(agreedShare),
     });
   }
   return byJob;
@@ -337,7 +338,7 @@ function toDate(value: unknown): Date | null {
 
 export interface PassedOver {
   cleanerId: string;
-  hourlyRateCents: number;
+  share: number;
 }
 
 /**
@@ -355,7 +356,7 @@ export interface PassedOver {
  * somebody else took the job, or we pulled the offer — and holding it against
  * her would punish a cleaner for a race she lost.
  *
- * The RATE is carried rather than a bare "asked already", because asking again
+ * The SHARE is carried rather than a bare "asked already", because asking again
  * higher up is legitimate and is the entire mechanism of the ladder.
  */
 export async function passedOverFor(
@@ -368,7 +369,7 @@ export async function passedOverFor(
 
   const { data, error } = await db
     .from("offers")
-    .select("job_id, cleaner_id, hourly_rate_cents")
+    .select("job_id, cleaner_id, payout_pct")
     .in("job_id", [...jobIds])
     .in("status", ["declined", "expired"]);
   if (error) throw new Error(`passedOverFor: ${error.message}`);
@@ -376,10 +377,10 @@ export async function passedOverFor(
   for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
     const jobId = row["job_id"];
     const cleanerId = row["cleaner_id"];
-    const rate = row["hourly_rate_cents"];
+    const share = row["payout_pct"];
     if (typeof jobId !== "string" || typeof cleanerId !== "string") continue;
 
-    const entry = { cleanerId, hourlyRateCents: typeof rate === "number" ? rate : 0 };
+    const entry = { cleanerId, share: Number(share ?? 0) };
     const existing = byJob.get(jobId);
     if (existing) existing.push(entry);
     else byJob.set(jobId, [entry]);
@@ -388,7 +389,7 @@ export async function passedOverFor(
 }
 
 /**
- * The highest hourly rate each job has already been offered at.
+ * The highest share of the ticket each job has already been offered at.
  *
  * Read from EVERY offer, whatever became of it — the question is how far up
  * the ladder this job has been carried, and an offer that expired carried it
@@ -403,15 +404,15 @@ export async function offeredUpToFor(
 
   const { data, error } = await db
     .from("offers")
-    .select("job_id, hourly_rate_cents")
+    .select("job_id, payout_pct")
     .in("job_id", [...jobIds]);
   if (error) throw new Error(`offeredUpToFor: ${error.message}`);
 
   for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
     const jobId = row["job_id"];
-    const rate = row["hourly_rate_cents"];
-    if (typeof jobId !== "string" || typeof rate !== "number") continue;
-    byJob.set(jobId, Math.max(byJob.get(jobId) ?? 0, rate));
+    const share = Number(row["payout_pct"] ?? NaN);
+    if (typeof jobId !== "string" || !Number.isFinite(share)) continue;
+    byJob.set(jobId, Math.max(byJob.get(jobId) ?? 0, share));
   }
   return byJob;
 }

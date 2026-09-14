@@ -3,7 +3,7 @@ import { OfferActions } from "./offer-actions";
 import { ZIP_CENTROIDS } from "@/lib/config";
 import { getRepository } from "@/lib/data";
 import { clusterDay, zipCentroidEstimator } from "@/lib/dispatch/route";
-import { OPENING_RATE_CENTS_PER_HOUR, payoutForRate } from "@/lib/dispatch/ladder";
+import { CLEANER_SHARE_OF_TICKET, payoutForTicket } from "@/lib/pricing/payout";
 import { formatCents, formatHours } from "@/lib/money";
 import { formatDateTimeInZone } from "@/lib/time/zone";
 
@@ -113,7 +113,7 @@ export default async function CleanerPage() {
               </div>
               <div className="text-right">
                 <p className="nums text-lg font-semibold text-navy">
-                  {formatCents(payoutForRate(OPENING_RATE_CENTS_PER_HOUR, job.estimatedCleanMinutes))}
+                  {formatCents(payoutForTicket(job.priceCents, CLEANER_SHARE_OF_TICKET))}
                 </p>
                 <p className="mt-1 text-[11px] text-ink-3">
                   for {formatHours(job.estimatedCleanMinutes)}

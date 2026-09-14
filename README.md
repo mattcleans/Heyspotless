@@ -142,17 +142,29 @@ nobody; it is there to be read. A cost ceiling survives as a manual safety valve
 **off by default** — see `MAX_CONTINUITY_PREMIUM_FRACTION` in
 [`src/lib/dispatch/continuity.ts`](src/lib/dispatch/continuity.ts).
 
-### The spread is fixed at both ends
+### What a clean pays
 
-A pairing that works lasts years, so the margin agreed when it forms is the margin for
-years. `0014` locked what the **customer** pays on `recurring_plans.agreed_price_cents`.
-`0017` locks what the **cleaner** is paid, on `agreed_payout_rate_cents`, and both are
-snapshotted onto every generated visit.
+**40% of whatever the customer pays** (`0018`). A discount to the customer reduces the
+cleaner's fee in proportion, because the two are the same number scaled. The ladder
+escalates that share, capped by the cheapest W-2 option for the specific job.
 
-Before that the cleaner's half was a global constant read at dispatch time, so raising
-the opening rate to attract new supply would have quietly re-cut the margin on every
-existing recurring relationship, with no record of what was ever agreed — the same bug
-`0014` fixed for the customer, pointing the other way. Null means unlocked, not free.
+This replaced a dollars-per-hour ladder. Paying a rate times *our* estimate made her
+fee a function of our guess — estimate a job at 173 minutes and if it takes 240 we
+have underpaid her by the size of our own error — and paying by the hour is an
+employment marker, which matters given worker classification is the largest legal
+exposure in the plan.
+
+It also fixes the spread for free. `agreed_price_cents` locks what a recurring
+customer pays for the life of the plan, and a constant share of a locked price is a
+locked payout. `agreed_payout_share` exists only to record a *negotiated* exception,
+and is almost always null.
+
+The known cost is written down in `docs/build-plan.md` and asserted in
+`ladder.test.ts`: a flat share pays worst on the discounted jobs, which are the
+recurring ones. That is survivable because a recurring visit goes to its incumbent
+exclusively rather than onto a board — but a **new** recurring customer has no
+incumbent and is the worst-paying job on that board. `MINIMUM_PAYOUT_CENTS` is the
+lever if new weeklies are slow to fill. It is off.
 
 `dispatch_decisions.decided_by` is null when the engine decided and set when a person
 did. That one nullable column is the whole numerator of *manager interventions per

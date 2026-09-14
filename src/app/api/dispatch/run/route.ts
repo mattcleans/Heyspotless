@@ -4,7 +4,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { DispatchStore, availabilityFor, busyWindowsFor } from "@/lib/dispatch/store";
 import { windowsOn } from "@/lib/dispatch/availability";
 import { dispatchBoard, type DispatchDecision } from "@/lib/dispatch/engine";
-import { OPENING_RATE_CENTS_PER_HOUR, payoutForRate, presentOffer } from "@/lib/dispatch/ladder";
+import { presentOffer } from "@/lib/dispatch/ladder";
+import { CLEANER_SHARE_OF_TICKET, payoutForTicket } from "@/lib/pricing/payout";
 import { zipCentroidEstimator } from "@/lib/dispatch/route";
 import { ZIP_CENTROIDS } from "@/lib/config";
 import { cronSecretMatches } from "@/lib/stripe/env";
@@ -178,7 +179,7 @@ async function act(
     case "assign_guaranteed":
     case "assign_w2": {
       // An employee is scheduled, not asked.
-      const payout = payoutForRate(OPENING_RATE_CENTS_PER_HOUR, job.estimatedCleanMinutes);
+      const payout = payoutForTicket(job.priceCents, CLEANER_SHARE_OF_TICKET);
       if (await store.assignDirectly(job.id, decision.cleaner.id, payout)) result.assigned += 1;
       return;
     }
@@ -190,7 +191,7 @@ async function act(
         decisionId,
         channel: "direct_assign",
         tier: 1,
-        hourlyRateCents: decision.hourlyRateCents,
+        share: decision.share,
         payoutCents: decision.payoutCents,
         estimatedMinutes: job.estimatedCleanMinutes,
         expiresAt: decision.exclusiveUntil,
@@ -214,7 +215,7 @@ async function act(
             decisionId,
             channel: "open_board",
             tier: 1,
-            hourlyRateCents: decision.hourlyRateCents,
+            share: decision.share,
             payoutCents: decision.payoutCents,
             estimatedMinutes: job.estimatedCleanMinutes,
             expiresAt: decision.promoteToWaterfallAt,
@@ -248,7 +249,7 @@ async function act(
             decisionId,
             channel: "waterfall",
             tier: 1,
-            hourlyRateCents: rung.hourlyRateCents,
+            share: rung.share,
             payoutCents: rung.payoutCents,
             estimatedMinutes: job.estimatedCleanMinutes,
             expiresAt: presented.expiresAt,

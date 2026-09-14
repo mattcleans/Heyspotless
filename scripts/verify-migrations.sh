@@ -1309,12 +1309,12 @@ begin
   -- THE GATE. 0003 makes eligibility a CHECK on offers, so an offer below the
   -- rating floor cannot be written -- not by the engine, not by hand.
   begin
-    perform record_offer(v_job, v_barred, v_dec, 'waterfall', 1, 2500, 5750, 138,
+    perform record_offer(v_job, v_barred, v_dec, 'waterfall', 1, 0.4, 6800, 138,
                          now() + interval '20 minutes', false);
     v_fail := v_fail+1; raise warning 'an offer was written to an ineligible cleaner';
   exception when check_violation then null; end;
 
-  v_offer := record_offer(v_job, v_sarah, v_dec, 'direct_assign', 1, 2500, 5750, 138,
+  v_offer := record_offer(v_job, v_sarah, v_dec, 'direct_assign', 1, 0.4, 6800, 138,
                           now() + interval '20 minutes', true);
   if v_offer is null then v_fail := v_fail+1;
     raise warning 'recording an offer produced nothing'; end if;
@@ -1326,7 +1326,7 @@ begin
 
   -- IDEMPOTENT while live. A re-run of the sweep must re-present the SAME
   -- offer, not a second one she could accept twice.
-  v_same := record_offer(v_job, v_sarah, v_dec, 'direct_assign', 1, 2500, 5750, 138,
+  v_same := record_offer(v_job, v_sarah, v_dec, 'direct_assign', 1, 0.4, 6800, 138,
                          now() + interval '20 minutes', true);
   if v_same is distinct from v_offer then v_fail := v_fail+1;
     raise warning 're-recording an offer produced % instead of %', v_same, v_offer; end if;
@@ -1341,7 +1341,7 @@ begin
     raise warning 'answering another cleaner''s offer returned %', v_result; end if;
 
   -- DECLINING records the reason and assigns nobody.
-  v_offer2 := record_offer(v_job, v_stranger, v_dec, 'waterfall', 2, 2500, 5750, 138,
+  v_offer2 := record_offer(v_job, v_stranger, v_dec, 'waterfall', 2, 0.4, 6800, 138,
                            now() + interval '20 minutes', false);
   v_result := respond_to_offer(v_offer2, v_stranger, false, 'too far that morning');
   if v_result <> 'declined' then v_fail := v_fail+1;
@@ -1368,8 +1368,8 @@ begin
 
   select payout_cents into v_payout from job_assignments
     where job_id = v_job and cleaner_id = v_sarah;
-  if v_payout is distinct from 5750 then v_fail := v_fail+1;
-    raise warning 'the assignment paid %, want the offered 5750', v_payout; end if;
+  if v_payout is distinct from 6800 then v_fail := v_fail+1;
+    raise warning 'the assignment paid %, want the offered 6800', v_payout; end if;
 
   select status into v_status from jobs where id = v_job;
   if v_status <> 'assigned' then v_fail := v_fail+1;
@@ -1388,7 +1388,7 @@ begin
     returning id into v_job;
   insert into offers (job_id, cleaner_id, channel, tier, hourly_rate_cents,
                       payout_cents, payout_pct, estimated_minutes, expires_at)
-    values (v_job, v_sarah, 'waterfall', 1, 2500, 5750, 0.3382, 138,
+    values (v_job, v_sarah, 'waterfall', 1, 2957, 6800, 0.4, 138,
             now() - interval '1 minute')
     returning id into v_offer;
 
@@ -1402,7 +1402,7 @@ begin
   -- unheld rather than still waiting on somebody who never answered.
   insert into offers (job_id, cleaner_id, channel, tier, hourly_rate_cents,
                       payout_cents, payout_pct, estimated_minutes, expires_at)
-    values (v_job, v_stranger, 'waterfall', 1, 2500, 5750, 0.3382, 138,
+    values (v_job, v_stranger, 'waterfall', 1, 2957, 6800, 0.4, 138,
             now() - interval '1 minute');
   if expire_stale_offers() < 1 then v_fail := v_fail+1;
     raise warning 'the expiry sweep timed out nothing'; end if;
@@ -1419,9 +1419,9 @@ begin
     values (v_cust, v_prop, 'scheduled', 'standard', 'biweekly',
             now() + interval '9 days', 17000, 138)
     returning id into v_job;
-  v_offer := record_offer(v_job, v_sarah, null, 'waterfall', 1, 2500, 5750, 138,
+  v_offer := record_offer(v_job, v_sarah, null, 'waterfall', 1, 0.4, 6800, 138,
                           now() + interval '20 minutes', false);
-  v_offer2 := record_offer(v_job, v_stranger, null, 'waterfall', 1, 2500, 5750, 138,
+  v_offer2 := record_offer(v_job, v_stranger, null, 'waterfall', 1, 0.4, 6800, 138,
                            now() + interval '20 minutes', false);
 
   perform respond_to_offer(v_offer, v_sarah, true);
@@ -1586,10 +1586,10 @@ RACE_B_ID=$(as_super $PSQL -d "$DB" -tAc \
    values ('Race B', 'contractor_1099', 'active', 4.6, true) returning id")
 
 RACE_OFFER_A=$(as_super $PSQL -d "$DB" -tAc \
-  "select record_offer('$RACE_SETUP', '$RACE_A_ID', null, 'waterfall', 1, 2500, 5750, 138,
+  "select record_offer('$RACE_SETUP', '$RACE_A_ID', null, 'waterfall', 1, 0.4, 6800, 138,
                        now() + interval '20 minutes', false)")
 RACE_OFFER_B=$(as_super $PSQL -d "$DB" -tAc \
-  "select record_offer('$RACE_SETUP', '$RACE_B_ID', null, 'waterfall', 1, 2500, 5750, 138,
+  "select record_offer('$RACE_SETUP', '$RACE_B_ID', null, 'waterfall', 1, 0.4, 6800, 138,
                        now() + interval '20 minutes', false)")
 
 as_super $PSQL -d "$DB" -tAc \
@@ -1632,7 +1632,7 @@ declare
   v_cust uuid; v_prop uuid; v_plan uuid;
   v_ada uuid; v_ben uuid; v_job uuid; v_old uuid;
   v_incumbent uuid; v_rate integer; v_pref uuid; v_created boolean;
-  v_fail integer := 0;
+  v_share numeric; v_fail integer := 0;
 begin
   insert into customers (first_name, last_name) values ('Block','Test')
     returning id into v_cust;
@@ -1738,16 +1738,16 @@ begin
     raise warning 'lifting an already-lifted block reported a change'; end if;
 
   -- ------------------------------------------------------- the spread -----
-  -- Both halves locked on the plan, and both carried onto every visit. The
-  -- customer half has been locked since 0014; the CLEANER half was a global
-  -- constant read at dispatch time, so a rate raised to attract new supply
-  -- would have re-cut the margin on every existing relationship silently.
+  -- 0018: the spread is fixed by construction -- agreed_price_cents locks what
+  -- the customer pays and the share is a constant, so a recurring visit's
+  -- payout cannot drift. What the plan carries now is a NEGOTIATED share, for
+  -- the pairing that was agreed off-standard.
   insert into recurring_plans (customer_id, property_id, freq, service,
                                agreed_price_cents, estimated_minutes, anchor_date,
                                start_time, preferred_cleaner_id,
-                               agreed_payout_rate_cents)
+                               agreed_payout_share)
   values (v_cust, v_prop, 'weekly', 'standard', 17000, 138, current_date + 7,
-          '09:30', v_ben, 2800)
+          '09:30', v_ben, 0.45)
   returning id into v_plan;
 
   select job_id, created into v_job, v_created
@@ -1760,27 +1760,32 @@ begin
   if v_rate <> 17000 then v_fail := v_fail+1;
     raise warning 'the customer half of the spread is %, want 17000', v_rate; end if;
 
-  select agreed_payout_rate_cents into v_rate from jobs where id = v_job;
-  if v_rate is distinct from 2800 then v_fail := v_fail+1;
-    raise warning 'the cleaner half of the spread is %, want 2800', v_rate; end if;
+  select agreed_payout_share into v_share from jobs where id = v_job;
+  if v_share is distinct from 0.450 then v_fail := v_fail+1;
+    raise warning 'the negotiated share on the visit is %, want 0.450', v_share; end if;
 
-  select agreed_payout_rate_cents into v_rate from job_continuity where job_id = v_job;
-  if v_rate is distinct from 2800 then v_fail := v_fail+1;
-    raise warning 'the view reports an agreed rate of %, want 2800', v_rate; end if;
+  select agreed_payout_share into v_share from job_continuity where job_id = v_job;
+  if v_share is distinct from 0.450 then v_fail := v_fail+1;
+    raise warning 'the view reports a negotiated share of %, want 0.450', v_share; end if;
 
   -- Renegotiating the plan does NOT rewrite a visit already generated, the
   -- same guarantee agreed_price_cents has had since 0014.
-  update recurring_plans set agreed_payout_rate_cents = 3200 where id = v_plan;
+  update recurring_plans set agreed_payout_share = 0.5 where id = v_plan;
   perform * from materialise_recurring_job(v_plan, current_date + 7,
                                            (current_date + 7)::timestamptz + interval '9.5 hours');
-  select agreed_payout_rate_cents into v_rate from jobs where id = v_job;
-  if v_rate is distinct from 2800 then v_fail := v_fail+1;
-    raise warning 'a rate renegotiation rewrote an existing visit to %', v_rate; end if;
+  select agreed_payout_share into v_share from jobs where id = v_job;
+  if v_share is distinct from 0.450 then v_fail := v_fail+1;
+    raise warning 'a share renegotiation rewrote an existing visit to %', v_share; end if;
 
-  -- A rate of zero is not "unlocked", it is a mistake. Null is unlocked.
+  -- A share of zero is not "standard", it is a mistake, and a share above 1
+  -- pays the cleaner more than the customer paid. Null is standard.
   begin
-    update recurring_plans set agreed_payout_rate_cents = 0 where id = v_plan;
-    v_fail := v_fail+1; raise warning 'a zero agreed payout rate was accepted';
+    update recurring_plans set agreed_payout_share = 0 where id = v_plan;
+    v_fail := v_fail+1; raise warning 'a zero agreed payout share was accepted';
+  exception when check_violation then null; end;
+  begin
+    update recurring_plans set agreed_payout_share = 1.5 where id = v_plan;
+    v_fail := v_fail+1; raise warning 'an agreed payout share above 1 was accepted';
   exception when check_violation then null; end;
 
   if v_fail > 0 then raise exception '% relationship assertions failed', v_fail; end if;

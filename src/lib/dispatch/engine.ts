@@ -40,9 +40,9 @@ import {
   type Rng,
   assignTiers,
   buildLadder,
-  payoutForRate,
   rankScore,
 } from "./ladder";
+import { payoutForTicket } from "../pricing/payout";
 import type { Cleaner, DispatchJob, DriveLeg } from "./types";
 
 /** Jobs closer than this go out as a waterfall rather than sitting on a board. */
@@ -103,7 +103,8 @@ export type DispatchDecision =
       cleaner: Cleaner;
       basis: ContinuityBasis;
       payoutCents: number;
-      hourlyRateCents: number;
+      /** The share of the ticket this offer represents. */
+      share: number;
       exclusiveUntil: Date;
       /** What runs if she declines or the hold lapses unanswered. */
       fallback: "open_board" | "waterfall";
@@ -113,7 +114,7 @@ export type DispatchDecision =
   | {
       kind: "open_board";
       payoutCents: number;
-      hourlyRateCents: number;
+      share: number;
       promoteToWaterfallAt: Date;
       eligible: Cleaner[];
       continuity: ContinuityOutcome;
@@ -169,19 +170,20 @@ export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDe
 
   // --- Step 0: continuity. The incumbent gets it, or gets first refusal on
   // it, before anything below runs.
-  const openingRateCents = (context.ladderConfig ?? DEFAULT_LADDER).openingRateCents;
+  const openingShare = (context.ladderConfig ?? DEFAULT_LADDER).openingShare;
 
-  // The rate this job is actually being offered at now: the opening rate the
+  // The share this job is actually being offered at now: the opening share the
   // first time, and the next rung up on every sweep after that. A cleaner who
-  // passed at a LOWER rate is legitimately asked again here — that is the
-  // ladder working, not a bug.
-  const currentRateCents = Math.max(openingRateCents, (job.offeredUpToCents ?? 0) + 1);
+  // passed at a LOWER share is legitimately asked again here — that is the
+  // ladder working, not a bug. The epsilon is a hundredth of a percentage
+  // point, the quantum the ladder steps in.
+  const currentShare = Math.max(openingShare, (job.offeredUpToShare ?? 0) + 0.0001);
 
   const resolution = resolveContinuity(job, eligible, {
     now,
     hoursUntilJob: hoursUntil(job, now),
     eligibilityFor,
-    offerRateCents: currentRateCents,
+    offerShare: currentShare,
   });
 
   // Priced against what we would otherwise have done. `null` means there was
@@ -205,18 +207,17 @@ export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDe
 
     // What honouring this costs us for this specific job. A W-2 incumbent is
     // priced at her marginal cost; a contractor at what we would have to offer
-    // her, which is the opening rate — the ladder is for finding the clearing
+    // her, which is the standard share — the ladder is for finding the clearing
     // price of an UNKNOWN job, and this one is not unknown to her.
-    // The rate this relationship was agreed at, where it has one. Reaching for
-    // the global opening rate on an established pairing is what let a change
-    // made to attract new supply quietly re-cut the margin on every existing
-    // customer.
-    const incumbentRateCents =
-      job.continuity?.agreedPayoutRateCents ?? config0.openingRateCents;
+    //
+    // A negotiated share is honoured where one exists. The SPREAD needs no
+    // protecting here: the plan locks what the customer pays and the share is
+    // a constant, so a recurring visit's payout cannot drift on its own.
+    const incumbentShare = job.continuity?.agreedPayoutShare ?? config0.openingShare;
 
     const w2Cost = w2MarginalCost(cleaner, inputsFor(cleaner));
     const incumbentCents =
-      w2Cost?.marginalCents ?? payoutForRate(incumbentRateCents, job.estimatedCleanMinutes);
+      w2Cost?.marginalCents ?? payoutForTicket(job.priceCents, incumbentShare);
 
     const premium = premiumFor(cleaner, incumbentCents);
     const cap = context.continuityPremiumCapCents ?? continuityPremiumCapCents(job.priceCents);
@@ -278,7 +279,7 @@ export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDe
     } else {
       // A contractor. Offered, not assigned — and to her alone until the hold
       // lapses.
-      const payoutCents = payoutForRate(incumbentRateCents, job.estimatedCleanMinutes);
+      const payoutCents = payoutForTicket(job.priceCents, incumbentShare);
       continuity = {
         status: "held",
         cleanerId: cleaner.id,
@@ -292,7 +293,7 @@ export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDe
         cleaner,
         basis,
         payoutCents,
-        hourlyRateCents: incumbentRateCents,
+        share: incumbentShare,
         exclusiveUntil: resolution.expiresAt,
         fallback: isUrgent(job, now) ? "waterfall" : "open_board",
         continuity,
@@ -341,7 +342,7 @@ export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDe
   // incumbent, who would otherwise watch a stranger take her own customer at a
   // rate she was never offered.
   const marketplace = eligible.filter(
-    (c) => c.type === "contractor_1099" && !hasPassedAtOrAbove(job, c.id, currentRateCents),
+    (c) => c.type === "contractor_1099" && !hasPassedAtOrAbove(job, c.id, currentShare),
   );
 
   // If nobody is in the marketplace, the W-2 option is the only option.
@@ -390,8 +391,8 @@ export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDe
 
     return {
       kind: "open_board",
-      hourlyRateCents: config.openingRateCents,
-      payoutCents: payoutForRate(config.openingRateCents, job.estimatedCleanMinutes),
+      share: config.openingShare,
+      payoutCents: payoutForTicket(job.priceCents, config.openingShare),
       promoteToWaterfallAt: promoteAt,
       eligible: ranked,
       continuity,
@@ -408,7 +409,7 @@ export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDe
     config,
     w2CeilingCents,
     rng: context.rng,
-  }).filter((rung) => rung.hourlyRateCents >= currentRateCents);
+  }).filter((rung) => rung.share >= currentShare);
 
   if (ladder.length === 0) {
     // The ladder is exhausted: every rate up to the ceiling has been offered
@@ -422,7 +423,8 @@ export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDe
         continuity,
         rationale:
           `The marketplace was offered this job up to ` +
-          `$${((job.offeredUpToCents ?? 0) / 100).toFixed(2)}/h and did not take it. ` +
+          `${(((job.offeredUpToShare ?? 0) * 100)).toFixed(1)}% of the ticket and did not ` +
+          `take it. ` +
           `${cheapest.cleaner.name} is cheaper than escalating further.`,
       };
     }
@@ -569,7 +571,7 @@ function cheapestAlternativeCents(
   if (others.length === 0) return null;
 
   const config = context.ladderConfig ?? DEFAULT_LADDER;
-  const openingPayout = payoutForRate(config.openingRateCents, job.estimatedCleanMinutes);
+  const openingPayout = payoutForTicket(job.priceCents, config.openingShare);
 
   let best: number | null = null;
   for (const cleaner of others) {
