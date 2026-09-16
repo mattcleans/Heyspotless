@@ -10,17 +10,14 @@ import {
 } from "./brand";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
+const SRC = join(ROOT, "src");
 
 /**
- * The only files allowed to mention Bliss: the policy itself, this test, and
- * the setup checklist where Stripe/Twilio underwriting needs the registered
- * company. Customer-facing copy is not on the list.
+ * Bliss is ownership truth in brand.ts / this test / docs/setup.md (Stripe
+ * and Twilio underwriting). It must not appear in this app's source as
+ * customer-facing copy. The Webflow marketing site is a different repo.
  */
-const BLISS_ALLOWLIST = new Set([
-  "src/lib/brand.ts",
-  "src/lib/brand.test.ts",
-  "docs/setup.md",
-]);
+const BLISS_ALLOWLIST = new Set(["src/lib/brand.ts", "src/lib/brand.test.ts"]);
 
 const TEXT_EXT = new Set([
   ".ts",
@@ -81,15 +78,13 @@ describe("the brand split", () => {
   });
 });
 
-describe("the repo does not market Bliss or invent a second LLC", () => {
-  const files = walk(ROOT).filter((path) => {
-    const rel = relative(ROOT, path);
-    return rel !== "package-lock.json";
-  });
+describe("this app does not market Bliss or invent a second LLC", () => {
+  const repoFiles = walk(ROOT).filter((path) => relative(ROOT, path) !== "package-lock.json");
+  const appFiles = walk(SRC);
 
   it("contains no 'Hey Spotless LLC' — that company is not the registered entity", () => {
     const hits: string[] = [];
-    for (const path of files) {
+    for (const path of repoFiles) {
       const rel = relative(ROOT, path);
       if (rel === "src/lib/brand.test.ts") continue;
       const body = readFileSync(path, "utf8");
@@ -98,9 +93,9 @@ describe("the repo does not market Bliss or invent a second LLC", () => {
     expect(hits).toEqual([]);
   });
 
-  it("keeps Bliss off customer-facing and public surfaces", () => {
+  it("keeps Bliss out of this app's source, except the legal-entity constant", () => {
     const hits: string[] = [];
-    for (const path of files) {
+    for (const path of appFiles) {
       const rel = relative(ROOT, path);
       if (BLISS_ALLOWLIST.has(rel)) continue;
       const body = readFileSync(path, "utf8");

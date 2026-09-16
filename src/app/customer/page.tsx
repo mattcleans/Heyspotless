@@ -1,5 +1,4 @@
 import { Callout, PageHeader, Pill, Stat } from "@/components/ui";
-import { CUSTOMER_BRAND } from "@/lib/brand";
 import { getRepository } from "@/lib/data";
 import type { Invoice, PaymentMethod } from "@/lib/data/types";
 import { FREQUENCY_LABELS, SERVICE_LABELS } from "@/lib/pricing/price-book";
@@ -8,7 +7,7 @@ import { formatCalendarDate, formatDateInZone } from "@/lib/time/zone";
 import { isBillingEnabled } from "@/lib/stripe/env";
 import { PayInvoiceButton, SaveCardButton } from "./billing-actions";
 
-export const metadata = { title: `Your cleans — ${CUSTOMER_BRAND}` };
+export const metadata = { title: "Your cleans — Spotless Ops" };
 
 export default async function CustomerPage() {
   const repo = await getRepository();
@@ -47,7 +46,7 @@ export default async function CustomerPage() {
 
   return (
     <>
-      <PageHeader eyebrow={CUSTOMER_BRAND} title="Your cleans">
+      <PageHeader eyebrow="Customer" title="Your cleans">
         Your upcoming visits, what you owe, and the card we keep on file. Rating a clean feeds
         straight back into who is eligible for future jobs.
       </PageHeader>

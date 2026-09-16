@@ -1,15 +1,15 @@
 /**
- * Customer-facing brand vs legal entity.
+ * Customer-facing brand vs legal entity, for THIS app (Spotless Ops).
  *
- * The public name is Hey Spotless. The registered company is BLISS CLEANS LLC.
- * Those are not the same string. Collapsing them either markets a name
- * customers no longer book under, or invents an LLC named after the brand that
- * is not the USPTO owner and is not what belongs on a W-9.
+ * The public marketing site (heyspotless.com / Webflow) is a different
+ * codebase. This module is for strings this app itself sends or shows:
+ * Stripe charge copy, card statements, SMS bodies, customer-portal copy.
  *
- * Use CUSTOMER_BRAND on anything a customer reads: portal copy, Stripe
- * descriptions, bank-statement descriptors, SMS voice. Use LEGAL_ENTITY only
- * where the law actually wants the registered company — Stripe/Twilio
- * underwriting, contracts, tax forms. Never invent a second LLC.
+ * The name a customer reads is Hey Spotless. The registered company is
+ * BLISS CLEANS LLC. Those are not the same string. Collapsing them either
+ * markets a name customers no longer book under, or invents an LLC named
+ * after the brand that is not the USPTO owner and is not what belongs on
+ * a W-9. Never invent a second LLC.
  */
 
 /** What customers, cards, and public copy call the business. */

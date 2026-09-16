@@ -35,7 +35,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <header className="bg-navy-deep text-white">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3">
             <Link href="/" className="font-semibold tracking-tight">
-              {CUSTOMER_BRAND}
+              Spotless<span className="text-sky"> Ops</span>
             </Link>
             <nav className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
               {NAV.map((item) => (

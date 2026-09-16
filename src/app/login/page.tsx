@@ -1,9 +1,8 @@
 import { PageHeader, Callout } from "@/components/ui";
-import { CUSTOMER_BRAND } from "@/lib/brand";
 import { isDemoMode } from "@/lib/supabase/env";
 import { LoginForm } from "./login-form";
 
-export const metadata = { title: `Sign in — ${CUSTOMER_BRAND}` };
+export const metadata = { title: "Sign in — Spotless Ops" };
 
 export default async function LoginPage({
   searchParams,
@@ -18,7 +17,7 @@ export default async function LoginPage({
 
   return (
     <div className="mx-auto max-w-md">
-      <PageHeader eyebrow={CUSTOMER_BRAND} title="Sign in" />
+      <PageHeader eyebrow="Spotless Ops" title="Sign in" />
       {isDemoMode() ? (
         <Callout tone="warn" label="Demo mode">
           No Supabase project is configured, so there is nothing to sign in to and every surface is
