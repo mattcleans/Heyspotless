@@ -5,6 +5,10 @@
  * asserted without a Twilio account — and so changing a message is a change to
  * one file rather than an archaeology exercise.
  *
+ * Customer-facing SMS, when it is added, takes its name from CUSTOMER_BRAND
+ * in ../brand. The public name is Hey Spotless. Do not market the former
+ * name, and do not invent a second LLC named after the brand.
+ *
  * Every outbound message to a cleaner obeys three rules:
  *
  *   1. IT NAMES A PRICE, NOT A RATE. The platform pays per clean; saying

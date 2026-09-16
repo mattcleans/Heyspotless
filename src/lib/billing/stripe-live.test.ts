@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import Stripe from "stripe";
 import { beforeAll, describe, expect, it } from "vitest";
+import { CUSTOMER_BRAND } from "../brand";
 import { toTransition, type StripeEventLike } from "./events";
 
 /**
@@ -154,7 +155,7 @@ describe.skipIf(!CONFIGURED)("against Stripe test mode and real Postgres", () =>
           price_data: {
             currency: "usd",
             unit_amount: 17000,
-            product_data: { name: "Hey Spotless — live check" },
+            product_data: { name: `${CUSTOMER_BRAND} — live check` },
           },
         },
       ],

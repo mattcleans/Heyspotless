@@ -1,11 +1,12 @@
 import type { Metadata, Viewport } from "next";
 import Link from "next/link";
+import { CUSTOMER_BRAND } from "@/lib/brand";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Spotless Ops",
   description:
-    "Hey Spotless operations — booking, scheduling, dispatch, billing and communications.",
+    `${CUSTOMER_BRAND} operations — booking, scheduling, dispatch, billing and communications.`,
   applicationName: "Spotless Ops",
   appleWebApp: { capable: true, statusBarStyle: "default", title: "Spotless Ops" },
 };
@@ -34,7 +35,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <header className="bg-navy-deep text-white">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3">
             <Link href="/" className="font-semibold tracking-tight">
-              Spotless<span className="text-sky"> Ops</span>
+              {CUSTOMER_BRAND}
             </Link>
             <nav className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
               {NAV.map((item) => (

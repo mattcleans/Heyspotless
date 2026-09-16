@@ -2,6 +2,7 @@ import "server-only";
 
 import { getStripe } from "../stripe/client";
 import type { Customer } from "../data/types";
+import { STATEMENT_DESCRIPTOR } from "../brand";
 import { BillingError } from "./types";
 
 /**
@@ -82,6 +83,8 @@ export async function createCheckoutSession(args: {
     payment_intent_data: {
       metadata: { [INVOICE_KEY]: args.invoiceId, tip_cents: String(args.tipCents) },
       setup_future_usage: args.saveCard ? "off_session" : undefined,
+      // Card statement: Hey Spotless, not the LLC. Customers book the brand.
+      statement_descriptor: STATEMENT_DESCRIPTOR,
     },
     success_url: `${args.origin}/customer?paid=${args.invoiceId}`,
     cancel_url: `${args.origin}/customer?canceled=${args.invoiceId}`,
@@ -145,6 +148,7 @@ export async function chargeOffSession(args: {
       off_session: true,
       confirm: true,
       description: args.description,
+      statement_descriptor: STATEMENT_DESCRIPTOR,
       metadata: { [INVOICE_KEY]: args.invoiceId },
     },
     { idempotencyKey: args.idempotencyKey },

@@ -7,6 +7,7 @@ import { checkoutKeyFor, reconcileInvoiceCollection } from "@/lib/billing/collec
 import { createCheckoutSession, ensureStripeCustomer } from "@/lib/billing/gateway";
 import { BillingError } from "@/lib/billing/types";
 import { isBillingEnabled } from "@/lib/stripe/env";
+import { invoiceChargeDescription } from "@/lib/brand";
 
 /**
  * Start a Checkout session for one invoice.
@@ -146,7 +147,7 @@ export async function POST(request: NextRequest) {
       stripeCustomerId,
       amountCents,
       tipCents,
-      description: `Hey Spotless — invoice ${invoice.id.slice(0, 8)}`,
+      description: invoiceChargeDescription(invoice.id),
       origin: request.nextUrl.origin,
       saveCard,
       idempotencyKey,
