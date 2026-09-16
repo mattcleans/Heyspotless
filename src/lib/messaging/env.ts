@@ -54,12 +54,34 @@ export function requireTwilioConfig(): TwilioConfig {
   const authToken = twilioAuthToken();
   const messagingServiceSid = twilioMessagingServiceSid();
 
-  if (!accountSid || !authToken || !messagingServiceSid) {
+  /**
+   * NAME THE ONES THAT ARE ACTUALLY MISSING.
+   *
+   * This used to list all three whatever the problem was, and the message is
+   * recorded against the message row rather than raised — so a live run showed
+   * "set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_MESSAGING_SERVICE_SID"
+   * against three variables that were all visibly present in the dashboard,
+   * and cost a session to not diagnose. Vercel encrypts these once saved, so
+   * the value cannot be read back and this string is the only evidence there
+   * is. It should say which one.
+   */
+  const missing = [
+    accountSid ? null : "TWILIO_ACCOUNT_SID",
+    authToken ? null : "TWILIO_AUTH_TOKEN",
+    messagingServiceSid ? null : "TWILIO_MESSAGING_SERVICE_SID",
+  ].filter((name): name is string => name !== null);
+
+  if (missing.length > 0) {
     throw new Error(
-      "Twilio is not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and " +
-        "TWILIO_MESSAGING_SERVICE_SID, or leave messaging disabled " +
-        "(MESSAGING_ENABLED=0). See docs/setup.md.",
+      `Twilio is not configured: ${missing.join(", ")} ` +
+        `${missing.length === 1 ? "is" : "are"} unset or empty in this ` +
+        `deployment. Environment changes need a redeploy to take effect. ` +
+        `Or leave messaging disabled (MESSAGING_ENABLED=0). See docs/setup.md.`,
     );
   }
-  return { accountSid, authToken, messagingServiceSid };
+  return {
+    accountSid: accountSid as string,
+    authToken: authToken as string,
+    messagingServiceSid: messagingServiceSid as string,
+  };
 }

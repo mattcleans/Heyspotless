@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import Link from "next/link";
 import "./globals.css";
+import { isDemoMode } from "@/lib/supabase/env";
 
 export const metadata: Metadata = {
   title: "Spotless Ops",
@@ -53,10 +54,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
         </header>
         <main className="mx-auto max-w-6xl px-5 py-8">{children}</main>
-        <footer className="mx-auto max-w-6xl px-5 pb-10 text-xs text-ink-3">
-          Running on demo fixtures — no Supabase, Stripe, or Twilio connection. See{" "}
-          <code className="font-mono">docs/setup.md</code>.
-        </footer>
+        {/*
+          Only in demo mode. This was unconditional, so a production site wired
+          to live Supabase and Twilio told everyone who opened it that it was
+          running on fixtures with no connections — including the person
+          testing it, who believed it for a minute before reading the source.
+          A status line that is wrong is worse than no status line.
+        */}
+        {isDemoMode() && (
+          <footer className="mx-auto max-w-6xl px-5 pb-10 text-xs text-ink-3">
+            Running on demo fixtures — no Supabase, Stripe, or Twilio connection. See{" "}
+            <code className="font-mono">docs/setup.md</code>.
+          </footer>
+        )}
       </body>
     </html>
   );

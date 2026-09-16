@@ -113,3 +113,81 @@ describe("reachability", () => {
     if (!result.reachable) expect(result.reason).toBe("unknown_cleaner");
   });
 });
+
+describe("configuration errors name what is actually wrong", () => {
+  /**
+   * The message is recorded against the message row rather than raised, so it
+   * is the only evidence anybody gets. A live run cost a session because it
+   * listed all three variables when one was unset — and Vercel encrypts them
+   * once saved, so nobody could tell which by looking.
+   */
+  const KEYS = [
+    "TWILIO_ACCOUNT_SID",
+    "TWILIO_AUTH_TOKEN",
+    "TWILIO_MESSAGING_SERVICE_SID",
+  ] as const;
+
+  function withEnv(present: readonly string[], run: () => void) {
+    const saved = KEYS.map((key) => [key, process.env[key]] as const);
+    for (const key of KEYS) {
+      if (present.includes(key)) process.env[key] = "x";
+      else delete process.env[key];
+    }
+    try {
+      run();
+    } finally {
+      for (const [key, value] of saved) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  }
+
+  it("names the single missing variable and not the others", async () => {
+    const { requireTwilioConfig } = await import("./env");
+    withEnv(["TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"], () => {
+      try {
+        requireTwilioConfig();
+        throw new Error("expected it to refuse");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        expect(message).toContain("TWILIO_MESSAGING_SERVICE_SID");
+        expect(message).not.toContain("TWILIO_ACCOUNT_SID");
+        expect(message).not.toContain("TWILIO_AUTH_TOKEN");
+      }
+    });
+  });
+
+  it("names all three when none are set", async () => {
+    const { requireTwilioConfig } = await import("./env");
+    withEnv([], () => {
+      try {
+        requireTwilioConfig();
+        throw new Error("expected it to refuse");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        for (const key of KEYS) expect(message).toContain(key);
+      }
+    });
+  });
+
+  it("points at the redeploy, which is the usual cause", async () => {
+    // A variable set in the dashboard but absent from the running deployment
+    // looks identical to one that was never set.
+    const { requireTwilioConfig } = await import("./env");
+    withEnv([], () => {
+      try {
+        requireTwilioConfig();
+      } catch (error) {
+        expect(error instanceof Error ? error.message : "").toMatch(/redeploy/i);
+      }
+    });
+  });
+
+  it("succeeds once all three are present", async () => {
+    const { requireTwilioConfig } = await import("./env");
+    withEnv([...KEYS], () => {
+      expect(requireTwilioConfig().accountSid).toBe("x");
+    });
+  });
+});
