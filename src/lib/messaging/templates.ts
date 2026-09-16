@@ -5,6 +5,9 @@
  * asserted without a Twilio account — and so changing a message is a change to
  * one file rather than an archaeology exercise.
  *
+ * Customer-facing SMS, when it is added, takes its name from CUSTOMER_BRAND
+ * in ../brand. That is this app's copy — the Webflow site is separate.
+ *
  * Every outbound message to a cleaner obeys three rules:
  *
  *   1. IT NAMES A PRICE, NOT A RATE. The platform pays per clean; saying

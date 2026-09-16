@@ -1,11 +1,12 @@
 import type { Metadata, Viewport } from "next";
 import Link from "next/link";
+import { CUSTOMER_BRAND } from "@/lib/brand";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Spotless Ops",
   description:
-    "Hey Spotless operations — booking, scheduling, dispatch, billing and communications.",
+    `${CUSTOMER_BRAND} operations — booking, scheduling, dispatch, billing and communications.`,
   applicationName: "Spotless Ops",
   appleWebApp: { capable: true, statusBarStyle: "default", title: "Spotless Ops" },
 };

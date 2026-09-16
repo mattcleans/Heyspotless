@@ -8,18 +8,25 @@ into `.env.local` (git-ignored) or the Vercel environment settings.
 
 ## 1. Start the Twilio A2P 10DLC filing — do this today
 
-Create a Twilio account, register the business brand, and submit a messaging
-campaign. **Carrier approval takes one to three weeks.** Confirmations, reminders,
+Create a Twilio account, register the business, and submit a messaging campaign.
+**Carrier approval takes one to three weeks.** Confirmations, reminders,
 on-my-way texts and review requests all wait on it; email and push cover the gap.
+
+The legal business name on the brand registration is **BLISS CLEANS LLC**. The
+customer-facing campaign brand is **Hey Spotless**. Those are the same company.
+Do not register a second LLC named after the customer brand — it is not the USPTO
+owner and it is not what belongs on the W-9.
 
 Needed: account SID, auth token, and a decision on whether to port the current
 business number.
 
 ## 2. Stripe
 
-Create an account for Hey Spotless LLC and complete business verification. Enable
-Stripe Connect if the app should handle 1099 payouts. Underwriting usually clears in
-a day and blocks only card-on-file and auto-charge.
+Create a Stripe account under **BLISS CLEANS LLC** (doing business as Hey Spotless)
+and complete business verification. The customer-facing statement descriptor is
+**HEY SPOTLESS** — that is what prints on a card, so it is the brand, not Bliss
+and not a second LLC. Enable Stripe Connect if the app should handle 1099 payouts.
+Underwriting usually clears in a day and blocks only card-on-file and auto-charge.
 
 Needed: publishable key + secret key. Test mode is fine to start.
 

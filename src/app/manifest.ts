@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { CUSTOMER_BRAND } from "@/lib/brand";
 
 /**
  * PWA manifest. Installing to the home screen is how this ships on day one —
@@ -8,7 +9,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Spotless Ops",
     short_name: "Spotless",
-    description: "Hey Spotless operations — schedule, dispatch, bill, communicate.",
+    description: `${CUSTOMER_BRAND} operations — schedule, dispatch, bill, communicate.`,
     start_url: "/",
     display: "standalone",
     background_color: "#f6f9fb",

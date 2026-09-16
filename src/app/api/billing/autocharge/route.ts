@@ -5,6 +5,7 @@ import { type AutochargeDecision, nextAttemptAfter, planSweep } from "@/lib/bill
 import { chargeOffSession } from "@/lib/billing/gateway";
 import { reconcileInvoiceCollection } from "@/lib/billing/collection";
 import { cronSecretMatches, isBillingEnabled } from "@/lib/stripe/env";
+import { invoiceChargeDescription } from "@/lib/brand";
 
 /**
  * The auto-charge sweep. Runs on a schedule; charges every card that is due.
@@ -122,7 +123,7 @@ export async function POST(request: NextRequest) {
         paymentMethodId: decision.paymentMethodId,
         amountCents: decision.amountCents,
         idempotencyKey: decision.idempotencyKey,
-        description: `Hey Spotless — invoice ${decision.invoiceId.slice(0, 8)}`,
+        description: invoiceChargeDescription(decision.invoiceId),
       });
 
       // Written down before anything else, so a crash from here on leaves a
