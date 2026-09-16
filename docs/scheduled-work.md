@@ -76,7 +76,8 @@ actually went wrong:
 
 ```json
 { "jobs": 18, "expiredOffers": 2, "assigned": 4, "held": 3,
-  "offered": 9, "refused": 0, "unfilled": 1, "failed": 0 }
+  "offered": 9, "notified": 9, "deferred": 0, "unreachable": 0,
+  "refused": 0, "unfilled": 1, "failed": 0 }
 ```
 
 - **held** — visits being kept for the cleaner who already has that customer,
@@ -95,6 +96,19 @@ actually went wrong:
   eligible between the roster being read and the offer being written, usually
   because she took something else in the meantime. A few is normal on a busy
   board. Persistently many means the sweep is working from a stale roster.
+- **notified** — offers the cleaner was actually texted about. **This should
+  track `offered` closely.** A gap between them means offers are being written
+  that nobody is being told about, which is the failure the notification work
+  exists to prevent.
+- **deferred** — offers held back because it is outside sending hours and the
+  job is not close enough to justify a night text. Not lost: the sweep runs
+  hourly and the first one after 08:00 writes and sends them. Expect this to be
+  non-zero overnight and zero during the day.
+- **unreachable** — a cleaner with no number on file, or who has replied STOP.
+  No offer is written for her, deliberately: an offer she cannot see starts a
+  countdown she cannot answer, and it expires teaching the ranking she passed
+  on work she was never shown. A persistently high number means the roster
+  needs phone numbers, not that dispatch is broken.
 - **expiredOffers** — countdowns that ran out before this sweep. A persistently
   large number means offers are being ignored, not that the sweep is broken.
 - **unfilled** — visits no eligible cleaner could take. This is the line the

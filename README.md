@@ -50,6 +50,7 @@ src/lib/billing/      invoice arithmetic, refund policy, auto-charge decisions,
                       collection reconciliation, Stripe event mapping
 src/lib/time/         the business calendar — America/Chicago, and calendar days
 src/lib/recurring/    when a recurring plan's next visits fall, and generating them
+src/lib/messaging/    Twilio boundary — quiet hours, message bodies, send log
 src/lib/stripe/       SDK boundary — client, config flags, cron guard
 src/app/admin/        dispatch board, quote builder, price book
 src/app/api/          Stripe webhook, checkout, saved cards, auto-charge sweep,
