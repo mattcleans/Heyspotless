@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { PageHeader, Callout, Pill } from "@/components/ui";
 import { OfferActions } from "./offer-actions";
 import { ZIP_CENTROIDS } from "@/lib/config";
@@ -35,12 +36,11 @@ export default async function CleanerPage() {
       </PageHeader>
 
       <Callout tone="warn" label="Partly built">
-        Offers, accept and decline are real: answering one creates the assignment in a single
-        database operation, so two cleaners tapping Accept at the same moment produce one booking
-        and one honest &ldquo;someone got there first&rdquo;. Clock in/out with a GPS stamp, room
-        checklists, and the offline photo queue are phase 4 — the offline cache matters more than
-        it sounds, because cleaners lose signal inside houses and a checklist that discards photos
-        when the connection drops is one nobody uses twice.
+        Offers, accept and decline are real, and so is the job itself: open one to start it,
+        photograph each room, and mark it done. Photos are saved to the phone before anything
+        touches the network and keep retrying until they land, so a house with no signal costs a
+        wait rather than the work. Ratings, and the customer&rsquo;s view of any of this, are not
+        built yet.
       </Callout>
 
       {offers.length > 0 && (
@@ -120,10 +120,17 @@ export default async function CleanerPage() {
                 </p>
               </div>
             </div>
-            <div className="mt-3 flex gap-2 border-t border-line-soft pt-3">
-              <Pill tone="sky">On my way</Pill>
-              <Pill>Clock in</Pill>
-              <Pill>Checklist</Pill>
+            <div className="mt-3 border-t border-line-soft pt-3">
+              <Link
+                href={`/cleaner/job/${job.id}`}
+                className="block rounded-lg bg-navy px-4 py-2.5 text-center text-sm font-semibold text-white"
+              >
+                {job.status === "complete"
+                  ? "View"
+                  : job.status === "in_progress"
+                    ? "Continue"
+                    : "Open"}
+              </Link>
             </div>
           </li>
         ))}

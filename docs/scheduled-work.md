@@ -4,13 +4,27 @@ Three sweeps run on a timer. All run with no signed-in user, so all are
 guarded by `CRON_SECRET` rather than a session — unset, they refuse
 everything, which is the right way round to fail.
 
+**Two of them are Vercel Cron; the dispatch sweep is a GitHub Action.** Vercel's
+Hobby plan allows one cron run per day, and dispatch cannot be daily — an offer
+ladder whose next rung waits until tomorrow is not a ladder, and a 45-minute
+exclusive hold checked once a day has already lapsed by the time anybody looks.
+Making it daily would not degrade the product, it would remove it. So the
+schedule lives in `.github/workflows/dispatch-sweep.yml` and the endpoint is
+unchanged. Moving it back is deleting that file and restoring the entry in
+`vercel.json`.
+
+It needs two repository secrets: `APP_URL` and `CRON_SECRET`. GitHub's
+scheduler is best-effort and can run ten or fifteen minutes late under load —
+tolerable hourly, and far better than daily. If same-day backfills are
+regularly noticed late, that is the reason to pay for Vercel Cron.
+
 Times are UTC, because cron is. What they mean locally is the part worth
 checking, since the business runs on the America/Chicago calendar.
 
 | Sweep | UTC | Dallas | Why then |
 |---|---|---|---|
 | `/api/recurring/generate` | 08:00 | 02:00 / 03:00 | Overnight, before anyone looks at the board. The horizon is six weeks, so nothing is urgent — it just needs to have happened by morning. |
-| `/api/dispatch/run` | :30 hourly | :30 hourly | Hourly, not daily. An offer ladder whose next rung waits until tomorrow is not a ladder, and an exclusive hold that lapses at 10am must be noticed before the afternoon. At :30 so the day's new visits from the 08:00 generation are already on the board. |
+| `/api/dispatch/run` (GitHub Action) | :30 hourly | :30 hourly | Hourly, not daily. An offer ladder whose next rung waits until tomorrow is not a ladder, and an exclusive hold that lapses at 10am must be noticed before the afternoon. At :30 so the day's new visits from the 08:00 generation are already on the board. |
 | `/api/billing/autocharge` | 14:00 | 08:00 / 09:00 | Business hours, deliberately. A card that declines should decline while somebody is awake to see it, and a customer who gets a failed-payment email should be able to ring someone. |
 
 The one-hour drift in the Dallas column is daylight saving, and it is

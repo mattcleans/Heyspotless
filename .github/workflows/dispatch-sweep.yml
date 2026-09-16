@@ -1,0 +1,64 @@
+# Hourly dispatch sweep.
+#
+# WHY THIS IS NOT IN vercel.json. Vercel's Hobby plan allows one cron run per
+# day, and dispatch cannot be a daily job: an offer ladder whose next rung
+# waits until tomorrow is not a ladder, and a 45-minute exclusive hold checked
+# once a day has already lapsed by the time anybody looks. Making it daily
+# would not degrade the product, it would remove it.
+#
+# So the schedule lives here instead, and the endpoint stays exactly as it is —
+# guarded by CRON_SECRET, idempotent, and safe to run as often as you like.
+# Moving back to Vercel Cron on a paid plan is deleting this file and putting
+# the entry back in vercel.json.
+#
+# CAVEAT, on the record: GitHub's scheduler is best-effort and runs late under
+# load — occasionally by ten or fifteen minutes. Tolerable for an hourly sweep,
+# and still enormously better than daily. If a same-day backfill is regularly
+# being noticed late, that is the reason to pay for Vercel Cron.
+name: Dispatch sweep
+
+on:
+  schedule:
+    - cron: "30 * * * *"
+  # So it can be kicked by hand while debugging, without waiting for the hour.
+  workflow_dispatch:
+
+concurrency:
+  group: dispatch-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Run the dispatch sweep
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /api/dispatch/run
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "APP_URL and CRON_SECRET must be set as repository secrets." >&2
+            exit 1
+          fi
+
+          # --fail-with-body so a non-2xx fails the run AND prints what the
+          # endpoint said. A sweep that quietly 500s every hour for a week is
+          # the failure worth engineering against here.
+          curl --fail-with-body --silent --show-error \
+            --max-time 120 \
+            --retry 2 --retry-delay 10 --retry-connrefused \
+            -X POST "$APP_URL/api/dispatch/run" \
+            -H "x-cron-secret: $CRON_SECRET" \
+            | tee response.json
+
+          echo
+
+          # `failed` is the number that matters: it counts visits the sweep
+          # could not dispatch. Anything above zero wants a person.
+          if grep -q '"failed":0' response.json; then
+            echo "Sweep clean."
+          else
+            echo "Sweep reported failures — see the response above." >&2
+            exit 1
+          fi

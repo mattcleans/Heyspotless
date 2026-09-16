@@ -51,11 +51,15 @@ src/lib/billing/      invoice arithmetic, refund policy, auto-charge decisions,
 src/lib/time/         the business calendar — America/Chicago, and calendar days
 src/lib/recurring/    when a recurring plan's next visits fall, and generating them
 src/lib/messaging/    Twilio boundary — quiet hours, message bodies, send log
+src/lib/service/      finishing a job — rooms, photo evidence, the invoice gate
 src/lib/stripe/       SDK boundary — client, config flags, cron guard
 src/app/admin/        dispatch board, quote builder, price book
 src/app/api/          Stripe webhook, checkout, saved cards, auto-charge sweep,
-                      refunds, recurring generation, offer accept/decline
-src/app/cleaner/      cleaner PWA — today's route, and answering an offer
+                      refunds, recurring generation, offer accept/decline,
+                      dispatch sweep, job start/complete/photo
+src/app/cleaner/      cleaner PWA — today's route, answering an offer, and
+                      running a job: arrive, photograph each room, mark done
+src/lib/offline/      the photo queue — durable before sent, never discarded
 src/app/customer/     customer portal — balances, saved card, autopay
 supabase/migrations/  schema, price book, row-level security, billing
 docs/                 build plan, setup checklist, decisions
