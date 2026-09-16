@@ -1909,6 +1909,181 @@ end $$;
 SQL
 echo "  offer notifications verified"
 
+# --- job completion and the invoice gate (0020) -------------------------------
+# Nothing in the codebase could set a job to complete, which meant the
+# continuity engine could never engage: job_continuity counts incumbency from
+# completed visits, so every property reported zero prior visits for ever.
+# These assert the loop closes and that finishing a job is what turns
+# continuity on.
+echo "  checking job completion"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_prop uuid; v_flat uuid; v_job uuid; v_next uuid;
+  v_cleaner uuid; v_other uuid; v_invoice uuid; v_again uuid;
+  v_status job_status; v_dist integer; v_count integer; v_fail integer := 0;
+  v_started timestamptz; v_started2 timestamptz; v_incumbent uuid; v_visits integer;
+  v_closed boolean;
+  r record;
+begin
+  insert into customers (first_name, last_name) values ('Done','Test')
+    returning id into v_cust;
+  -- A one-bed flat with no utility room: kitchen, bath, living, bedroom = 4.
+  insert into properties (customer_id, street, city, zip, bedrooms, bathrooms,
+                          utility_rooms, latitude, longitude)
+    values (v_cust, '5 Done Way', 'Plano', '75024', 1, 1, 0, 33.0198, -96.6989)
+    returning id into v_prop;
+
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Done Cleaner', 'contractor_1099', 'active', 4.6, true) returning id into v_cleaner;
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Other Cleaner', 'contractor_1099', 'active', 4.6, true) returning id into v_other;
+
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'assigned', 'standard', 'biweekly',
+            now() - interval '2 hours', 17000, 138)
+    returning id into v_job;
+  insert into job_assignments (job_id, cleaner_id, payout_cents)
+    values (v_job, v_cleaner, 5610);
+
+  -- ONLY THE ASSIGNED CLEANER. An offer she never accepted is not a job she
+  -- can start or finish.
+  if start_job(v_job, v_other) then v_fail := v_fail+1;
+    raise warning 'a cleaner started a job she was not assigned'; end if;
+  if complete_job(v_job, v_other) then v_fail := v_fail+1;
+    raise warning 'a cleaner completed a job she was not assigned'; end if;
+
+  -- ARRIVAL. Idempotent: when she arrived is the fact, and a second tap is a
+  -- person checking the button worked.
+  if not start_job(v_job, v_cleaner) then v_fail := v_fail+1;
+    raise warning 'starting an assigned job reported failure'; end if;
+  select status, started_at into v_status, v_started from jobs where id = v_job;
+  if v_status <> 'in_progress' then v_fail := v_fail+1;
+    raise warning 'a started job is %, want in_progress', v_status; end if;
+
+  perform pg_sleep(0.01);
+  perform start_job(v_job, v_cleaner);
+  select started_at into v_started2 from jobs where id = v_job;
+  if v_started2 <> v_started then v_fail := v_fail+1;
+    raise warning 'a second start moved started_at'; end if;
+
+  -- COMPLETION IS NEVER BLOCKED BY EVIDENCE. She has left and the house is
+  -- clean; nothing should stop her closing out her day.
+  if not complete_job(v_job, v_cleaner, 33.0199, -96.6990) then v_fail := v_fail+1;
+    raise warning 'completing a started job reported failure'; end if;
+  select status, completed_at, completion_distance_m into v_status, v_started, v_dist
+    from jobs where id = v_job;
+  if v_status <> 'complete' then v_fail := v_fail+1;
+    raise warning 'a finished job is %, want complete', v_status; end if;
+  if v_started is null then v_fail := v_fail+1;
+    raise warning 'a complete job has no completed_at'; end if;
+
+  -- GPS IS AN ATTESTATION, NOT A TRACK. One reading, reduced to a distance,
+  -- coordinate discarded. Roughly 17 metres for that offset.
+  if v_dist is null or v_dist > 100 then v_fail := v_fail+1;
+    raise warning 'the completion distance is %, want a small number', v_dist; end if;
+
+  -- The clock closed itself and recorded a duration.
+  select clock_out_at is not null, clean_minutes into v_closed, v_count
+    from time_entries where job_id = v_job;
+  if not coalesce(v_closed, false) then v_fail := v_fail+1;
+    raise warning 'completion left the clock running'; end if;
+  if v_count is null or v_count < 1 then v_fail := v_fail+1;
+    raise warning 'completion recorded % clean minutes', v_count; end if;
+
+  -- Completing twice is not a second clean.
+  if not complete_job(v_job, v_cleaner) then v_fail := v_fail+1;
+    raise warning 're-completing a finished job reported failure'; end if;
+
+  -- THE GATE. Complete is not billable: the photos are the second condition.
+  if settle_job_invoice(v_job) is not null then v_fail := v_fail+1;
+    raise warning 'a job with no photos was invoiced'; end if;
+
+  -- Two per room, one before and one after. Every room but the last.
+  for r in select unnest(array['kitchen_1','bathroom_1','living_room_1']) as k loop
+    perform record_job_photo(v_job, v_cleaner, '/p/' || r.k || '/b', 'before', r.k);
+    perform record_job_photo(v_job, v_cleaner, '/p/' || r.k || '/a', 'after', r.k);
+  end loop;
+
+  if settle_job_invoice(v_job) is not null then v_fail := v_fail+1;
+    raise warning 'a job missing one room was invoiced'; end if;
+
+  -- An ISSUE photo is extra evidence, never a substitute: a picture of a stain
+  -- is not a picture of a clean room.
+  perform record_job_photo(v_job, v_cleaner, '/p/bed/i', 'issue', 'bedroom_1');
+  perform record_job_photo(v_job, v_cleaner, '/p/bed/b', 'before', 'bedroom_1');
+  if settle_job_invoice(v_job) is not null then v_fail := v_fail+1;
+    raise warning 'an issue photo stood in for an after'; end if;
+
+  -- THE LAST PHOTO RAISES THE INVOICE, from the photo path rather than the
+  -- completion path -- which is the whole reason the gate is checked on both.
+  perform record_job_photo(v_job, v_cleaner, '/p/bed/a', 'after', 'bedroom_1');
+  select id into v_invoice from invoices where job_id = v_job;
+  if v_invoice is null then v_fail := v_fail+1;
+    raise warning 'the final photo did not raise the invoice'; end if;
+
+  select total_cents into v_count from invoices where id = v_invoice;
+  if v_count <> 17000 then v_fail := v_fail+1;
+    raise warning 'the invoice is for %, want the job price 17000', v_count; end if;
+
+  -- Never twice. A retrying offline queue must not bill a customer again.
+  perform record_job_photo(v_job, v_cleaner, '/p/bed/a2', 'after', 'bedroom_1');
+  v_again := settle_job_invoice(v_job);
+  select count(*) into v_count from invoices where job_id = v_job;
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'one job raised % invoices', v_count; end if;
+  if v_again is distinct from v_invoice then v_fail := v_fail+1;
+    raise warning 're-settling returned % instead of the existing invoice', v_again; end if;
+
+  -- A duplicate upload is not new evidence.
+  select count(*) into v_count from job_photos
+    where job_id = v_job and room_key = 'bedroom_1' and kind = 'after';
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'a re-upload produced % after photos for one room', v_count; end if;
+
+  -- ------------------------------------------------- continuity unblocked --
+  -- THE POINT OF ALL OF THIS. Before 0020 nothing could write `complete`, so
+  -- job_continuity counted zero prior visits for every property for ever and
+  -- the incumbent hold could never engage.
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'scheduled', 'standard', 'biweekly',
+            now() + interval '9 days', 17000, 138)
+    returning id into v_next;
+
+  select incumbent_cleaner_id, prior_visits into v_incumbent, v_visits
+    from job_continuity where job_id = v_next;
+  if v_incumbent is distinct from v_cleaner then v_fail := v_fail+1;
+    raise warning 'a completed clean did not make her the incumbent (got %)', v_incumbent; end if;
+  if v_visits <> 1 then v_fail := v_fail+1;
+    raise warning 'the incumbent has % prior visits after one clean, want 1', v_visits; end if;
+
+  -- GPS NEVER BLOCKS. Cleaners work indoors, which is where a fix is worst,
+  -- and a job stuck in `assigned` because a phone could not see satellites is
+  -- a support call and a furious contractor.
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'assigned', 'standard', 'biweekly',
+            now() - interval '1 hour', 17000, 138)
+    returning id into v_next;
+  insert into job_assignments (job_id, cleaner_id, payout_cents)
+    values (v_next, v_cleaner, 5610);
+
+  if not complete_job(v_next, v_cleaner) then v_fail := v_fail+1;
+    raise warning 'a job with no GPS fix could not be completed'; end if;
+  select status, completion_distance_m into v_status, v_dist from jobs where id = v_next;
+  if v_status <> 'complete' then v_fail := v_fail+1;
+    raise warning 'no GPS fix left the job at %', v_status; end if;
+  if v_dist is not null then v_fail := v_fail+1;
+    raise warning 'a job with no fix recorded a distance of %', v_dist; end if;
+
+  if v_fail > 0 then raise exception '% completion assertions failed', v_fail; end if;
+  raise notice 'job completion passed';
+end $$;
+SQL
+echo "  job completion verified"
+
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql
 echo "  access controls verified"
