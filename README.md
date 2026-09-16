@@ -57,7 +57,9 @@ src/app/admin/        dispatch board, quote builder, price book
 src/app/api/          Stripe webhook, checkout, saved cards, auto-charge sweep,
                       refunds, recurring generation, offer accept/decline,
                       dispatch sweep, job start/complete/photo
-src/app/cleaner/      cleaner PWA — today's route, and answering an offer
+src/app/cleaner/      cleaner PWA — today's route, answering an offer, and
+                      running a job: arrive, photograph each room, mark done
+src/lib/offline/      the photo queue — durable before sent, never discarded
 src/app/customer/     customer portal — balances, saved card, autopay
 supabase/migrations/  schema, price book, row-level security, billing
 docs/                 build plan, setup checklist, decisions
