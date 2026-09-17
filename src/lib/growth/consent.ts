@@ -18,3 +18,17 @@ export const SMS_CONSENT_TEXT =
   `Text me about this booking. ${CUSTOMER_BRAND} will send appointment ` +
   `confirmations, reminders and replies to this number. Message and data rates ` +
   `may apply; message frequency varies. Reply STOP to opt out, HELP for help.`;
+
+/**
+ * The same evidence, for somebody applying to clean rather than to book.
+ *
+ * A separate string because it describes different traffic — she will be texted
+ * about job offers with countdowns on them, not about appointments — and
+ * because the consent somebody gave as an applicant should read like what it
+ * was if it is ever produced.
+ */
+export const APPLICANT_SMS_CONSENT_TEXT =
+  `Text me about this application and about work. ${CUSTOMER_BRAND} will send ` +
+  `updates on your application and, once you are active, job offers with the ` +
+  `pay and the time on them. Message and data rates may apply; message ` +
+  `frequency varies. Reply STOP to opt out, HELP for help.`;

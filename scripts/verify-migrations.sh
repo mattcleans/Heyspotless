@@ -2271,8 +2271,11 @@ begin
 
   -- THE RATING IS AN INPUT TO THE ELIGIBILITY GATE, so it has to reach the
   -- column the gate reads — not sit in a table nothing joins to.
+  --
+  -- Against the prior 0024 introduced, not a plain average: (5*4.2 + 5)/6.
+  -- A single review moves her standing without deciding it.
   select rating into v_score from cleaners where id = v_cleaner;
-  if v_score <> 5 then v_fail := v_fail+1;
+  if v_score <> 4.33 then v_fail := v_fail+1;
     raise warning 'the cleaner standing did not follow the rating (got %)', v_score; end if;
 
   -- Changing your mind replaces what you said; it does not add a second vote.
@@ -2280,8 +2283,11 @@ begin
   select count(*) into v_count from ratings where job_id = v_job;
   if v_count <> 1 then v_fail := v_fail+1;
     raise warning 'a second rating from one customer produced % rows', v_count; end if;
+
+  -- (5*4.2 + 2)/6 = 3.83. Marked down hard by one two-star, and NOT ejected
+  -- from the marketplace by it — which is the whole argument for the prior.
   select rating into v_score from cleaners where id = v_cleaner;
-  if v_score <> 2 then v_fail := v_fail+1;
+  if v_score <> 3.83 then v_fail := v_fail+1;
     raise warning 'a revised rating did not reach the gate (got %)', v_score; end if;
 
   -- A score outside the range is somebody editing a request body.
@@ -2454,6 +2460,159 @@ begin
 end $$;
 SQL
 echo "  leads, job costing and churn risk verified"
+
+echo "  checking the recruiting funnel"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_app uuid; v_app2 uuid; v_cleaner uuid; v_again uuid;
+  v_cust uuid; v_prop uuid; v_job uuid; v_status application_status;
+  v_rating numeric; v_count integer; v_fail integer := 0; v_eligible boolean;
+begin
+  v_app := record_application('Nadia','Okafor','nadia@example.com','+12145550177',
+                              3.5, true, true, array['75024','75025'],
+                              'contractor_1099', true, 'referral',
+                              '{"why":"reliable work"}'::jsonb, 'I agree to texts');
+  if v_app is null then v_fail := v_fail+1;
+    raise warning 'an application could not be recorded'; end if;
+
+  -- ------------------------------------------------------- the state machine
+  -- The order of these states IS the hiring process. Skipping one is not a
+  -- shortcut, it is hiring somebody whose check never came back.
+  if advance_application(v_app, 'background_cleared') then v_fail := v_fail+1;
+    raise warning 'an application cleared a check that was never run'; end if;
+
+  if not advance_application(v_app, 'screened', null, null, 78, 'strong answers')
+    then v_fail := v_fail+1; raise warning 'a submitted application could not be screened'; end if;
+  if not advance_application(v_app, 'background_pending', 'checkr_abc')
+    then v_fail := v_fail+1; raise warning 'a screened application could not go to check'; end if;
+
+  -- Not cleared yet: activation must refuse. background_check_cleared is
+  -- described in 0003 as never overridable, and this is what keeps that true.
+  begin
+    v_cleaner := activate_cleaner(v_app);
+    v_fail := v_fail+1;
+    raise warning 'a cleaner was activated before her check came back';
+  exception when check_violation then null;
+  end;
+
+  if not advance_application(v_app, 'background_cleared') then v_fail := v_fail+1;
+    raise warning 'a pending check could not be cleared'; end if;
+
+  -- A CONTRACTOR WITHOUT INSURANCE. The gate reads the expiry date, so
+  -- activating with no date passes the gate for ever instead of failing it.
+  update applications set insurance_expires_on = null where id = v_app;
+  begin
+    v_cleaner := activate_cleaner(v_app);
+    v_fail := v_fail+1;
+    raise warning 'an uninsured contractor was activated';
+  exception when check_violation then null;
+  end;
+  update applications set insurance_expires_on = current_date + 180 where id = v_app;
+
+  -- ------------------------------------------------------------- activation --
+  v_cleaner := activate_cleaner(v_app);
+  if v_cleaner is null then v_fail := v_fail+1;
+    raise warning 'a cleared application could not be activated'; end if;
+
+  select status into v_status from applications where id = v_app;
+  if v_status <> 'activated' then v_fail := v_fail+1;
+    raise warning 'activation left the application at %', v_status; end if;
+
+  -- Idempotent: a retried request must not put two of one person on the roster.
+  -- Two rows would double-count her hours and let her hold two offers on one job.
+  v_again := activate_cleaner(v_app);
+  if v_again is distinct from v_cleaner then v_fail := v_fail+1;
+    raise warning 'activating twice produced a second cleaner'; end if;
+  select count(*) into v_count from cleaners where full_name = 'Nadia Okafor';
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning '% roster entries for one person', v_count; end if;
+
+  -- ============================================================ THE POINT ===
+  -- THE FUNNEL HAS TO LEAD SOMEWHERE. The 0003 gate reads
+  -- coalesce(rating, 0) >= 3.9, so a cleaner with no rating is ineligible for
+  -- everything — and a brand-new cleaner has no rating by definition. Without
+  -- the provisional seed she is activated, appears on the roster, and is never
+  -- offered a single job, silently.
+  select rating into v_rating from cleaners where id = v_cleaner;
+  if v_rating is null then v_fail := v_fail+1;
+    raise warning 'an activated cleaner has no rating and can never be offered work'; end if;
+  if v_rating < 3.9 then v_fail := v_fail+1;
+    raise warning 'a new cleaner was seeded at %, below the 3.9 floor', v_rating; end if;
+
+  -- And prove it against the gate itself rather than against the number.
+  insert into customers (first_name, last_name) values ('Supply','Test')
+    returning id into v_cust;
+  insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+    values (v_cust, '1 Supply Street', 'Plano', '75024', 3, 2) returning id into v_prop;
+  insert into jobs (customer_id, property_id, status, service, freq, scheduled_start,
+                    price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'scheduled', 'standard', 'biweekly',
+            now() + interval '4 days', 17000, 138)
+    returning id into v_job;
+
+  if not cleaner_is_eligible(v_cleaner, v_job) then v_fail := v_fail+1;
+    raise warning 'a freshly activated cleaner is not eligible for any work'; end if;
+
+  -- Her declared zips are honoured: 75024 is hers, 76102 is not.
+  update properties set zip = '76102' where id = v_prop;
+  if cleaner_is_eligible(v_cleaner, v_job) then v_fail := v_fail+1;
+    raise warning 'a cleaner was eligible outside her declared service area'; end if;
+  update properties set zip = '75024' where id = v_prop;
+
+  -- -------------------------------------------------------------- the prior --
+  -- ONE BAD REVIEW MUST NOT END A CAREER. A floor a single data point can
+  -- trigger is a lottery, not a quality bar.
+  insert into job_assignments (job_id, cleaner_id, payout_cents)
+    values (v_job, v_cleaner, 5610);
+  update jobs set status = 'complete', completed_at = now() where id = v_job;
+
+  perform record_rating(v_job, 3, 'fine, not great');
+  select rating into v_rating from cleaners where id = v_cleaner;
+  -- (5*4.2 + 3)/6 = 4.0: marked down, still working.
+  if v_rating <> 4.0 then v_fail := v_fail+1;
+    raise warning 'one three-star put her at % (want 4.00)', v_rating; end if;
+  if not cleaner_is_eligible(v_cleaner, v_job) then v_fail := v_fail+1;
+    raise warning 'one three-star review ended a career'; end if;
+
+  -- A PATTERN IS DIFFERENT. Eight more threes and she is under the floor,
+  -- which is the outcome the floor exists for.
+  for v_count in 1..8 loop
+    insert into customers (first_name, last_name) values ('Rater', v_count::text)
+      returning id into v_cust;
+    insert into jobs (customer_id, property_id, status, service, freq, scheduled_start,
+                      completed_at, price_cents, estimated_clean_minutes)
+      values (v_cust, v_prop, 'complete', 'standard', 'biweekly',
+              now() - interval '1 day', now() - interval '1 day', 17000, 138)
+      returning id into v_job;
+    insert into job_assignments (job_id, cleaner_id, payout_cents)
+      values (v_job, v_cleaner, 5610);
+    perform record_rating(v_job, 3);
+  end loop;
+
+  select rating into v_rating from cleaners where id = v_cleaner;
+  if v_rating >= 3.9 then v_fail := v_fail+1;
+    raise warning 'nine three-star reviews left her at %, above the floor', v_rating; end if;
+
+  -- ------------------------------------------------------------- rejection --
+  v_app2 := record_application('Rejected','Applicant',null,'+12145550188',
+                               0, false, true, '{}', 'contractor_1099', false, null, null, null);
+  if not advance_application(v_app2, 'rejected', 'no transport') then v_fail := v_fail+1;
+    raise warning 'an application could not be rejected'; end if;
+  -- Rejection is final here. A mistake is a NEW application, which leaves an
+  -- honest record rather than an edited one.
+  if advance_application(v_app2, 'screened') then v_fail := v_fail+1;
+    raise warning 'a rejected application was quietly reopened'; end if;
+
+  -- And an activated one cannot be un-hired by an update either.
+  if advance_application(v_app, 'rejected', 'changed our mind') then v_fail := v_fail+1;
+    raise warning 'an activated application was rejected after the fact'; end if;
+
+  if v_fail > 0 then raise exception '% recruiting assertions failed', v_fail; end if;
+  raise notice 'recruiting funnel passed';
+end $$;
+SQL
+echo "  recruiting funnel verified"
 
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql

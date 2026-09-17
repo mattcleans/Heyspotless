@@ -233,7 +233,7 @@ travel, per job, per cleaner, per customer, per channel.
 | 05 | Dispatch engine | Marginal cost, clustering, overtime forecast, gate, tiers, board, waterfall, offer ledger. **Built.** |
 | 06 | Communications | Twilio two-way inbox, reminders, review requests, automation engine. **Built** (`0022`). A2P cleared 14 Sep 2026. |
 | 07 | Growth | Booking widget, lead inbox, nudge sequence, at-risk detection, job costing. **Built** (`0023`). |
-| 08 | Recruiting funnel | Apply page, AI screen, documents, background check, activation. Launch-critical — the auction needs supply. |
+| 08 | Recruiting funnel | Apply page, AI screen, documents, background check, activation. Launch-critical — the auction needs supply. **Built** (`0024`). |
 | 09 | Migration | Import HCP data, verify, 30–60 day parallel run. |
 | 10 | Store wrapper | Capacitor, native push, App Store and Play submission. |
 
@@ -249,7 +249,10 @@ travel, per job, per cleaner, per customer, per channel.
   raises every long-standing customer's price. `recurring_plans.price_locked` exists
   for this.
 - **Worker classification** — the highest legal exposure. See `setup.md`.
-- **The cold start** — an auction with four cleaners is not an auction.
+- **The cold start** — an auction with four cleaners is not an auction. `/apply`
+  and the hiring queue (`0024`) are the supply side of this; the demand side is
+  that a newly activated cleaner is now seeded with a provisional rating, without
+  which the 3.9 floor made every new hire permanently invisible to dispatch.
 - **HCP will not export everything** — no documented export for estimates, invoices,
   or recurring plans.
 - **You become your own support desk.** This is the main thing being bought with that

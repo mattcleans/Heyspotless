@@ -56,7 +56,13 @@ begin
     $q$select record_lead('a',null,null,'+12145550100','1 A St','75024','standard',
                           'standard','one_time',1,1,0,10000,60)$q$,
     $q$select mark_lead_responded('50000000-0000-0000-0000-000000000001')$q$,
-    $q$select set_lead_status('50000000-0000-0000-0000-000000000001', 'won')$q$
+    $q$select set_lead_status('50000000-0000-0000-0000-000000000001', 'won')$q$,
+    -- 0024. A browser session that could call these could arrive pre-approved,
+    -- clear its own background check, or put itself on the roster.
+    $q$select record_application('a','b',null,'+12145550100')$q$,
+    $q$select advance_application('50000000-0000-0000-0000-000000000001','screened')$q$,
+    $q$select activate_cleaner('50000000-0000-0000-0000-000000000001')$q$,
+    $q$select recompute_cleaner_rating('60000000-0000-0000-0000-000000000001')$q$
   ] loop
     begin
       execute statement;
@@ -283,7 +289,12 @@ begin
     'record_lead(text,text,text,text,text,text,text,text,frequency,integer,integer,'
       'integer,integer,integer,text,text,jsonb,lead_source)',
     'mark_lead_responded(uuid,timestamptz)',
-    'set_lead_status(uuid,lead_status)'
+    'set_lead_status(uuid,lead_status)',
+    'record_application(text,text,text,text,numeric,boolean,boolean,text[],cleaner_type,'
+      'boolean,text,jsonb,text)',
+    'advance_application(uuid,application_status,text,uuid,numeric,text)',
+    'activate_cleaner(uuid,cleaner_type,uuid,integer,numeric)',
+    'recompute_cleaner_rating(uuid)'
   ] loop
     if not has_function_privilege(current_user, signature, 'execute') then
       raise exception 'server lost execution privilege on %', signature;

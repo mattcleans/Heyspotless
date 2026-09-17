@@ -54,17 +54,19 @@ src/lib/messaging/    Twilio boundary — quiet hours, message bodies, send log
 src/lib/service/      finishing a job — rooms, photo evidence, the invoice gate
 src/lib/stripe/       SDK boundary — client, config flags, cron guard
 src/app/admin/        dispatch board, quote builder, price book, inbox, leads,
-                      reporting
+                      applications, reporting
 src/app/api/          Stripe webhook, checkout, saved cards, auto-charge sweep,
                       refunds, recurring generation, offer accept/decline,
                       dispatch sweep, job start/complete/photo/on-my-way,
-                      Twilio inbound, automation sweep, ratings, leads, health
+                      Twilio inbound, automation sweep, ratings, leads,
+                      applications, health
 src/app/cleaner/      cleaner PWA — today's route, answering an offer, and
                       running a job: arrive, photograph each room, mark done
 src/lib/offline/      the photo queue — durable before sent, never discarded
 src/app/customer/     customer portal — balances, saved card, autopay
 src/app/rate/         rate-your-clean, opened from a text, no sign-in
 src/app/book/         the public booking widget — a price before a form
+src/app/apply/        the public application form — the pay before the questions
 supabase/migrations/  schema, price book, row-level security, billing
 docs/                 build plan, setup checklist, decisions
 ```
@@ -87,7 +89,7 @@ replayed webhook does not move money twice.
 
 ## Status
 
-Phases 1–7 of the build plan are built, and the app is deployed at
+Phases 1–8 of the build plan are built, and the app is deployed at
 `app.heyspotless.com` against a live Supabase project, with the recurring,
 dispatch and automation sweeps running green against it.
 
@@ -249,6 +251,32 @@ the cadence the customer agreed to, with anything already booked excluded).
 Both are locked twice: no SELECT for client roles, and `security_invoker` so the
 policies still apply if a future migration grants them back. The verification
 suite asserts the second lock **after** deliberately granting the first away.
+
+### Supply, and the funnel that led nowhere
+
+Phase 08. The build plan calls the recruiting funnel launch-critical, and the
+reason is not staffing in the ordinary sense: **an auction with four cleaners is
+not an auction.** Every mechanism in the dispatch engine assumes somebody else
+might take the job.
+
+Building it surfaced a defect that would have made the whole phase pointless.
+The eligibility gate in `0003` reads `coalesce(c.rating, 0) >= 3.9`, so a
+cleaner with no rating is ineligible for everything — and a brand-new cleaner
+has no rating by definition. Every cleaner hired through this funnel would have
+been activated, appeared on the roster, and never been offered a single job,
+silently, because "no eligible cleaner" looks exactly like a quiet week.
+`lib/dispatch/eligibility.ts` has promised since it was written that "new
+cleaners are seeded with a provisional rating during onboarding". Nothing ever
+did it, because onboarding did not exist. `activate_cleaner` now does, and the
+verification suite asserts a freshly activated cleaner is eligible against the
+real gate rather than against the number.
+
+The rating maths changed with it. `0022` set a cleaner's standing to the plain
+average of her reviews, which meant one three-star — from one customer, on one
+clean, in her first week — put her under the floor and ended her career on the
+platform. A floor a single data point can trigger is a lottery, not a quality
+bar. Ratings are now averaged against a prior worth five reviews at 4.2, so one
+three-star marks her down to 4.0 and nine of them cross the floor.
 
 Still on the checklist in [`docs/setup.md`](docs/setup.md): Stripe, the customer
 book, and the three things nobody else can do — the overbilling audit, the
