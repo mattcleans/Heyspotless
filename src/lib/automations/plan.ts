@@ -67,11 +67,18 @@ export interface PlannableJob {
   completedAt: Date | null;
 }
 
+/**
+ * What a queued action is ABOUT. Widened as the queue learns new subjects —
+ * `lead` arrived with the nudge sequence in phase 07, and the sweep dispatches
+ * on this to decide which context it needs to read.
+ */
+export type AutomationSubject = "job" | "lead";
+
 export interface PlannedAutomation {
   dedupeKey: string;
   triggerKey: string;
   actionKey: string;
-  subjectType: "job";
+  subjectType: AutomationSubject;
   subjectId: string;
   scheduledFor: Date;
 }
@@ -165,4 +172,95 @@ export function eveningBefore(start: Date, timeZone: string = BUSINESS_TIME_ZONE
   // 6pm is not an hour any zone skips, but the type says it could be, and
   // "the first instant that does exist" is the right answer if it ever is.
   return parsed.reason === "nonexistent" ? parsed.skippedTo : null;
+}
+
+// ============================================================================
+// LEADS (phase 07)
+//
+// The chase, as a queue rather than somebody's memory.
+//
+// WHY THIS IS THE HIGHEST-VALUE THING IN THE FILE. The build plan puts lead
+// conversion at the top of its table of levers — marketing at ~33% of revenue
+// against a 15% target, about $24,000 a year, more than the next three levers
+// combined. What loses those leads is not price, it is silence: a homeowner who
+// fills in a form on Saturday and hears nothing until Monday has booked
+// somebody else by Monday.
+//
+// THE SEQUENCE STOPS. Three messages over three days and then nothing, whatever
+// happens. Not because a fourth would not occasionally work, but because a
+// business that will not stop texting is one people block — and a blocked
+// number is every future customer lost to save this one.
+// ============================================================================
+
+export const TRIGGER_LEAD_RECEIVED = "lead.received";
+
+export const ACTION_LEAD_NUDGE_1 = "sms.lead_nudge_1";
+export const ACTION_LEAD_NUDGE_2 = "sms.lead_nudge_2";
+export const ACTION_LEAD_NUDGE_3 = "sms.lead_nudge_3";
+
+/**
+ * Hours after the enquiry at which each nudge is due.
+ *
+ * The first is two hours, not ten minutes: the acknowledgement already went out
+ * inline when the form was submitted, and chasing somebody who is still reading
+ * it is how a business reads as desperate. It is also long enough that an
+ * office answering properly gets there first, which is the outcome this
+ * sequence exists to make unnecessary.
+ */
+export const NUDGE_HOURS: readonly [number, number, number] = [2, 24, 72];
+
+const NUDGE_ACTIONS = [ACTION_LEAD_NUDGE_1, ACTION_LEAD_NUDGE_2, ACTION_LEAD_NUDGE_3] as const;
+
+export interface PlannableLead {
+  id: string;
+  status: string;
+  receivedAt: Date;
+  firstResponseAt: Date | null;
+  /** Null when the form never presented the consent language. */
+  smsConsentAt: Date | null;
+  phone: string | null;
+}
+
+/**
+ * What chasing this lead implies.
+ *
+ * Nothing at all for a lead that is won, lost, spam, already answered by a
+ * person, without consent, or without a number. Each of those is a different
+ * reason and they all produce the same empty list, which is correct: the
+ * question is only ever "should we text them", and every one of these answers
+ * it no.
+ */
+export function planForLead(lead: PlannableLead, now: Date): PlannedAutomation[] {
+  if (lead.status !== "new" && lead.status !== "quoted") return [];
+  if (lead.firstResponseAt) return [];
+  if (!lead.smsConsentAt || !lead.phone) return [];
+
+  const planned: PlannedAutomation[] = [];
+
+  NUDGE_ACTIONS.forEach((actionKey, i) => {
+    const dueAt = new Date(lead.receivedAt.getTime() + NUDGE_HOURS[i]! * 3_600_000);
+
+    // Already past by the time the planner saw it — a lead that arrived while
+    // the sweep was not running, or one imported. Sending all three at once
+    // would be the worst possible first impression, so anything overdue is
+    // simply skipped rather than caught up.
+    if (dueAt.getTime() <= now.getTime()) return;
+
+    planned.push({
+      dedupeKey: automationKey("lead", lead.id, actionKey),
+      triggerKey: TRIGGER_LEAD_RECEIVED,
+      actionKey,
+      subjectType: "lead",
+      subjectId: lead.id,
+      scheduledFor: dueAt,
+    });
+  });
+
+  return planned;
+}
+
+/** Which of the three a given action key is. */
+export function nudgeStep(actionKey: string): 1 | 2 | 3 | null {
+  const index = NUDGE_ACTIONS.indexOf(actionKey as (typeof NUDGE_ACTIONS)[number]);
+  return index < 0 ? null : ((index + 1) as 1 | 2 | 3);
 }

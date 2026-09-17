@@ -24,6 +24,10 @@ export const ON_MY_WAY = "visit.on_my_way";
 export const REVIEW_REQUEST = "review.request";
 export const INBOX_REPLY = "inbox.reply";
 
+/** Lead-facing kinds (phase 07). */
+export const LEAD_ACK = "lead.ack";
+export const LEAD_NUDGE = "lead.nudge";
+
 export interface Recipient {
   cleanerId: string;
   profileId: string | null;

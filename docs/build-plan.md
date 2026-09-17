@@ -232,7 +232,7 @@ travel, per job, per cleaner, per customer, per channel.
 | 04 | Cleaner app | Today's schedule, on-my-way, clock in/out, checklists, offline photo queue, push. **Built**, except native push (phase 10). |
 | 05 | Dispatch engine | Marginal cost, clustering, overtime forecast, gate, tiers, board, waterfall, offer ledger. **Built.** |
 | 06 | Communications | Twilio two-way inbox, reminders, review requests, automation engine. **Built** (`0022`). A2P cleared 14 Sep 2026. |
-| 07 | Growth | Booking widget, lead inbox, nudge sequence, at-risk detection, job costing. |
+| 07 | Growth | Booking widget, lead inbox, nudge sequence, at-risk detection, job costing. **Built** (`0023`). |
 | 08 | Recruiting funnel | Apply page, AI screen, documents, background check, activation. Launch-critical — the auction needs supply. |
 | 09 | Migration | Import HCP data, verify, 30–60 day parallel run. |
 | 10 | Store wrapper | Capacitor, native push, App Store and Play submission. |

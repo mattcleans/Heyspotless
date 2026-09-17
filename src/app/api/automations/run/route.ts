@@ -1,21 +1,26 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { AutomationStore, type JobContact } from "@/lib/automations/store";
+import { AutomationStore, type JobContact, type LeadContact } from "@/lib/automations/store";
 import {
   ACTION_BOOKING_CONFIRMED,
   ACTION_REVIEW_REQUEST,
   ACTION_VISIT_REMINDER,
+  NUDGE_HOURS,
+  nudgeStep,
   planForJob,
+  planForLead,
 } from "@/lib/automations/plan";
 import {
   BOOKING_CONFIRMED,
+  LEAD_NUDGE,
   MessagingStore,
   REVIEW_REQUEST,
   VISIT_REMINDER,
 } from "@/lib/messaging/store";
 import {
   bookingConfirmedMessage,
+  leadNudgeMessage,
   reviewRequestMessage,
   visitReminderMessage,
 } from "@/lib/messaging/templates";
@@ -104,17 +109,28 @@ export async function POST(request: NextRequest) {
     new Date(now.getTime() + PLANNING_HORIZON_DAYS * 86_400_000),
   );
 
-  for (const job of jobs) {
-    for (const planned of planForJob(job, now)) {
-      try {
-        const outcome = await store.schedule(planned);
-        if (outcome === "scheduled") result.planned += 1;
-        if (outcome === "moved") result.moved += 1;
-      } catch (error) {
-        // One unplannable job must not cost the rest their reminders.
-        result.failed += 1;
-        problems.push({ id: planned.dedupeKey, error: messageOf(error) });
-      }
+  // Leads within the reach of the nudge sequence. Bounded by the last rung
+  // rather than by "all open leads": past 72 hours the sequence is finished,
+  // and a planner that rescans the whole history every hour gets slower every
+  // month the business runs.
+  const leads = await store.leadsToPlan(
+    new Date(now.getTime() - (NUDGE_HOURS[2] + 1) * 3_600_000),
+  );
+
+  const planned = [
+    ...jobs.flatMap((job) => planForJob(job, now)),
+    ...leads.flatMap((lead) => planForLead(lead, now)),
+  ];
+
+  for (const action of planned) {
+    try {
+      const outcome = await store.schedule(action);
+      if (outcome === "scheduled") result.planned += 1;
+      if (outcome === "moved") result.moved += 1;
+    } catch (error) {
+      // One unplannable subject must not cost the rest their messages.
+      result.failed += 1;
+      problems.push({ id: action.dedupeKey, error: messageOf(error) });
     }
   }
 
@@ -140,8 +156,10 @@ export async function POST(request: NextRequest) {
   const due = await store.claimDue(owner, BATCH);
   result.due = due.length;
 
-  const jobIds = due.filter((d) => d.subjectType === "job").map((d) => d.subjectId);
-  const contacts = await store.contactsFor(jobIds);
+  const [contacts, leadContacts] = await Promise.all([
+    store.contactsFor(due.filter((d) => d.subjectType === "job").map((d) => d.subjectId)),
+    store.leadContactsFor(due.filter((d) => d.subjectType === "lead").map((d) => d.subjectId)),
+  ]);
 
   for (const automation of due) {
     try {
@@ -154,11 +172,13 @@ export async function POST(request: NextRequest) {
         continue;
       }
 
-      const contact = contacts.get(automation.subjectId);
-      const outcome = await fire(automation.actionKey, contact, {
-        messaging,
-        origin: request.nextUrl.origin,
-      });
+      const outcome =
+        automation.subjectType === "lead"
+          ? await fireLead(automation.actionKey, leadContacts.get(automation.subjectId), messaging)
+          : await fire(automation.actionKey, contacts.get(automation.subjectId), {
+              messaging,
+              origin: request.nextUrl.origin,
+            });
 
       switch (outcome.kind) {
         case "sent":
@@ -296,6 +316,66 @@ function build(actionKey: string, contact: JobContact, origin: string): BuiltMes
     default:
       return null;
   }
+}
+
+/**
+ * Chase a lead, or decide not to.
+ *
+ * EVERY CONDITION IS RE-CHECKED HERE, not trusted from when the nudge was
+ * planned. Between the planner and this moment — up to three days — the lead
+ * may have been answered by a person, booked, marked spam, or replied STOP.
+ * Each of those is a different reason to stop, and sending anyway is the
+ * failure everybody has received from somebody else's CRM: a chasing text about
+ * something you already bought.
+ *
+ * The status check does most of the work, and `set_lead_status` cancels the
+ * queue outright when a lead is won or lost. This is the belt to that braces:
+ * a status changed by a direct SQL update, or by something written later that
+ * forgets to cancel, still cannot produce a text.
+ */
+async function fireLead(
+  actionKey: string,
+  lead: LeadContact | undefined,
+  messaging: MessagingStore,
+): Promise<FireOutcome> {
+  if (!lead) return { kind: "skipped", reason: "lead no longer exists" };
+
+  const step = nudgeStep(actionKey);
+  if (!step) return { kind: "skipped", reason: `nothing to send for ${actionKey}` };
+
+  if (lead.status !== "new" && lead.status !== "quoted") {
+    return { kind: "skipped", reason: `lead is ${lead.status}` };
+  }
+  // A person got there first, which is the outcome the sequence exists to make
+  // unnecessary. Nothing more is owed.
+  if (lead.firstResponseAt) return { kind: "skipped", reason: "already answered by a person" };
+  if (!lead.smsConsentAt) return { kind: "skipped", reason: "no SMS consent on file" };
+  if (!lead.phone) return { kind: "skipped", reason: "no phone on file" };
+  if (!isMessagingEnabled()) return { kind: "skipped", reason: "messaging is disabled" };
+
+  const body = leadNudgeMessage({
+    firstName: lead.firstName,
+    quotedCents: lead.quotedPriceCents,
+    step,
+  });
+
+  const messageId = await messaging.claimByKey({
+    dedupeKey: `lead:${lead.leadId}:${actionKey}`,
+    kind: LEAD_NUDGE,
+    body,
+    to: lead.phone,
+    leadId: lead.leadId,
+  });
+  if (!messageId) return { kind: "skipped", reason: "already sent" };
+
+  const sent = await sendSms(lead.phone, body);
+  if (!sent.ok) {
+    await messaging.settle(messageId, null, sent.reason);
+    return { kind: "failed", reason: sent.reason };
+  }
+
+  await messaging.settle(messageId, sent.providerId);
+  return { kind: "sent", messageId };
 }
 
 function messageOf(error: unknown): string {

@@ -53,16 +53,18 @@ src/lib/recurring/    when a recurring plan's next visits fall, and generating t
 src/lib/messaging/    Twilio boundary — quiet hours, message bodies, send log
 src/lib/service/      finishing a job — rooms, photo evidence, the invoice gate
 src/lib/stripe/       SDK boundary — client, config flags, cron guard
-src/app/admin/        dispatch board, quote builder, price book, inbox
+src/app/admin/        dispatch board, quote builder, price book, inbox, leads,
+                      reporting
 src/app/api/          Stripe webhook, checkout, saved cards, auto-charge sweep,
                       refunds, recurring generation, offer accept/decline,
                       dispatch sweep, job start/complete/photo/on-my-way,
-                      Twilio inbound, automation sweep, ratings, health
+                      Twilio inbound, automation sweep, ratings, leads, health
 src/app/cleaner/      cleaner PWA — today's route, answering an offer, and
                       running a job: arrive, photograph each room, mark done
 src/lib/offline/      the photo queue — durable before sent, never discarded
 src/app/customer/     customer portal — balances, saved card, autopay
 src/app/rate/         rate-your-clean, opened from a text, no sign-in
+src/app/book/         the public booking widget — a price before a form
 supabase/migrations/  schema, price book, row-level security, billing
 docs/                 build plan, setup checklist, decisions
 ```
@@ -85,7 +87,7 @@ replayed webhook does not move money twice.
 
 ## Status
 
-Phases 1–6 of the build plan are built, and the app is deployed at
+Phases 1–7 of the build plan are built, and the app is deployed at
 `app.heyspotless.com` against a live Supabase project, with the recurring,
 dispatch and automation sweeps running green against it.
 
@@ -220,6 +222,33 @@ The rating that comes back is not a vanity metric: `record_rating` recomputes
 the cleaner's standing on the column the eligibility gate reads, so a cleaner
 who drops below the 3.9 floor stops being offered work on the next sweep rather
 than the next morning.
+
+### The leak
+
+Phase 07, and the largest single lever in the build plan: marketing at ~33% of
+revenue against a 15% target is about **$24,000 a year**, more than the next
+three levers combined. What loses those leads is not price, it is silence.
+
+`/book` is public, outside every gated area, and answers the question the
+customer actually asked — the price, from the same `buildQuote` the office and
+the recurring generator use, before any form. Pressing the button writes a lead
+with that price on it and texts an acknowledgement **inline**, not through the
+sweep: an acknowledgement that waits an hour for the next cron run is not one.
+
+The chase is then a queue rather than somebody's memory — three texts over three
+days, and it stops the moment a person replies, the lead is won or lost, or
+consent is absent. `first_response_at` measures the human answer only; the
+automated acknowledgement deliberately does not set it, because a KPI a robot
+can satisfy is not a KPI.
+
+Two views carry the numbers Housecall Pro famously does not compute:
+`job_costing` (revenue minus the labour actually spent minus the mileage, per
+**job** — a contractor costs her payout, a W-2 costs hours × rate × burden
+including the drive) and `customer_at_risk` (days since the last clean against
+the cadence the customer agreed to, with anything already booked excluded).
+Both are locked twice: no SELECT for client roles, and `security_invoker` so the
+policies still apply if a future migration grants them back. The verification
+suite asserts the second lock **after** deliberately granting the first away.
 
 Still on the checklist in [`docs/setup.md`](docs/setup.md): Stripe, the customer
 book, and the three things nobody else can do — the overbilling audit, the

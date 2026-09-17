@@ -2296,6 +2296,165 @@ end $$;
 SQL
 echo "  two-way messaging and automations verified"
 
+echo "  checking leads, job costing and churn risk"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_prop uuid; v_job uuid; v_lead uuid; v_auto uuid;
+  v_w2 uuid; v_1099 uuid; v_count integer; v_fail integer := 0;
+  v_consent timestamptz; v_first timestamptz; v_second timestamptz;
+  v_revenue integer; v_cost integer; v_margin integer; v_over integer;
+  v_risk boolean; v_days integer; v_plan uuid;
+begin
+  -- ------------------------------------------------------------------ leads --
+  v_lead := record_lead('Dana','Reyes','dana@example.com','(214) 555-0143',
+                        '9 Reply Road, Plano TX','75024','standard','standard','biweekly',
+                        3, 2, 0, 17000, 138, null, 'I agree to texts', null, 'website');
+  if v_lead is null then v_fail := v_fail+1;
+    raise warning 'an enquiry could not be recorded'; end if;
+
+  select sms_consent_at into v_consent from leads where id = v_lead;
+  if v_consent is null then v_fail := v_fail+1;
+    raise warning 'consent language was presented but no timestamp was stored'; end if;
+
+  -- NO LANGUAGE, NO CONSENT. A2P evidence is the wording plus the moment, not
+  -- a boolean somebody remembers ticking.
+  if (select sms_consent_at from leads
+       where id = record_lead('No','Consent',null,'+12145550199','1 A St','75024',
+                              'standard','standard','one_time',2,1,0,15000,120,
+                              null, null, null, 'website')) is not null then
+    v_fail := v_fail+1; raise warning 'consent was recorded with no language presented'; end if;
+
+  -- TIME TO FIRST RESPONSE is the KPI of the whole phase, so it is the FIRST
+  -- answer, never the latest: a second reply must not reset the clock.
+  if not mark_lead_responded(v_lead, now() - interval '10 minutes') then v_fail := v_fail+1;
+    raise warning 'a first response was not recorded'; end if;
+  select first_response_at into v_first from leads where id = v_lead;
+
+  if mark_lead_responded(v_lead) then v_fail := v_fail+1;
+    raise warning 'a second reply was treated as the first'; end if;
+  select first_response_at into v_second from leads where id = v_lead;
+  if v_first is distinct from v_second then v_fail := v_fail+1;
+    raise warning 'a second reply moved the response clock'; end if;
+
+  -- SETTING A STATUS STOPS THE CHASE. Otherwise the queue texts somebody who
+  -- booked yesterday, which is the failure everybody has had from a CRM.
+  v_auto := schedule_automation('lead:' || v_lead || ':nudge', 'lead.received',
+                                'sms.lead_nudge_1', 'lead', v_lead, now() + interval '2 hours');
+  perform set_lead_status(v_lead, 'won');
+
+  select count(*) into v_count from automations
+   where id = v_auto and fired_at is not null and outcome = 'canceled';
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'winning a lead did not cancel its nudges'; end if;
+
+  select count(*) into v_count from claim_due_automations(gen_random_uuid(), 10);
+  if v_count <> 0 then v_fail := v_fail+1;
+    raise warning 'a canceled nudge was still claimable'; end if;
+
+  -- ------------------------------------------------------------- costing ----
+  insert into customers (first_name, last_name) values ('Costing','Test')
+    returning id into v_cust;
+  insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+    values (v_cust, '5 Cost Court', 'Plano', '75024', 3, 2) returning id into v_prop;
+
+  -- A CONTRACTOR COSTS HER PAYOUT AND NOTHING ELSE. She absorbs her own
+  -- windshield time -- the durable edge the build plan identifies.
+  insert into cleaners (full_name, type, status, rating, background_check_cleared,
+                        default_payout_rate)
+    values ('Marisol 1099', 'contractor_1099', 'active', 4.8, true, 0.33)
+    returning id into v_1099;
+
+  insert into jobs (customer_id, property_id, status, service, freq, scheduled_start,
+                    completed_at, price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'complete', 'standard', 'biweekly',
+            now() - interval '2 days', now() - interval '2 days', 17000, 138)
+    returning id into v_job;
+  insert into job_assignments (job_id, cleaner_id, payout_cents)
+    values (v_job, v_1099, 5610);
+  insert into time_entries (job_id, cleaner_id, clock_in_at, clock_out_at,
+                            clean_minutes, drive_minutes, drive_miles)
+    values (v_job, v_1099, now() - interval '2 days', now() - interval '2 days',
+            160, 25, 12);
+
+  select revenue_cents, cost_cents, margin_cents, minutes_over_estimate
+    into v_revenue, v_cost, v_margin, v_over
+    from job_margins where job_id = v_job;
+
+  if v_cost <> 5610 then v_fail := v_fail+1;
+    raise warning 'a contractor clean cost % rather than her payout of 5610', v_cost; end if;
+  if v_margin <> 17000 - 5610 then v_fail := v_fail+1;
+    raise warning 'contractor margin came out at %', v_margin; end if;
+  -- 160 actual against 138 quoted. Persistently positive means we under-quote
+  -- time, which is a pricing problem rather than a cleaner problem.
+  if v_over <> 22 then v_fail := v_fail+1;
+    raise warning 'minutes over estimate came out at %, want 22', v_over; end if;
+
+  -- A W-2 COSTS HOURS x RATE x BURDEN, INCLUDING THE DRIVE, because under the
+  -- FLSA that time is owed. This is the number the whole dispatch engine is
+  -- comparing against.
+  insert into cleaners (full_name, type, status, rating, background_check_cleared,
+                        hourly_rate_cents, guaranteed_hours_per_week,
+                        employer_burden_rate, uses_company_vehicle, drive_time_paid)
+    values ('Shonda W2', 'w2_core', 'active', 4.9, true, 1750, 40, 0.15, true, true)
+    returning id into v_w2;
+
+  insert into jobs (customer_id, property_id, status, service, freq, scheduled_start,
+                    completed_at, price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'complete', 'standard', 'biweekly',
+            now() - interval '1 day', now() - interval '1 day', 17000, 138)
+    returning id into v_job;
+  insert into job_assignments (job_id, cleaner_id, payout_cents)
+    values (v_job, v_w2, 0);
+  insert into time_entries (job_id, cleaner_id, clock_in_at, clock_out_at,
+                            clean_minutes, drive_minutes, drive_miles)
+    values (v_job, v_w2, now() - interval '1 day', now() - interval '1 day',
+            120, 30, 18);
+
+  select cost_cents into v_cost from job_margins where job_id = v_job;
+  -- (120 + 30) / 60 * 1750 * 1.15 = 5031.25 -> 5031. The company truck means
+  -- no mileage: it is a fixed cost and belongs nowhere near a per-job number.
+  if v_cost <> 5031 then v_fail := v_fail+1;
+    raise warning 'a W-2 clean cost % cents, want 5031', v_cost; end if;
+
+  -- ---------------------------------------------------------------- at risk --
+  insert into recurring_plans (customer_id, property_id, freq, service,
+                               agreed_price_cents, estimated_minutes, active, anchor_date)
+    values (v_cust, v_prop, 'weekly', 'standard', 16000, 138, true, current_date - 21)
+    returning id into v_plan;
+
+  -- Two days since the last clean on a weekly plan: not at risk.
+  select at_risk into v_risk from customer_at_risk where customer_id = v_cust;
+  if v_risk then v_fail := v_fail+1;
+    raise warning 'a customer cleaned yesterday was flagged at risk'; end if;
+
+  -- Move the last clean back three weeks. A weekly customer at 21 days has
+  -- missed two, which is where churn is still recoverable.
+  update jobs set completed_at = now() - interval '21 days'
+   where customer_id = v_cust and status = 'complete';
+
+  select at_risk, days_since_last into v_risk, v_days
+    from customer_at_risk where customer_id = v_cust;
+  if not v_risk then v_fail := v_fail+1;
+    raise warning 'a weekly customer at % days was not flagged', v_days; end if;
+
+  -- A VISIT ON THE CALENDAR ENDS IT. However long ago the last one was, a
+  -- customer booked for Thursday is not churning.
+  insert into jobs (customer_id, property_id, status, service, freq, scheduled_start,
+                    price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'scheduled', 'standard', 'weekly',
+            now() + interval '3 days', 16000, 138);
+
+  select at_risk into v_risk from customer_at_risk where customer_id = v_cust;
+  if v_risk then v_fail := v_fail+1;
+    raise warning 'a customer with a booked visit was flagged at risk'; end if;
+
+  if v_fail > 0 then raise exception '% growth assertions failed', v_fail; end if;
+  raise notice 'leads, costing and churn passed';
+end $$;
+SQL
+echo "  leads, job costing and churn risk verified"
+
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql
 echo "  access controls verified"

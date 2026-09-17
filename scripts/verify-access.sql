@@ -50,7 +50,13 @@ begin
     $q$select settle_automation('50000000-0000-0000-0000-000000000001',
                                 gen_random_uuid(), 'sent')$q$,
     $q$select record_rating('50000000-0000-0000-0000-000000000001', 5)$q$,
-    $q$select rateable_job('50000000-0000-0000-0000-000000000001')$q$
+    $q$select rateable_job('50000000-0000-0000-0000-000000000001')$q$,
+    -- 0023. A browser session that could call these could mark somebody else's
+    -- lead as answered, or read every cleaner's pay and every customer's margin.
+    $q$select record_lead('a',null,null,'+12145550100','1 A St','75024','standard',
+                          'standard','one_time',1,1,0,10000,60)$q$,
+    $q$select mark_lead_responded('50000000-0000-0000-0000-000000000001')$q$,
+    $q$select set_lead_status('50000000-0000-0000-0000-000000000001', 'won')$q$
   ] loop
     begin
       execute statement;
@@ -129,6 +135,29 @@ do $$
 begin
   if exists (select 1 from jobs where id = '50000000-0000-0000-0000-000000000002') then
     raise exception 'anonymous user saw an open-board job';
+  end if;
+
+  /*
+   * THE COSTING VIEWS (0023), and this is the subtle one.
+   *
+   * A view runs with its OWNER's privileges unless it says otherwise, so
+   * row-level security on `jobs` would not protect `job_costing` -- which is
+   * every cleaner's pay and every customer's margin in one place. 0023 locks
+   * it twice: no SELECT for client roles, AND `security_invoker` so the `0003`
+   * policies apply even if somebody grants it back.
+   *
+   * This file grants ALL ON ALL TABLES at the top, deliberately, which undoes
+   * the first lock exactly the way a stray `grant` in a future migration would.
+   * So what is asserted here is the second one: no rows, not an error.
+   */
+  if exists (select 1 from job_costing) then
+    raise exception 'anonymous user read job costing';
+  end if;
+  if exists (select 1 from job_margins) then
+    raise exception 'anonymous user read job margins';
+  end if;
+  if exists (select 1 from customer_at_risk) then
+    raise exception 'anonymous user read churn risk';
   end if;
 end $$;
 reset role;
@@ -250,7 +279,11 @@ begin
     'settle_automation(uuid,uuid,text,text,uuid)',
     'record_rating(uuid,numeric,text)',
     'rateable_job(uuid)',
-    'app_schema_version()'
+    'app_schema_version()',
+    'record_lead(text,text,text,text,text,text,text,text,frequency,integer,integer,'
+      'integer,integer,integer,text,text,jsonb,lead_source)',
+    'mark_lead_responded(uuid,timestamptz)',
+    'set_lead_status(uuid,lead_status)'
   ] loop
     if not has_function_privilege(current_user, signature, 'execute') then
       raise exception 'server lost execution privilege on %', signature;

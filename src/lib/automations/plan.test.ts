@@ -1,14 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
   ACTION_BOOKING_CONFIRMED,
+  ACTION_LEAD_NUDGE_1,
+  ACTION_LEAD_NUDGE_3,
   ACTION_REVIEW_REQUEST,
   ACTION_VISIT_REMINDER,
   CONFIRMATION_WINDOW_HOURS,
+  NUDGE_HOURS,
   REVIEW_DELAY_HOURS,
   automationKey,
   eveningBefore,
+  nudgeStep,
   planForJob,
+  planForLead,
   type PlannableJob,
+  type PlannableLead,
 } from "./plan";
 import { formatDateTimeInZone } from "../time/zone";
 
@@ -147,5 +153,83 @@ describe("eveningBefore", () => {
     expect(eveningBefore(visit, "America/Chicago")?.toISOString()).toBe(
       eveningBefore(visit)?.toISOString(),
     );
+  });
+});
+
+describe("planForLead", () => {
+  const RECEIVED = new Date("2026-09-17T15:00:00Z");
+
+  function lead(over: Partial<PlannableLead> = {}): PlannableLead {
+    return {
+      id: "22222222-2222-2222-2222-222222222222",
+      status: "new",
+      receivedAt: RECEIVED,
+      firstResponseAt: null,
+      smsConsentAt: RECEIVED,
+      phone: "+12145550143",
+      ...over,
+    };
+  }
+
+  it("queues three nudges over three days", () => {
+    const plans = planForLead(lead(), RECEIVED);
+    expect(plans).toHaveLength(3);
+    expect(plans.map((p) => (p.scheduledFor.getTime() - RECEIVED.getTime()) / 3_600_000)).toEqual([
+      ...NUDGE_HOURS,
+    ]);
+  });
+
+  it("files them under the lead, not the job", () => {
+    expect(planForLead(lead(), RECEIVED)[0]?.subjectType).toBe("lead");
+  });
+
+  /**
+   * The failure everybody has received from somebody else's CRM: a chasing
+   * text about something you already bought.
+   */
+  it("stops chasing a lead that was won or lost", () => {
+    expect(planForLead(lead({ status: "won" }), RECEIVED)).toEqual([]);
+    expect(planForLead(lead({ status: "lost" }), RECEIVED)).toEqual([]);
+    expect(planForLead(lead({ status: "spam" }), RECEIVED)).toEqual([]);
+  });
+
+  /** A person getting there first is the outcome the sequence exists to avoid needing. */
+  it("stops chasing once a person has answered", () => {
+    expect(planForLead(lead({ firstResponseAt: new Date() }), RECEIVED)).toEqual([]);
+  });
+
+  /** A2P: no consent timestamp, no campaign traffic. Not negotiable. */
+  it("sends nothing without consent on file", () => {
+    expect(planForLead(lead({ smsConsentAt: null }), RECEIVED)).toEqual([]);
+  });
+
+  it("sends nothing without a number", () => {
+    expect(planForLead(lead({ phone: null }), RECEIVED)).toEqual([]);
+  });
+
+  /**
+   * An old lead — the sweep was down, or it was imported. Catching up would
+   * fire all three at once, which is the worst possible first impression.
+   */
+  it("skips rungs that are already overdue rather than catching up", () => {
+    const later = new Date(RECEIVED.getTime() + 30 * 3_600_000);
+    const plans = planForLead(lead(), later);
+    expect(plans.map((p) => p.actionKey)).toEqual([ACTION_LEAD_NUDGE_3]);
+  });
+
+  it("plans nothing at all once the sequence is finished", () => {
+    const wellAfter = new Date(RECEIVED.getTime() + 100 * 3_600_000);
+    expect(planForLead(lead(), wellAfter)).toEqual([]);
+  });
+});
+
+describe("nudgeStep", () => {
+  it("maps each action to its place in the sequence", () => {
+    expect(nudgeStep(ACTION_LEAD_NUDGE_1)).toBe(1);
+    expect(nudgeStep(ACTION_LEAD_NUDGE_3)).toBe(3);
+  });
+
+  it("does not claim a job action is a nudge", () => {
+    expect(nudgeStep(ACTION_VISIT_REMINDER)).toBeNull();
   });
 });

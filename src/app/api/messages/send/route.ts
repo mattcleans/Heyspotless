@@ -86,6 +86,27 @@ export async function POST(request: NextRequest) {
   }
 
   await messaging.settle(messageId, sent.providerId);
+
+  /**
+   * A PERSON ANSWERED. This is the moment time-to-first-response is measured
+   * from, and the whole of phase 07 is measured on it.
+   *
+   * Set here rather than anywhere else because this is the only place in the
+   * system where somebody types a sentence to a lead. The inline
+   * acknowledgement the booking form sends does NOT count and deliberately does
+   * not call this — letting a robot stop the clock would make the number
+   * measure the robot.
+   *
+   * Idempotent in SQL: FIRST response, not latest, so a second reply does not
+   * reset it.
+   */
+  if (leadId) {
+    const { error } = await db.rpc("mark_lead_responded", { p_lead_id: leadId, p_at: null });
+    // Worth a log, never worth failing the send over: the message went out,
+    // which is the thing the customer cares about.
+    if (error) console.error("mark_lead_responded failed", error);
+  }
+
   return NextResponse.json({ sent: true });
 }
 

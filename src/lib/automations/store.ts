@@ -42,6 +42,17 @@ export interface JobContact {
   cleanerFirstName: string | null;
 }
 
+/** What a nudge needs, and every reason not to send one. */
+export interface LeadContact {
+  leadId: string;
+  firstName: string;
+  phone: string | null;
+  status: string;
+  firstResponseAt: Date | null;
+  smsConsentAt: Date | null;
+  quotedPriceCents: number | null;
+}
+
 export class AutomationStore {
   constructor(private readonly db: SupabaseClient) {}
 
@@ -145,6 +156,73 @@ export class AutomationStore {
       scheduledStart: row["scheduled_start"] ? new Date(String(row["scheduled_start"])) : null,
       completedAt: row["completed_at"] ? new Date(String(row["completed_at"])) : null,
     }));
+  }
+
+  /**
+   * Leads still worth chasing.
+   *
+   * Bounded by age rather than by count: a lead older than the whole sequence
+   * has nothing left to plan, and scanning the entire history every hour to
+   * discover that is a query that gets slower every month the business runs.
+   */
+  async leadsToPlan(since: Date): Promise<
+    {
+      id: string;
+      status: string;
+      receivedAt: Date;
+      firstResponseAt: Date | null;
+      smsConsentAt: Date | null;
+      phone: string | null;
+    }[]
+  > {
+    const { data, error } = await this.db
+      .from("leads")
+      .select("id, status, received_at, first_response_at, sms_consent_at, phone")
+      .in("status", ["new", "quoted"])
+      .gte("received_at", since.toISOString())
+      .limit(1000);
+    if (error) throw new Error(`leadsToPlan: ${error.message}`);
+
+    return (Array.isArray(data) ? data : []).map((row: Record<string, unknown>) => ({
+      id: String(row["id"]),
+      status: String(row["status"]),
+      receivedAt: new Date(String(row["received_at"])),
+      firstResponseAt: row["first_response_at"] ? new Date(String(row["first_response_at"])) : null,
+      smsConsentAt: row["sms_consent_at"] ? new Date(String(row["sms_consent_at"])) : null,
+      phone: typeof row["phone"] === "string" ? row["phone"] : null,
+    }));
+  }
+
+  /** Who to chase, and what they were quoted. */
+  async leadContactsFor(leadIds: readonly string[]): Promise<Map<string, LeadContact>> {
+    const byLead = new Map<string, LeadContact>();
+    if (leadIds.length === 0) return byLead;
+
+    const { data, error } = await this.db
+      .from("leads")
+      .select("id, first_name, phone, status, first_response_at, sms_consent_at, quoted_price_cents")
+      .in("id", [...leadIds]);
+    if (error) throw new Error(`leadContactsFor: ${error.message}`);
+
+    for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
+      const id = row["id"];
+      if (typeof id !== "string") continue;
+
+      byLead.set(id, {
+        leadId: id,
+        firstName:
+          typeof row["first_name"] === "string" && row["first_name"] ? row["first_name"] : "there",
+        phone: typeof row["phone"] === "string" ? row["phone"] : null,
+        status: String(row["status"]),
+        firstResponseAt: row["first_response_at"]
+          ? new Date(String(row["first_response_at"]))
+          : null,
+        smsConsentAt: row["sms_consent_at"] ? new Date(String(row["sms_consent_at"])) : null,
+        quotedPriceCents:
+          typeof row["quoted_price_cents"] === "number" ? row["quoted_price_cents"] : null,
+      });
+    }
+    return byLead;
   }
 
   /** Who to tell, and what about, for a set of jobs. */

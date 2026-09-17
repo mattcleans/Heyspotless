@@ -210,3 +210,63 @@ export function reviewRequestMessage(input: {
     OPT_OUT,
   ].join("\n");
 }
+
+// ============================================================================
+// LEAD MESSAGES (phase 07)
+//
+// The only messages in this system sent to somebody who is not yet a customer,
+// and the rules shift again:
+//
+//   1. THEY ANSWER THE QUESTION THAT WAS ASKED. Somebody who just typed their
+//      room counts into a form wants a number, so the number is in the first
+//      line. "Thanks for your enquiry, a member of our team will be in touch"
+//      is the message every competitor sends and it says nothing.
+//   2. THEY NEVER PRETEND TO BE A PERSON. The acknowledgement goes out in
+//      milliseconds; writing it as though somebody typed it is a lie the
+//      timestamp gives away, and being caught faking the first message of a
+//      relationship is worse than being slow.
+//   3. THEY STOP. The nudge sequence is three messages over three days and then
+//      silence, whatever happens. A lead that does not answer is not a lead.
+// ============================================================================
+
+/** Sent inline the moment the form is submitted. Speed is the whole product. */
+export function leadAckMessage(input: {
+  firstName: string;
+  quotedCents: number | null;
+}): string {
+  const price = input.quotedCents
+    ? `Your estimate is ${formatCents(input.quotedCents)}.`
+    : `We have your details.`;
+
+  return [
+    `${input.firstName} — ${CUSTOMER_BRAND} here. ${price}`,
+    `That is from the room counts you gave us; somebody will confirm it against your home and book you in shortly.`,
+    `Reply to this message any time.`,
+    OPT_OUT,
+  ].join("\n");
+}
+
+/**
+ * The chase.
+ *
+ * Three, spread over three days, each one different — a sequence that sends the
+ * same sentence three times is one people learn to ignore after the first. The
+ * last one says it is the last one, because a door closing politely gets more
+ * replies than a fourth "just checking in", and because it is true.
+ */
+export function leadNudgeMessage(input: {
+  firstName: string;
+  quotedCents: number | null;
+  step: 1 | 2 | 3;
+}): string {
+  const price = input.quotedCents ? formatCents(input.quotedCents) : "your estimate";
+
+  const line =
+    input.step === 1
+      ? `Still happy to get you booked in at ${price} — what day suits?`
+      : input.step === 2
+        ? `Anything you want to check before booking? Happy to answer questions, and the ${price} holds.`
+        : `Last one from us — if the timing is wrong, no problem at all. Reply any time and we will pick it back up.`;
+
+  return [`${input.firstName} — ${CUSTOMER_BRAND}.`, line, OPT_OUT].join("\n");
+}
