@@ -1,24 +1,60 @@
 # Setup checklist
 
-About an hour of your time in total. **Do item 1 first** — it is the one with a
-multi-week clock on it, and everything customer-facing waits behind it.
+About an hour of your time in total. Items 1 and 3–5 are done: the A2P campaign
+cleared on 14 September 2026, the Supabase project is live, and the app is
+deployed at `app.heyspotless.com` with the hourly sweeps running green against
+it. What remains is Stripe (item 2 — billing is switched OFF in production
+today), the customer book (item 6), and the items nobody can do for you: 7, 9
+and 10.
+
+`GET /api/health` with the cron secret answers which of these are actually
+wired, without anybody having to guess:
+
+```bash
+curl -s https://app.heyspotless.com/api/health -H "x-cron-secret: $CRON_SECRET" | jq
+```
 
 Never paste a secret key into a chat, an issue, or a pull request. Put it straight
 into `.env.local` (git-ignored) or the Vercel environment settings.
 
-## 1. Start the Twilio A2P 10DLC filing — do this today
+## 1. Twilio — A2P 10DLC ✅ approved 14 September 2026
 
-Create a Twilio account, register the business, and submit a messaging campaign.
-**Carrier approval takes one to three weeks.** Confirmations, reminders,
-on-my-way texts and review requests all wait on it; email and push cover the gap.
+Done. The brand registration is **BLISS CLEANS LLC** and the customer-facing
+campaign brand is **Hey Spotless** — the same company, and the reason there is
+no second LLC named after the brand.
 
-The legal business name on the brand registration is **BLISS CLEANS LLC**. The
-customer-facing campaign brand is **Hey Spotless**. Those are the same company.
-Do not register a second LLC named after the customer brand — it is not the USPTO
-owner and it is not what belongs on the W-9.
+What is left is wiring, not waiting:
 
-Needed: account SID, auth token, and a decision on whether to port the current
-business number.
+1. Set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` and
+   `TWILIO_MESSAGING_SERVICE_SID` in Vercel. The **messaging service**, not a
+   bare number: the campaign is registered against the service, and traffic
+   sent from a number outside it is what carriers filter.
+2. **Point the messaging service at the inbound webhook.** Twilio console →
+   Messaging → Services → your service → Integration → *Send a webhook*, with
+
+   ```
+   https://app.heyspotless.com/api/twilio/inbound      (HTTP POST)
+   ```
+
+   Without this the platform can talk and cannot listen: a cleaner who replies
+   STOP stays opted out at the carrier and reachable in our database — so
+   dispatch goes on writing her offers she never sees, and every expiry counts
+   against the acceptance rate that decides what work she is shown. A customer
+   replying "can we move Tuesday" is received by Twilio and discarded.
+
+   The endpoint verifies Twilio's signature and refuses anything else, so it is
+   safe to have live before the number is in use. It signs against
+   `NEXT_PUBLIC_APP_URL` — if that is unset or wrong, every real delivery fails
+   the check.
+3. Leave **Advanced Opt-Out** on in the messaging service. It answers STOP,
+   START and HELP at the carrier level; the webhook records the same events so
+   the marketplace stops offering work to somebody who cannot see it.
+4. `MESSAGING_ENABLED=0` holds all sending off even with keys present — worth
+   setting while the customer book is still being imported, so a migration
+   cannot text several hundred people at once.
+
+Needed if the current business number is to be ported: that decision, which is
+independent of everything above.
 
 ## 2. Stripe
 
@@ -29,6 +65,11 @@ and not a second LLC. Enable Stripe Connect if the app should handle 1099 payout
 Underwriting usually clears in a day and blocks only card-on-file and auto-charge.
 
 Needed: publishable key + secret key. Test mode is fine to start.
+
+**Not done yet, and it is the last thing between here and taking money.** As of
+17 September 2026 production answers the Stripe webhook with
+`503 billing is not enabled`, which means either `STRIPE_SECRET_KEY` is unset in
+Vercel or `BILLING_ENABLED=0` is holding it. `/api/health` says which.
 
 The billing code is built and tested; it is switched off until you set
 `STRIPE_SECRET_KEY`, and `BILLING_ENABLED=0` keeps it off even with keys present.
@@ -117,7 +158,7 @@ Create an account and connect it to GitHub. Set the environment variables from
 Add a `CNAME` for `app.heyspotless.com` pointing at Vercel. The Webflow marketing
 site is untouched.
 
-## 6. Export from Housecall Pro
+## 6. Export from Housecall Pro, then import
 
 Customers → Actions → Export, and Jobs → Actions → Export. Both arrive by email
 within the hour. Export the price book separately. You must be logged in as an Admin.
@@ -126,6 +167,53 @@ There is no documented export for estimates, invoices, or recurring service plan
 those get reconstructed from the CSVs and whatever the API exposes, and HCP stays
 read-only as the archive of record for a few months rather than pretending the
 migration was lossless.
+
+### Running the import
+
+**Set `MESSAGING_ENABLED=0` in Vercel first.** The automation planner already
+refuses to confirm old bookings and refuses to ask for a review of a clean that
+was imported after it happened — both are tested — but the cost of being wrong
+is texting several hundred people at once, and a flag costs nothing.
+
+Then, from a laptop, with the service-role key in the environment and never in
+CI:
+
+```bash
+export NEXT_PUBLIC_SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=...
+
+# Always first. Reads everything, writes nothing, and prints every row it
+# could not understand — which is the interesting output of a migration.
+npm run import:hcp -- --customers customers.csv --jobs jobs.csv --dry-run
+
+npm run import:hcp -- --customers customers.csv --jobs jobs.csv
+```
+
+Both files in one run: jobs reference customers by their Housecall Pro id, and
+the dry run's most useful output is the list of jobs whose customer is not in
+the customer export.
+
+It is safe to run again. Every import keys on the Housecall Pro id, so a second
+run updates what the first wrote — and a room count somebody has since verified
+on site, or a note typed in this app, survives a re-run.
+
+### Then check the price audit — this is item 7
+
+```sql
+select first_name, last_name, freq, agreed_price_cents, book_price_cents,
+       verdict, paying_one_time_rate
+from recurring_price_audit
+where verdict <> 'matches'
+order by paying_one_time_rate desc, difference_cents desc;
+```
+
+`paying_one_time_rate` is the exact shape item 7 describes: a recurring customer
+being charged the one-time price because the frequency discount was meant to be
+applied by hand after booking and nobody did. The audit corrects nothing —
+every row is a conversation with a customer, and a migration that silently
+re-priced them would be the fault it exists to detect.
+
+Every imported plan is `price_locked`, so the 9 August increase cannot reach a
+legacy customer through a regenerated quote.
 
 ## 7. Audit live recurring jobs for the missing discount — time-sensitive
 
@@ -171,3 +259,37 @@ anything else here.
 The `web-lead-response` skill file contains a live HCP API token in plaintext. Rotate
 it in Housecall Pro and replace it in the skill with an environment variable
 reference. It is not in this repository and must not be added to it.
+
+
+## 11. Web Push — optional, and the cheapest thing on this page
+
+Notifications reach a cleaner in seconds; a text sits in a thread alongside
+every other text she gets. An offer rung lives 8 to 15 minutes, so that
+difference is the difference between the ladder working and the ladder running
+to its ceiling. Push also costs nothing per send, while every rung that goes to
+a tier costs money in SMS.
+
+```bash
+npm run push:keys      # once. Rotating invalidates every subscription.
+```
+
+Put `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` in Vercel. The
+private key belongs there and nowhere else — not in the repo, not in a chat.
+
+**Push never replaces the offer text; both go out.** On iOS a push only works
+once the app is on the home screen (Share → Add to Home Screen), and a
+marketplace that quietly stopped offering work to whoever had not installed it
+would have a supply problem nobody could see.
+
+The cleaner turns it on herself, from a button on her own screen, because every
+browser requires a user gesture and a permission prompt that appears unprompted
+is the one people deny — permanently, with no way to ask again.
+
+### What is NOT built, and why it is not blocking
+
+Phase 10 in the build plan also lists Capacitor wrappers and App Store / Play
+submission. Those are procurement rather than engineering: an Apple developer
+account ($99/yr), a Google Play account ($25), signing certificates, and review
+queues measured in days. The installed PWA does everything the wrapper would do
+for this business today, including notifications. Revisit it when there is a
+reason a home-screen icon cannot answer — not before.

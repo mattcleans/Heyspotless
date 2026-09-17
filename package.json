@@ -2,7 +2,7 @@
   "name": "spotless-ops",
   "version": "0.1.0",
   "private": true,
-  "description": "Hey Spotless field-service operations platform — booking, dispatch, billing, communications.",
+  "description": "Hey Spotless field-service operations platform \u2014 booking, dispatch, billing, communications.",
   "engines": {
     "node": ">=20.9.0"
   },
@@ -14,7 +14,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:zones": "TZ=UTC vitest run && TZ=America/Chicago vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "import:hcp": "node --experimental-strip-types scripts/import-hcp.ts",
+    "push:keys": "node --experimental-strip-types scripts/generate-vapid-keys.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.5",

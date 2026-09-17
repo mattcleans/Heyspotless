@@ -1,10 +1,10 @@
 # Scheduled work
 
-Three sweeps run on a timer. All run with no signed-in user, so all are
+Four sweeps run on a timer. All run with no signed-in user, so all are
 guarded by `CRON_SECRET` rather than a session — unset, they refuse
 everything, which is the right way round to fail.
 
-**Two of them are Vercel Cron; the dispatch sweep is a GitHub Action.** Vercel's
+**Two of them are Vercel Cron; dispatch and automations are GitHub Actions.** Vercel's
 Hobby plan allows one cron run per day, and dispatch cannot be daily — an offer
 ladder whose next rung waits until tomorrow is not a ladder, and a 45-minute
 exclusive hold checked once a day has already lapsed by the time anybody looks.
@@ -26,6 +26,7 @@ checking, since the business runs on the America/Chicago calendar.
 | `/api/recurring/generate` | 08:00 | 02:00 / 03:00 | Overnight, before anyone looks at the board. The horizon is six weeks, so nothing is urgent — it just needs to have happened by morning. |
 | `/api/dispatch/run` (GitHub Action) | :30 hourly | :30 hourly | Hourly, not daily. An offer ladder whose next rung waits until tomorrow is not a ladder, and an exclusive hold that lapses at 10am must be noticed before the afternoon. At :30 so the day's new visits from the 08:00 generation are already on the board. |
 | `/api/billing/autocharge` | 14:00 | 08:00 / 09:00 | Business hours, deliberately. A card that declines should decline while somebody is awake to see it, and a customer who gets a failed-payment email should be able to ring someone. |
+| `/api/automations/run` (GitHub Action) | :45 hourly | :45 hourly | Hourly, because it both plans reminders and fires them — a queue checked once a day sends the evening-before reminder at whatever hour that check lands on, which is 2am a third of the time. At :45 so the dispatch sweep at :30 has already assigned whoever it is going to assign, and the reminder can name her. |
 
 The one-hour drift in the Dallas column is daylight saving, and it is
 tolerable for all three: none depends on a precise local time. Anything that
@@ -46,6 +47,14 @@ and a job that already has an assignment is left alone. A sweep landing on the
 same job as the previous one re-presents what is already out rather than
 starting again.
 
+**Automations** are idempotent twice over. The planner keys every action on
+its subject (`job:<uuid>:sms.visit_reminder`), so asking twice what a schedule
+implies produces one row; and every message the sweep sends is claimed under
+the same key before the provider is called, so a crash between sending and
+recording cannot produce a second text. A visit that MOVES has its unfired
+reminder moved with it rather than duplicated, because the plan is recomputed
+rather than remembered.
+
 **Auto-charge** is idempotent three ways: a deterministic Stripe idempotency
 key per (invoice, attempt), a unique constraint on `payments.idempotency_key`,
 and a `payment_operations` row that blocks a second attempt on an invoice
@@ -65,6 +74,17 @@ curl -X POST https://app.heyspotless.com/api/dispatch/run \
 
 curl -X POST https://app.heyspotless.com/api/billing/autocharge \
   -H "x-cron-secret: $CRON_SECRET"
+
+curl -X POST https://app.heyspotless.com/api/automations/run \
+  -H "x-cron-secret: $CRON_SECRET"
+```
+
+And the one that is not a sweep — what this deployment actually has wired,
+in booleans and row counts, no secrets:
+
+```bash
+curl -s https://app.heyspotless.com/api/health \
+  -H "x-cron-secret: $CRON_SECRET" | jq
 ```
 
 ## Reading the response
@@ -130,3 +150,29 @@ actually went wrong:
   needs a person.
 - **failed** — listed in `problems` with the job id. One bad visit does not
   stop the board.
+
+
+## Reading the automation response
+
+```json
+{ "planned": 4, "moved": 1, "due": 6, "sent": 5,
+  "skipped": 1, "deferred": 0, "abandoned": 0, "failed": 0 }
+```
+
+- **planned** — actions the schedule implied that were not on the queue yet.
+  A handful per sweep is normal; a large number every hour means something is
+  deleting rows, because the keys should make this converge.
+- **moved** — unfired reminders that followed a visit somebody rescheduled.
+- **due** — rows this sweep claimed. Bounded at 50: the rest wait an hour,
+  which is fine for reminders and would not be for offers.
+- **skipped** — a reason was recorded on every one. Opted out, no phone on
+  file, visit canceled, messaging disabled. **These are not failures** and the
+  reason is in the row: "why did this customer not get their reminder" has an
+  answer.
+- **abandoned** — tried four times and given up, left for a person. Same
+  number as auto-charge, for the same reason.
+- **failed** — the send was attempted and the provider refused. A person is
+  owed a text nobody sent, so a non-zero number here fails the workflow run.
+- **quietHours** — present and true when the whole firing pass was skipped
+  because it is between 8pm and 8am in Dallas. Nothing is lost: the rows stay
+  due and the first sweep after 08:00 sends them.

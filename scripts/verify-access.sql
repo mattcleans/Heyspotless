@@ -36,7 +36,51 @@ begin
     $q$select resolve_payment_operation('access-test', 'failed')$q$,
     $q$select settle_payment_operation_by_ref('10000000-0000-0000-0000-000000000001', 'cs_x')$q$,
     $q$select record_autocharge_failure('10000000-0000-0000-0000-000000000001', 'test')$q$,
-    $q$select resettle_invoice('10000000-0000-0000-0000-000000000001')$q$
+    $q$select resettle_invoice('10000000-0000-0000-0000-000000000001')$q$,
+    -- 0022. A browser session that could call these could forge a text from
+    -- any number in the book, opt a cleaner out of the offers that are her
+    -- income, or rate a stranger's clean.
+    $q$select record_message('access-test', 'k', 'sms', 'b', '+12145550100')$q$,
+    $q$select record_inbound_message('SM-access', '+12145550100', '+19725550100', 'b')$q$,
+    $q$select set_sms_opt_out_by_phone('+12145550100', true, 'test')$q$,
+    $q$select schedule_automation('access-test', 't', 'a', 'job',
+                                  '50000000-0000-0000-0000-000000000001', now())$q$,
+    $q$select reschedule_automation('access-test', now())$q$,
+    $q$select claim_due_automations(gen_random_uuid(), 1)$q$,
+    $q$select settle_automation('50000000-0000-0000-0000-000000000001',
+                                gen_random_uuid(), 'sent')$q$,
+    $q$select record_rating('50000000-0000-0000-0000-000000000001', 5)$q$,
+    $q$select rateable_job('50000000-0000-0000-0000-000000000001')$q$,
+    -- 0023. A browser session that could call these could mark somebody else's
+    -- lead as answered, or read every cleaner's pay and every customer's margin.
+    $q$select record_lead('a',null,null,'+12145550100','1 A St','75024','standard',
+                          'standard','one_time',1,1,0,10000,60)$q$,
+    $q$select mark_lead_responded('50000000-0000-0000-0000-000000000001')$q$,
+    $q$select set_lead_status('50000000-0000-0000-0000-000000000001', 'won')$q$,
+    -- 0024. A browser session that could call these could arrive pre-approved,
+    -- clear its own background check, or put itself on the roster.
+    $q$select record_application('a','b',null,'+12145550100')$q$,
+    $q$select advance_application('50000000-0000-0000-0000-000000000001','screened')$q$,
+    $q$select activate_cleaner('50000000-0000-0000-0000-000000000001')$q$,
+    $q$select recompute_cleaner_rating('60000000-0000-0000-0000-000000000001')$q$,
+    -- 0025. A browser session that could call these could rewrite the customer
+    -- book, or re-price a legacy customer by re-importing them.
+    $q$select import_customer('x','a','b')$q$,
+    $q$select import_property('x','30000000-0000-0000-0000-000000000001','s','c','75024')$q$,
+    $q$select import_job('x','30000000-0000-0000-0000-000000000001',
+                         '40000000-0000-0000-0000-000000000001','standard','one_time',
+                         100,60,'scheduled')$q$,
+    $q$select import_assignment('50000000-0000-0000-0000-000000000001',
+                                '60000000-0000-0000-0000-000000000001')$q$,
+    $q$select import_recurring_plan('x','30000000-0000-0000-0000-000000000001',
+                                    '40000000-0000-0000-0000-000000000001','weekly',
+                                    'standard',15000,138,current_date)$q$,
+    -- 0026. A browser session that could call these could route another
+    -- cleaner's offers to its own device.
+    $q$select save_push_subscription('20000000-0000-0000-0000-000000000003','https://x/1')$q$,
+    $q$select delete_push_subscription('https://x/1')$q$,
+    $q$select settle_push('https://x/1', true)$q$,
+    $q$select push_targets(array['60000000-0000-0000-0000-000000000001'::uuid])$q$
   ] loop
     begin
       execute statement;
@@ -115,6 +159,34 @@ do $$
 begin
   if exists (select 1 from jobs where id = '50000000-0000-0000-0000-000000000002') then
     raise exception 'anonymous user saw an open-board job';
+  end if;
+
+  /*
+   * THE COSTING VIEWS (0023), and this is the subtle one.
+   *
+   * A view runs with its OWNER's privileges unless it says otherwise, so
+   * row-level security on `jobs` would not protect `job_costing` -- which is
+   * every cleaner's pay and every customer's margin in one place. 0023 locks
+   * it twice: no SELECT for client roles, AND `security_invoker` so the `0003`
+   * policies apply even if somebody grants it back.
+   *
+   * This file grants ALL ON ALL TABLES at the top, deliberately, which undoes
+   * the first lock exactly the way a stray `grant` in a future migration would.
+   * So what is asserted here is the second one: no rows, not an error.
+   */
+  if exists (select 1 from job_costing) then
+    raise exception 'anonymous user read job costing';
+  end if;
+  if exists (select 1 from job_margins) then
+    raise exception 'anonymous user read job margins';
+  end if;
+  if exists (select 1 from customer_at_risk) then
+    raise exception 'anonymous user read churn risk';
+  end if;
+  -- 0025's audit is the same shape and the same two locks: it names every
+  -- customer and what they pay.
+  if exists (select 1 from recurring_price_audit) then
+    raise exception 'anonymous user read the price audit';
   end if;
 end $$;
 reset role;
@@ -226,7 +298,36 @@ begin
     'resolve_payment_operation(text,payment_operation_state,text)',
     'settle_payment_operation_by_ref(uuid,text)',
     'record_autocharge_failure(uuid,text,timestamptz)',
-    'resettle_invoice(uuid)'
+    'resettle_invoice(uuid)',
+    'record_message(text,text,message_channel,text,text,uuid,uuid,uuid,uuid)',
+    'record_inbound_message(text,text,text,text,message_channel)',
+    'set_sms_opt_out_by_phone(text,boolean,text)',
+    'schedule_automation(text,text,text,text,uuid,timestamptz)',
+    'reschedule_automation(text,timestamptz)',
+    'claim_due_automations(uuid,integer,timestamptz)',
+    'settle_automation(uuid,uuid,text,text,uuid)',
+    'record_rating(uuid,numeric,text)',
+    'rateable_job(uuid)',
+    'app_schema_version()',
+    'record_lead(text,text,text,text,text,text,text,text,frequency,integer,integer,'
+      'integer,integer,integer,text,text,jsonb,lead_source)',
+    'mark_lead_responded(uuid,timestamptz)',
+    'set_lead_status(uuid,lead_status)',
+    'record_application(text,text,text,text,numeric,boolean,boolean,text[],cleaner_type,'
+      'boolean,text,jsonb,text)',
+    'advance_application(uuid,application_status,text,uuid,numeric,text)',
+    'activate_cleaner(uuid,cleaner_type,uuid,integer,numeric)',
+    'recompute_cleaner_rating(uuid)',
+    'import_customer(text,text,text,text,text,text,date)',
+    'import_property(text,uuid,text,text,text,text,integer,integer,integer,text,text)',
+    'import_job(text,uuid,uuid,text,frequency,integer,integer,job_status,timestamptz,'
+      'timestamptz,timestamptz,text)',
+    'import_assignment(uuid,uuid)',
+    'import_recurring_plan(text,uuid,uuid,frequency,text,integer,integer,date,boolean)',
+    'save_push_subscription(uuid,text,text,text,text)',
+    'delete_push_subscription(text)',
+    'settle_push(text,boolean)',
+    'push_targets(uuid[],integer)'
   ] loop
     if not has_function_privilege(current_user, signature, 'execute') then
       raise exception 'server lost execution privilege on %', signature;

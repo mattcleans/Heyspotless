@@ -229,13 +229,13 @@ travel, per job, per cleaner, per customer, per channel.
 | 01 | Foundation | Repo, scaffold, schema, RLS, auth, design system, PWA shell, deploy. **Built.** |
 | 02 | Core operations | Customers, properties, price book, jobs, calendar, recurring plans. **Price book and quoting built.** |
 | 03 | Money | Quote builder, Stripe Checkout, saved cards, auto-charge, tips, refunds. **Built.** Live behind `BILLING_ENABLED` until underwriting clears. |
-| 04 | Cleaner app | Today's schedule, on-my-way, clock in/out, checklists, offline photo queue, push. |
+| 04 | Cleaner app | Today's schedule, on-my-way, clock in/out, checklists, offline photo queue, push. **Built**, except native push (phase 10). |
 | 05 | Dispatch engine | Marginal cost, clustering, overtime forecast, gate, tiers, board, waterfall, offer ledger. **Built.** |
-| 06 | Communications | Twilio two-way inbox, reminders, review requests, automation engine. |
-| 07 | Growth | Booking widget, lead inbox, nudge sequence, at-risk detection, job costing. |
-| 08 | Recruiting funnel | Apply page, AI screen, documents, background check, activation. Launch-critical — the auction needs supply. |
-| 09 | Migration | Import HCP data, verify, 30–60 day parallel run. |
-| 10 | Store wrapper | Capacitor, native push, App Store and Play submission. |
+| 06 | Communications | Twilio two-way inbox, reminders, review requests, automation engine. **Built** (`0022`). A2P cleared 14 Sep 2026. |
+| 07 | Growth | Booking widget, lead inbox, nudge sequence, at-risk detection, job costing. **Built** (`0023`). |
+| 08 | Recruiting funnel | Apply page, AI screen, documents, background check, activation. Launch-critical — the auction needs supply. **Built** (`0024`). |
+| 09 | Migration | Import HCP data, verify, 30–60 day parallel run. **Importer built** (`0025`); the parallel run is a calendar item, not code. |
+| 10 | Store wrapper | Capacitor, native push, App Store and Play submission. **Push built** (`0026`) as Web Push to the installed PWA — no store account needed. The wrappers and the submissions are procurement, not code: an Apple developer account, a Play account, certificates and review queues. |
 
 ## Risks
 
@@ -243,13 +243,19 @@ travel, per job, per cleaner, per customer, per channel.
   Monthly, Bi-weekly and Weekly at $0.00, with the discount applied manually after
   booking, and at least one live monthly client is paying the full one-time rate.
   This is a churn and trust problem, it is happening right now, and it is more urgent
-  than anything else in this document.
+  than anything else in this document. **`recurring_price_audit` (`0025`) turns it
+  into a list** the moment the import lands — including the specific
+  `paying_one_time_rate` flag. It corrects nothing, because every row is a
+  conversation with a customer.
 - **Locked-in legacy rates.** The 9 August increase applies to new customers only.
   Migration must carry old rates across or the first regenerated quote silently
   raises every long-standing customer's price. `recurring_plans.price_locked` exists
   for this.
 - **Worker classification** — the highest legal exposure. See `setup.md`.
-- **The cold start** — an auction with four cleaners is not an auction.
+- **The cold start** — an auction with four cleaners is not an auction. `/apply`
+  and the hiring queue (`0024`) are the supply side of this; the demand side is
+  that a newly activated cleaner is now seeded with a provisional rating, without
+  which the 3.9 floor made every new hire permanently invisible to dispatch.
 - **HCP will not export everything** — no documented export for estimates, invoices,
   or recurring plans.
 - **You become your own support desk.** This is the main thing being bought with that

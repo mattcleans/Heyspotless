@@ -12,6 +12,9 @@ import { sendWindowFor } from "@/lib/messaging/quiet-hours";
 import { offerMessage } from "@/lib/messaging/templates";
 import { sendSms } from "@/lib/messaging/gateway";
 import { isMessagingEnabled } from "@/lib/messaging/env";
+import { PushStore } from "@/lib/push/store";
+import { sendPush } from "@/lib/push/gateway";
+import { isPushEnabled } from "@/lib/push/vapid";
 import { windowsOn } from "@/lib/dispatch/availability";
 import { dispatchBoard, hoursUntil, type DispatchDecision } from "@/lib/dispatch/engine";
 import { presentOffer } from "@/lib/dispatch/ladder";
@@ -117,6 +120,24 @@ export async function POST(request: NextRequest) {
   // the ranking she passed on work she was never shown.
   const recipients = await messaging.recipientsFor(cleaners.map((c) => c.id));
 
+  /**
+   * Devices to wake, alongside the text.
+   *
+   * BOTH GO OUT, and that is the point rather than an oversight. A cleaner who
+   * has not installed the app to her home screen cannot receive a push at all —
+   * on iOS that is most of them — and a marketplace that quietly stopped
+   * offering work to whoever had not installed it would be a marketplace with a
+   * silent supply problem nobody could see.
+   *
+   * The push is the fast half: an offer rung lives 8 to 15 minutes, a
+   * notification arrives in seconds, and it costs nothing per send while a text
+   * costs money every time a rung goes to a tier.
+   */
+  const pushStore = new PushStore(db);
+  const pushTargets = isPushEnabled()
+    ? await pushStore.targetsFor(cleaners.map((c) => c.id))
+    : new Map<string, string[]>();
+
   const result = {
     jobs: jobs.length,
     expiredOffers: expired,
@@ -128,6 +149,7 @@ export async function POST(request: NextRequest) {
     unreachable: 0,
     refused: 0,
     unfilled: 0,
+    pushed: 0,
     failed: 0,
   };
   const problems: { jobId: string; error: string }[] = [];
@@ -139,7 +161,15 @@ export async function POST(request: NextRequest) {
       // cannot answer why a visit went unfilled for three days.
       const { id: decisionId } = await store.recordDecision(job.id, decision);
       await act(
-        { store, messaging, recipients, origin: request.nextUrl.origin },
+        {
+          store,
+          messaging,
+          recipients,
+          origin: request.nextUrl.origin,
+          pushStore,
+          pushTargets,
+          result,
+        },
         job,
         decision,
         decisionId,
@@ -167,6 +197,7 @@ type Result = {
   unreachable: number;
   refused: number;
   unfilled: number;
+  pushed: number;
 };
 
 interface Deps {
@@ -174,6 +205,9 @@ interface Deps {
   messaging: MessagingStore;
   recipients: Map<string, Recipient>;
   origin: string;
+  pushStore: PushStore;
+  pushTargets: Map<string, string[]>;
+  result: Result;
 }
 
 /**
@@ -372,6 +406,11 @@ async function offerAndNotify(
     },
     result,
   );
+  // The offer exists now, so wake her devices whatever happens with the text.
+  // Deliberately before the SMS: the push is the fast half, and a Twilio
+  // timeout should not delay it by ten seconds.
+  if (offerId) await wake(deps, plan.cleanerId);
+
   if (!offerId || !announcing || !reach.reachable || !recipient) return Boolean(offerId);
 
   const body = offerMessage({
@@ -409,6 +448,44 @@ async function offerAndNotify(
     await deps.messaging.settle(messageId, null, sent.reason);
   }
   return true;
+}
+
+/**
+ * Ring every device this cleaner has registered.
+ *
+ * Never throws and never blocks the offer: a notification is an improvement on
+ * the text, not a replacement for it, and a push service having a bad minute
+ * must not cost anybody a job.
+ *
+ * A subscription the service says is GONE is deleted on the spot. The
+ * alternative is a table that fills with dead endpoints, each of them tried and
+ * failed on every sweep for ever.
+ */
+async function wake(deps: Deps, cleanerId: string): Promise<void> {
+  const endpoints = deps.pushTargets.get(cleanerId);
+  if (!endpoints || endpoints.length === 0) return;
+
+  for (const endpoint of endpoints) {
+    try {
+      const sent = await sendPush(endpoint);
+
+      if (sent.ok) {
+        deps.result.pushed += 1;
+        await deps.pushStore.settle(endpoint, true);
+        continue;
+      }
+
+      if (sent.gone) {
+        await deps.pushStore.remove(endpoint);
+        continue;
+      }
+
+      await deps.pushStore.settle(endpoint, false);
+    } catch (error) {
+      // Recorded and moved past. She still gets the text.
+      console.warn(`push failed for cleaner ${cleanerId}: ${messageOf(error)}`);
+    }
+  }
 }
 
 function messageOf(error: unknown): string {

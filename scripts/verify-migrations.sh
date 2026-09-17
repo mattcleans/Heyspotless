@@ -2084,6 +2084,756 @@ end $$;
 SQL
 echo "  job completion verified"
 
+echo "  checking two-way messaging and the automation queue"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_prop uuid; v_job uuid; v_cleaner uuid; v_profile uuid;
+  v_msg uuid; v_again uuid; v_auto uuid; v_auto2 uuid; v_owner uuid := gen_random_uuid();
+  v_claimed integer; v_count integer; v_fail integer := 0;
+  v_opted timestamptz; v_cust_opted timestamptz; v_rating uuid; v_score numeric;
+  v_when timestamptz; v_fired timestamptz; v_ok boolean;
+begin
+  -- Signed up the way a real cleaner is: the 0004 trigger on auth.users makes
+  -- the profile, and the number lives there rather than on `cleaners`.
+  v_profile := uuid_generate_v4();
+  insert into auth.users (id, email, raw_user_meta_data)
+  values (v_profile, 'reply@example.com',
+          '{"role":"cleaner","full_name":"Reply Cleaner","phone":"(214) 555-0143"}'::jsonb);
+  insert into cleaners (profile_id, full_name, type, status, rating, background_check_cleared)
+    values (v_profile, 'Reply Cleaner', 'contractor_1099', 'active', 4.6, true)
+    returning id into v_cleaner;
+  -- The SAME number on a customer record. A cleaner who is also a customer is
+  -- an ordinary thing in a two-person business, and it is the case that decides
+  -- whether STOP is honoured per number or per role.
+  insert into customers (first_name, last_name, phone)
+    values ('Reply','Customer', '+1 214-555-0143') returning id into v_cust;
+  insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+    values (v_cust, '9 Reply Road', 'Plano', '75024', 2, 2) returning id into v_prop;
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'scheduled', 'standard', 'biweekly',
+            now() + interval '3 days', 17000, 138)
+    returning id into v_job;
+
+  -- ---------------------------------------------------------------- phones --
+  -- Every format the same number arrives in has to reduce to one key, or an
+  -- inbound message matches nobody and lands in the inbox attached to no one.
+  if normalize_phone('+12145550143') <> '2145550143' then v_fail := v_fail+1;
+    raise warning 'E.164 did not normalise'; end if;
+  if normalize_phone('(214) 555-0143') <> normalize_phone('+1 214.555.0143') then
+    v_fail := v_fail+1; raise warning 'two spellings of one number did not agree'; end if;
+
+  -- ---------------------------------------------------------------- inbound --
+  v_msg := record_inbound_message('SM-verify-1', '+12145550143', '+19725550100', 'Can we move Tuesday?');
+  if v_msg is null then v_fail := v_fail+1;
+    raise warning 'an inbound message was not recorded'; end if;
+
+  -- Attached to BOTH, from the number alone.
+  select count(*) into v_count from messages
+   where id = v_msg and customer_id = v_cust and cleaner_id = v_cleaner;
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'an inbound message was not attached to the people it came from'; end if;
+
+  -- TWILIO RETRIES. The same MessageSid arriving twice must not show the
+  -- customer's sentence twice in the thread.
+  v_again := record_inbound_message('SM-verify-1', '+12145550143', '+19725550100', 'Can we move Tuesday?');
+  if v_again is not null then v_fail := v_fail+1;
+    raise warning 'a duplicate delivery was recorded a second time'; end if;
+  select count(*) into v_count from messages where provider_id = 'SM-verify-1';
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'a retried webhook produced % rows', v_count; end if;
+
+  -- A number in nobody's record is still recorded. Dropping it would mean a
+  -- new customer texting the business disappears.
+  v_msg := record_inbound_message('SM-verify-2', '+19725559999', '+19725550100', 'do you do move-outs?');
+  if v_msg is null then v_fail := v_fail+1;
+    raise warning 'a message from an unknown number was dropped'; end if;
+  select count(*) into v_count from messages
+   where id = v_msg and customer_id is null and cleaner_id is null;
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'an unattached message was attached to somebody'; end if;
+
+  -- ------------------------------------------------------------------- STOP --
+  -- The whole point of doing this by number: she is opted out as a cleaner AND
+  -- as a customer, because she has one handset and made one request.
+  v_count := set_sms_opt_out_by_phone('+12145550143', true, 'replied STOP');
+  if v_count < 2 then v_fail := v_fail+1;
+    raise warning 'STOP touched only % records', v_count; end if;
+
+  select sms_opted_out_at into v_opted from profiles where id = v_profile;
+  select sms_opted_out_at into v_cust_opted from customers where id = v_cust;
+  if v_opted is null then v_fail := v_fail+1;
+    raise warning 'STOP did not reach the cleaner profile'; end if;
+  if v_cust_opted is null then v_fail := v_fail+1;
+    raise warning 'STOP did not reach the customer record'; end if;
+
+  -- START is the other half carriers require.
+  perform set_sms_opt_out_by_phone('214-555-0143', false, null);
+  select sms_opted_out_at into v_opted from profiles where id = v_profile;
+  if v_opted is not null then v_fail := v_fail+1;
+    raise warning 'START did not clear the opt-out'; end if;
+
+  -- --------------------------------------------------------------- outbound --
+  v_msg := record_message('job:' || v_job || ':sms.visit_reminder', 'visit.reminder',
+                          'sms', 'reminder body', '+12145550143', v_cust, null, null, v_job);
+  if v_msg is null then v_fail := v_fail+1;
+    raise warning 'a reminder was not recorded'; end if;
+
+  -- The sweep runs hourly. Without the key it reminds her every hour.
+  v_again := record_message('job:' || v_job || ':sms.visit_reminder', 'visit.reminder',
+                            'sms', 'reminder body', '+12145550143', v_cust, null, null, v_job);
+  if v_again is not null then v_fail := v_fail+1;
+    raise warning 'the same reminder was recorded twice'; end if;
+
+  -- A person typing gets no key, and may say the same thing twice on purpose.
+  if record_message(null, 'inbox.reply', 'sms', 'on our way', '+12145550143', v_cust) is null
+    then v_fail := v_fail+1; raise warning 'a typed reply was refused'; end if;
+  if record_message(null, 'inbox.reply', 'sms', 'on our way', '+12145550143', v_cust) is null
+    then v_fail := v_fail+1; raise warning 'a repeated typed reply was deduplicated'; end if;
+
+  -- ------------------------------------------------------------ automations --
+  v_auto := schedule_automation('job:' || v_job || ':reminder', 'job.reminder',
+                                'sms.visit_reminder', 'job', v_job, now() - interval '1 minute');
+  if v_auto is null then v_fail := v_fail+1;
+    raise warning 'an action could not be scheduled'; end if;
+
+  v_auto2 := schedule_automation('job:' || v_job || ':reminder', 'job.reminder',
+                                 'sms.visit_reminder', 'job', v_job, now() - interval '1 minute');
+  if v_auto2 is not null then v_fail := v_fail+1;
+    raise warning 'the same action was scheduled twice'; end if;
+
+  -- A VISIT THAT MOVES takes its unfired reminder with it.
+  if not reschedule_automation('job:' || v_job || ':reminder', now() + interval '2 days')
+    then v_fail := v_fail+1; raise warning 'a moved visit did not move its reminder'; end if;
+  select scheduled_for into v_when from automations where id = v_auto;
+  if v_when < now() then v_fail := v_fail+1;
+    raise warning 'the reminder did not move'; end if;
+
+  -- Not due yet: the sweep must leave it alone.
+  select count(*) into v_claimed from claim_due_automations(v_owner, 10);
+  if v_claimed <> 0 then v_fail := v_fail+1;
+    raise warning 'a reminder that is not due was claimed'; end if;
+
+  perform reschedule_automation('job:' || v_job || ':reminder', now() - interval '1 minute');
+
+  select count(*) into v_claimed from claim_due_automations(v_owner, 10);
+  if v_claimed <> 1 then v_fail := v_fail+1;
+    raise warning 'a due reminder was not claimed (got %)', v_claimed; end if;
+
+  -- THE LEASE. A second sweep — the scheduled one and one somebody kicked by
+  -- hand — must not text the customer about the same Tuesday twice.
+  select count(*) into v_claimed from claim_due_automations(gen_random_uuid(), 10);
+  if v_claimed <> 0 then v_fail := v_fail+1;
+    raise warning 'a leased reminder was claimed by a second sweep'; end if;
+
+  -- A settle from somebody who does not hold the lease changes nothing.
+  if settle_automation(v_auto, gen_random_uuid(), 'sent') then v_fail := v_fail+1;
+    raise warning 'a stranger settled a lease they did not hold'; end if;
+
+  -- Failure releases rather than fires, so the next sweep picks it up.
+  if not settle_automation(v_auto, v_owner, 'failed', 'twilio timeout') then v_fail := v_fail+1;
+    raise warning 'the lease holder could not settle'; end if;
+  select fired_at into v_fired from automations where id = v_auto;
+  if v_fired is not null then v_fail := v_fail+1;
+    raise warning 'a failed action was marked fired'; end if;
+
+  select count(*) into v_claimed from claim_due_automations(v_owner, 10);
+  if v_claimed <> 1 then v_fail := v_fail+1;
+    raise warning 'a released action was not picked up again'; end if;
+
+  if not settle_automation(v_auto, v_owner, 'sent', null, v_msg) then v_fail := v_fail+1;
+    raise warning 'a sent action could not be settled'; end if;
+  select fired_at into v_fired from automations where id = v_auto;
+  if v_fired is null then v_fail := v_fail+1;
+    raise warning 'a sent action was not marked fired'; end if;
+
+  -- A fired action is history. It does not move and it does not fire again.
+  if reschedule_automation('job:' || v_job || ':reminder', now() + interval '1 day')
+    then v_fail := v_fail+1; raise warning 'a fired action was rescheduled'; end if;
+  select count(*) into v_claimed from claim_due_automations(v_owner, 10);
+  if v_claimed <> 0 then v_fail := v_fail+1;
+    raise warning 'a fired action was claimed again'; end if;
+
+  -- ---------------------------------------------------------------- ratings --
+  -- Not finished yet: nothing to rate, and a link somebody is guessing at
+  -- learns nothing.
+  if record_rating(v_job, 5) is not null then v_fail := v_fail+1;
+    raise warning 'a clean that had not happened was rated'; end if;
+
+  insert into job_assignments (job_id, cleaner_id, payout_cents)
+    values (v_job, v_cleaner, 5610);
+  update jobs set status = 'complete', completed_at = now() where id = v_job;
+
+  v_rating := record_rating(v_job, 5, 'spotless');
+  if v_rating is null then v_fail := v_fail+1;
+    raise warning 'a finished clean could not be rated'; end if;
+
+  -- THE RATING IS AN INPUT TO THE ELIGIBILITY GATE, so it has to reach the
+  -- column the gate reads — not sit in a table nothing joins to.
+  --
+  -- Against the prior 0024 introduced, not a plain average: (5*4.2 + 5)/6.
+  -- A single review moves her standing without deciding it.
+  select rating into v_score from cleaners where id = v_cleaner;
+  if v_score <> 4.33 then v_fail := v_fail+1;
+    raise warning 'the cleaner standing did not follow the rating (got %)', v_score; end if;
+
+  -- Changing your mind replaces what you said; it does not add a second vote.
+  perform record_rating(v_job, 2, 'on reflection');
+  select count(*) into v_count from ratings where job_id = v_job;
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'a second rating from one customer produced % rows', v_count; end if;
+
+  -- (5*4.2 + 2)/6 = 3.83. Marked down hard by one two-star, and NOT ejected
+  -- from the marketplace by it — which is the whole argument for the prior.
+  select rating into v_score from cleaners where id = v_cleaner;
+  if v_score <> 3.83 then v_fail := v_fail+1;
+    raise warning 'a revised rating did not reach the gate (got %)', v_score; end if;
+
+  -- A score outside the range is somebody editing a request body.
+  perform record_rating(v_job, 11);
+  select score into v_score from ratings where job_id = v_job;
+  if v_score <> 5 then v_fail := v_fail+1;
+    raise warning 'a score of 11 was stored as %', v_score; end if;
+
+  if v_fail > 0 then raise exception '% communications assertions failed', v_fail; end if;
+  raise notice 'communications passed';
+end $$;
+SQL
+echo "  two-way messaging and automations verified"
+
+echo "  checking leads, job costing and churn risk"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_prop uuid; v_job uuid; v_lead uuid; v_auto uuid;
+  v_w2 uuid; v_1099 uuid; v_count integer; v_fail integer := 0;
+  v_consent timestamptz; v_first timestamptz; v_second timestamptz;
+  v_revenue integer; v_cost integer; v_margin integer; v_over integer;
+  v_risk boolean; v_days integer; v_plan uuid;
+begin
+  -- ------------------------------------------------------------------ leads --
+  v_lead := record_lead('Dana','Reyes','dana@example.com','(214) 555-0143',
+                        '9 Reply Road, Plano TX','75024','standard','standard','biweekly',
+                        3, 2, 0, 17000, 138, null, 'I agree to texts', null, 'website');
+  if v_lead is null then v_fail := v_fail+1;
+    raise warning 'an enquiry could not be recorded'; end if;
+
+  select sms_consent_at into v_consent from leads where id = v_lead;
+  if v_consent is null then v_fail := v_fail+1;
+    raise warning 'consent language was presented but no timestamp was stored'; end if;
+
+  -- NO LANGUAGE, NO CONSENT. A2P evidence is the wording plus the moment, not
+  -- a boolean somebody remembers ticking.
+  if (select sms_consent_at from leads
+       where id = record_lead('No','Consent',null,'+12145550199','1 A St','75024',
+                              'standard','standard','one_time',2,1,0,15000,120,
+                              null, null, null, 'website')) is not null then
+    v_fail := v_fail+1; raise warning 'consent was recorded with no language presented'; end if;
+
+  -- TIME TO FIRST RESPONSE is the KPI of the whole phase, so it is the FIRST
+  -- answer, never the latest: a second reply must not reset the clock.
+  if not mark_lead_responded(v_lead, now() - interval '10 minutes') then v_fail := v_fail+1;
+    raise warning 'a first response was not recorded'; end if;
+  select first_response_at into v_first from leads where id = v_lead;
+
+  if mark_lead_responded(v_lead) then v_fail := v_fail+1;
+    raise warning 'a second reply was treated as the first'; end if;
+  select first_response_at into v_second from leads where id = v_lead;
+  if v_first is distinct from v_second then v_fail := v_fail+1;
+    raise warning 'a second reply moved the response clock'; end if;
+
+  -- SETTING A STATUS STOPS THE CHASE. Otherwise the queue texts somebody who
+  -- booked yesterday, which is the failure everybody has had from a CRM.
+  v_auto := schedule_automation('lead:' || v_lead || ':nudge', 'lead.received',
+                                'sms.lead_nudge_1', 'lead', v_lead, now() + interval '2 hours');
+  perform set_lead_status(v_lead, 'won');
+
+  select count(*) into v_count from automations
+   where id = v_auto and fired_at is not null and outcome = 'canceled';
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'winning a lead did not cancel its nudges'; end if;
+
+  select count(*) into v_count from claim_due_automations(gen_random_uuid(), 10);
+  if v_count <> 0 then v_fail := v_fail+1;
+    raise warning 'a canceled nudge was still claimable'; end if;
+
+  -- ------------------------------------------------------------- costing ----
+  insert into customers (first_name, last_name) values ('Costing','Test')
+    returning id into v_cust;
+  insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+    values (v_cust, '5 Cost Court', 'Plano', '75024', 3, 2) returning id into v_prop;
+
+  -- A CONTRACTOR COSTS HER PAYOUT AND NOTHING ELSE. She absorbs her own
+  -- windshield time -- the durable edge the build plan identifies.
+  insert into cleaners (full_name, type, status, rating, background_check_cleared,
+                        default_payout_rate)
+    values ('Marisol 1099', 'contractor_1099', 'active', 4.8, true, 0.33)
+    returning id into v_1099;
+
+  insert into jobs (customer_id, property_id, status, service, freq, scheduled_start,
+                    completed_at, price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'complete', 'standard', 'biweekly',
+            now() - interval '2 days', now() - interval '2 days', 17000, 138)
+    returning id into v_job;
+  insert into job_assignments (job_id, cleaner_id, payout_cents)
+    values (v_job, v_1099, 5610);
+  insert into time_entries (job_id, cleaner_id, clock_in_at, clock_out_at,
+                            clean_minutes, drive_minutes, drive_miles)
+    values (v_job, v_1099, now() - interval '2 days', now() - interval '2 days',
+            160, 25, 12);
+
+  select revenue_cents, cost_cents, margin_cents, minutes_over_estimate
+    into v_revenue, v_cost, v_margin, v_over
+    from job_margins where job_id = v_job;
+
+  if v_cost <> 5610 then v_fail := v_fail+1;
+    raise warning 'a contractor clean cost % rather than her payout of 5610', v_cost; end if;
+  if v_margin <> 17000 - 5610 then v_fail := v_fail+1;
+    raise warning 'contractor margin came out at %', v_margin; end if;
+  -- 160 actual against 138 quoted. Persistently positive means we under-quote
+  -- time, which is a pricing problem rather than a cleaner problem.
+  if v_over <> 22 then v_fail := v_fail+1;
+    raise warning 'minutes over estimate came out at %, want 22', v_over; end if;
+
+  -- A W-2 COSTS HOURS x RATE x BURDEN, INCLUDING THE DRIVE, because under the
+  -- FLSA that time is owed. This is the number the whole dispatch engine is
+  -- comparing against.
+  insert into cleaners (full_name, type, status, rating, background_check_cleared,
+                        hourly_rate_cents, guaranteed_hours_per_week,
+                        employer_burden_rate, uses_company_vehicle, drive_time_paid)
+    values ('Shonda W2', 'w2_core', 'active', 4.9, true, 1750, 40, 0.15, true, true)
+    returning id into v_w2;
+
+  insert into jobs (customer_id, property_id, status, service, freq, scheduled_start,
+                    completed_at, price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'complete', 'standard', 'biweekly',
+            now() - interval '1 day', now() - interval '1 day', 17000, 138)
+    returning id into v_job;
+  insert into job_assignments (job_id, cleaner_id, payout_cents)
+    values (v_job, v_w2, 0);
+  insert into time_entries (job_id, cleaner_id, clock_in_at, clock_out_at,
+                            clean_minutes, drive_minutes, drive_miles)
+    values (v_job, v_w2, now() - interval '1 day', now() - interval '1 day',
+            120, 30, 18);
+
+  select cost_cents into v_cost from job_margins where job_id = v_job;
+  -- (120 + 30) / 60 * 1750 * 1.15 = 5031.25 -> 5031. The company truck means
+  -- no mileage: it is a fixed cost and belongs nowhere near a per-job number.
+  if v_cost <> 5031 then v_fail := v_fail+1;
+    raise warning 'a W-2 clean cost % cents, want 5031', v_cost; end if;
+
+  -- ---------------------------------------------------------------- at risk --
+  insert into recurring_plans (customer_id, property_id, freq, service,
+                               agreed_price_cents, estimated_minutes, active, anchor_date)
+    values (v_cust, v_prop, 'weekly', 'standard', 16000, 138, true, current_date - 21)
+    returning id into v_plan;
+
+  -- Two days since the last clean on a weekly plan: not at risk.
+  select at_risk into v_risk from customer_at_risk where customer_id = v_cust;
+  if v_risk then v_fail := v_fail+1;
+    raise warning 'a customer cleaned yesterday was flagged at risk'; end if;
+
+  -- Move the last clean back three weeks. A weekly customer at 21 days has
+  -- missed two, which is where churn is still recoverable.
+  update jobs set completed_at = now() - interval '21 days'
+   where customer_id = v_cust and status = 'complete';
+
+  select at_risk, days_since_last into v_risk, v_days
+    from customer_at_risk where customer_id = v_cust;
+  if not v_risk then v_fail := v_fail+1;
+    raise warning 'a weekly customer at % days was not flagged', v_days; end if;
+
+  -- A VISIT ON THE CALENDAR ENDS IT. However long ago the last one was, a
+  -- customer booked for Thursday is not churning.
+  insert into jobs (customer_id, property_id, status, service, freq, scheduled_start,
+                    price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'scheduled', 'standard', 'weekly',
+            now() + interval '3 days', 16000, 138);
+
+  select at_risk into v_risk from customer_at_risk where customer_id = v_cust;
+  if v_risk then v_fail := v_fail+1;
+    raise warning 'a customer with a booked visit was flagged at risk'; end if;
+
+  if v_fail > 0 then raise exception '% growth assertions failed', v_fail; end if;
+  raise notice 'leads, costing and churn passed';
+end $$;
+SQL
+echo "  leads, job costing and churn risk verified"
+
+echo "  checking the recruiting funnel"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_app uuid; v_app2 uuid; v_cleaner uuid; v_again uuid;
+  v_cust uuid; v_prop uuid; v_job uuid; v_status application_status;
+  v_rating numeric; v_count integer; v_fail integer := 0; v_eligible boolean;
+begin
+  v_app := record_application('Nadia','Okafor','nadia@example.com','+12145550177',
+                              3.5, true, true, array['75024','75025'],
+                              'contractor_1099', true, 'referral',
+                              '{"why":"reliable work"}'::jsonb, 'I agree to texts');
+  if v_app is null then v_fail := v_fail+1;
+    raise warning 'an application could not be recorded'; end if;
+
+  -- ------------------------------------------------------- the state machine
+  -- The order of these states IS the hiring process. Skipping one is not a
+  -- shortcut, it is hiring somebody whose check never came back.
+  if advance_application(v_app, 'background_cleared') then v_fail := v_fail+1;
+    raise warning 'an application cleared a check that was never run'; end if;
+
+  if not advance_application(v_app, 'screened', null, null, 78, 'strong answers')
+    then v_fail := v_fail+1; raise warning 'a submitted application could not be screened'; end if;
+  if not advance_application(v_app, 'background_pending', 'checkr_abc')
+    then v_fail := v_fail+1; raise warning 'a screened application could not go to check'; end if;
+
+  -- Not cleared yet: activation must refuse. background_check_cleared is
+  -- described in 0003 as never overridable, and this is what keeps that true.
+  begin
+    v_cleaner := activate_cleaner(v_app);
+    v_fail := v_fail+1;
+    raise warning 'a cleaner was activated before her check came back';
+  exception when check_violation then null;
+  end;
+
+  if not advance_application(v_app, 'background_cleared') then v_fail := v_fail+1;
+    raise warning 'a pending check could not be cleared'; end if;
+
+  -- A CONTRACTOR WITHOUT INSURANCE. The gate reads the expiry date, so
+  -- activating with no date passes the gate for ever instead of failing it.
+  update applications set insurance_expires_on = null where id = v_app;
+  begin
+    v_cleaner := activate_cleaner(v_app);
+    v_fail := v_fail+1;
+    raise warning 'an uninsured contractor was activated';
+  exception when check_violation then null;
+  end;
+  update applications set insurance_expires_on = current_date + 180 where id = v_app;
+
+  -- ------------------------------------------------------------- activation --
+  v_cleaner := activate_cleaner(v_app);
+  if v_cleaner is null then v_fail := v_fail+1;
+    raise warning 'a cleared application could not be activated'; end if;
+
+  select status into v_status from applications where id = v_app;
+  if v_status <> 'activated' then v_fail := v_fail+1;
+    raise warning 'activation left the application at %', v_status; end if;
+
+  -- Idempotent: a retried request must not put two of one person on the roster.
+  -- Two rows would double-count her hours and let her hold two offers on one job.
+  v_again := activate_cleaner(v_app);
+  if v_again is distinct from v_cleaner then v_fail := v_fail+1;
+    raise warning 'activating twice produced a second cleaner'; end if;
+  select count(*) into v_count from cleaners where full_name = 'Nadia Okafor';
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning '% roster entries for one person', v_count; end if;
+
+  -- ============================================================ THE POINT ===
+  -- THE FUNNEL HAS TO LEAD SOMEWHERE. The 0003 gate reads
+  -- coalesce(rating, 0) >= 3.9, so a cleaner with no rating is ineligible for
+  -- everything — and a brand-new cleaner has no rating by definition. Without
+  -- the provisional seed she is activated, appears on the roster, and is never
+  -- offered a single job, silently.
+  select rating into v_rating from cleaners where id = v_cleaner;
+  if v_rating is null then v_fail := v_fail+1;
+    raise warning 'an activated cleaner has no rating and can never be offered work'; end if;
+  if v_rating < 3.9 then v_fail := v_fail+1;
+    raise warning 'a new cleaner was seeded at %, below the 3.9 floor', v_rating; end if;
+
+  -- And prove it against the gate itself rather than against the number.
+  insert into customers (first_name, last_name) values ('Supply','Test')
+    returning id into v_cust;
+  insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+    values (v_cust, '1 Supply Street', 'Plano', '75024', 3, 2) returning id into v_prop;
+  insert into jobs (customer_id, property_id, status, service, freq, scheduled_start,
+                    price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'scheduled', 'standard', 'biweekly',
+            now() + interval '4 days', 17000, 138)
+    returning id into v_job;
+
+  if not cleaner_is_eligible(v_cleaner, v_job) then v_fail := v_fail+1;
+    raise warning 'a freshly activated cleaner is not eligible for any work'; end if;
+
+  -- Her declared zips are honoured: 75024 is hers, 76102 is not.
+  update properties set zip = '76102' where id = v_prop;
+  if cleaner_is_eligible(v_cleaner, v_job) then v_fail := v_fail+1;
+    raise warning 'a cleaner was eligible outside her declared service area'; end if;
+  update properties set zip = '75024' where id = v_prop;
+
+  -- -------------------------------------------------------------- the prior --
+  -- ONE BAD REVIEW MUST NOT END A CAREER. A floor a single data point can
+  -- trigger is a lottery, not a quality bar.
+  insert into job_assignments (job_id, cleaner_id, payout_cents)
+    values (v_job, v_cleaner, 5610);
+  update jobs set status = 'complete', completed_at = now() where id = v_job;
+
+  perform record_rating(v_job, 3, 'fine, not great');
+  select rating into v_rating from cleaners where id = v_cleaner;
+  -- (5*4.2 + 3)/6 = 4.0: marked down, still working.
+  if v_rating <> 4.0 then v_fail := v_fail+1;
+    raise warning 'one three-star put her at % (want 4.00)', v_rating; end if;
+  if not cleaner_is_eligible(v_cleaner, v_job) then v_fail := v_fail+1;
+    raise warning 'one three-star review ended a career'; end if;
+
+  -- A PATTERN IS DIFFERENT. Eight more threes and she is under the floor,
+  -- which is the outcome the floor exists for.
+  for v_count in 1..8 loop
+    insert into customers (first_name, last_name) values ('Rater', v_count::text)
+      returning id into v_cust;
+    insert into jobs (customer_id, property_id, status, service, freq, scheduled_start,
+                      completed_at, price_cents, estimated_clean_minutes)
+      values (v_cust, v_prop, 'complete', 'standard', 'biweekly',
+              now() - interval '1 day', now() - interval '1 day', 17000, 138)
+      returning id into v_job;
+    insert into job_assignments (job_id, cleaner_id, payout_cents)
+      values (v_job, v_cleaner, 5610);
+    perform record_rating(v_job, 3);
+  end loop;
+
+  select rating into v_rating from cleaners where id = v_cleaner;
+  if v_rating >= 3.9 then v_fail := v_fail+1;
+    raise warning 'nine three-star reviews left her at %, above the floor', v_rating; end if;
+
+  -- ------------------------------------------------------------- rejection --
+  v_app2 := record_application('Rejected','Applicant',null,'+12145550188',
+                               0, false, true, '{}', 'contractor_1099', false, null, null, null);
+  if not advance_application(v_app2, 'rejected', 'no transport') then v_fail := v_fail+1;
+    raise warning 'an application could not be rejected'; end if;
+  -- Rejection is final here. A mistake is a NEW application, which leaves an
+  -- honest record rather than an edited one.
+  if advance_application(v_app2, 'screened') then v_fail := v_fail+1;
+    raise warning 'a rejected application was quietly reopened'; end if;
+
+  -- And an activated one cannot be un-hired by an update either.
+  if advance_application(v_app, 'rejected', 'changed our mind') then v_fail := v_fail+1;
+    raise warning 'an activated application was rejected after the fact'; end if;
+
+  if v_fail > 0 then raise exception '% recruiting assertions failed', v_fail; end if;
+  raise notice 'recruiting funnel passed';
+end $$;
+SQL
+echo "  recruiting funnel verified"
+
+echo "  checking the Housecall Pro import"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_again uuid; v_prop uuid; v_job uuid; v_plan uuid; v_cleaner uuid;
+  v_count integer; v_fail integer := 0; v_price integer; v_notes text;
+  v_verdict text; v_one_time boolean; v_locked boolean; v_beds integer;
+  v_incumbent uuid;
+begin
+  -- ------------------------------------------------------------ idempotent --
+  -- A migration is run, found wanting, fixed and run again. Often against a
+  -- database somebody is already using.
+  v_cust := import_customer('HCP-1','Dana','Reyes','dana@example.com','(214) 555-0143',
+                            'gate code 1234', current_date - 400);
+  v_again := import_customer('HCP-1','Dana','Reyes-Smith','dana@example.com','(214) 555-0143',
+                             'gate code 1234', null);
+  if v_again is distinct from v_cust then v_fail := v_fail+1;
+    raise warning 'a second import created a second customer'; end if;
+  select count(*) into v_count from customers where hcp_customer_id = 'HCP-1';
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning '% customers for one HCP id', v_count; end if;
+
+  -- The export is the system of record for contact details during the parallel
+  -- run, so a changed surname comes across.
+  select last_name into v_notes from customers where id = v_cust;
+  if v_notes <> 'Reyes-Smith' then v_fail := v_fail+1;
+    raise warning 'a re-import did not update the name (got %)', v_notes; end if;
+
+  -- But a note typed HERE is newer than the export and must survive a re-run.
+  update customers set notes = notes || E'\n' || 'prefers Thursdays' where id = v_cust;
+  perform import_customer('HCP-1','Dana','Reyes-Smith',null,null,'gate code 1234', null);
+  select notes into v_notes from customers where id = v_cust;
+  if position('prefers Thursdays' in v_notes) = 0 then v_fail := v_fail+1;
+    raise warning 'a re-import destroyed a note somebody typed here'; end if;
+
+  -- ------------------------------------------------------------- property ---
+  v_prop := import_property('HCP-1:9 reply rd', v_cust, '9 Reply Rd', 'Plano', '75024',
+                            'TX', 3, 2, 0);
+  if v_prop is null then v_fail := v_fail+1;
+    raise warning 'a property could not be imported'; end if;
+
+  -- Somebody counts the rooms on site and corrects them. A re-run of the
+  -- importer must not put the export's guess back.
+  update properties set bedrooms = 4, size_verified_source = 'onsite' where id = v_prop;
+  perform import_property('HCP-1:9 reply rd', v_cust, '9 Reply Rd', 'Plano', '75024',
+                          'TX', 3, 2, 0);
+  select bedrooms into v_beds from properties where id = v_prop;
+  if v_beds <> 4 then v_fail := v_fail+1;
+    raise warning 'a re-import overwrote a verified room count with the export''s guess'; end if;
+
+  -- ------------------------------------------------------------ continuity --
+  -- WHY HISTORY IS IMPORTED AT ALL. A completed job is what makes a cleaner the
+  -- incumbent (0016), and continuity is what stops every existing customer
+  -- being re-auctioned to a stranger in week one.
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Marisol Import', 'contractor_1099', 'active', 4.7, true) returning id into v_cleaner;
+
+  v_job := import_job('HCP-JOB-1', v_cust, v_prop, 'standard', 'biweekly', 17000, 138,
+                      'complete', now() - interval '10 days', null, now() - interval '10 days');
+  perform import_assignment(v_job, v_cleaner);
+
+  insert into jobs (customer_id, property_id, status, service, freq, scheduled_start,
+                    price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'scheduled', 'standard', 'biweekly',
+            now() + interval '4 days', 17000, 138)
+    returning id into v_job;
+
+  select incumbent_cleaner_id into v_incumbent from job_continuity where job_id = v_job;
+  if v_incumbent is distinct from v_cleaner then v_fail := v_fail+1;
+    raise warning 'imported history did not make her the incumbent (got %)', v_incumbent; end if;
+
+  -- Re-running must not produce a second job for one HCP id.
+  perform import_job('HCP-JOB-1', v_cust, v_prop, 'standard', 'biweekly', 17000, 138,
+                     'complete', now() - interval '10 days', null, now() - interval '10 days');
+  select count(*) into v_count from jobs where hcp_job_id = 'HCP-JOB-1';
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning '% jobs for one HCP id', v_count; end if;
+
+  -- ====================================================== THE LEGACY RATE ===
+  -- From the build plan's risk list: the 9 August increase applies to NEW
+  -- customers only, and the first regenerated quote must not silently raise
+  -- every long-standing customer's price.
+  v_plan := import_recurring_plan('HCP-PLAN-1', v_cust, v_prop, 'biweekly', 'standard',
+                                  15000, 138, current_date - 30, true);
+  select agreed_price_cents, price_locked into v_price, v_locked
+    from recurring_plans where id = v_plan;
+
+  if v_price <> 15000 then v_fail := v_fail+1;
+    raise warning 'the legacy rate came across as % rather than 15000', v_price; end if;
+  if not v_locked then v_fail := v_fail+1;
+    raise warning 'an imported plan was not price-locked'; end if;
+
+  -- A plan cannot be imported without the price the customer actually pays.
+  -- Deriving it from the book is the exact bug this guards against.
+  begin
+    perform import_recurring_plan('HCP-PLAN-2', v_cust, v_prop, 'weekly', 'standard',
+                                  null, 138, current_date, true);
+    v_fail := v_fail+1;
+    raise warning 'a plan was imported with no agreed price';
+  exception when check_violation then null;
+  end;
+
+  -- A re-run must not "correct" the locked rate to the current book.
+  perform import_recurring_plan('HCP-PLAN-1', v_cust, v_prop, 'biweekly', 'standard',
+                                17000, 138, current_date - 30, true);
+  select agreed_price_cents into v_price from recurring_plans where id = v_plan;
+  if v_price <> 15000 then v_fail := v_fail+1;
+    raise warning 'a re-import raised a locked legacy rate to %', v_price; end if;
+
+  -- ---------------------------------------------------------- the audit -----
+  -- setup.md item 7 as a list rather than a worry: this customer pays $150
+  -- against a book price of $170 for a 3bd/2ba fortnightly.
+  select verdict, paying_one_time_rate into v_verdict, v_one_time
+    from recurring_price_audit where plan_id = v_plan;
+  if v_verdict <> 'undercharged' then v_fail := v_fail+1;
+    raise warning 'the audit called a $150 plan against a $170 book price %', v_verdict; end if;
+
+  -- THE SHAPE setup.md NAMES: a recurring customer paying the ONE-TIME rate,
+  -- which is what happens when the frequency discount was meant to be applied
+  -- by hand after booking and nobody did.
+  update recurring_plans
+     set agreed_price_cents = (select total_cents from quote_price('standard','one_time',4,2,0,1,1,1))
+   where id = v_plan;
+
+  select verdict, paying_one_time_rate into v_verdict, v_one_time
+    from recurring_price_audit where plan_id = v_plan;
+  if not v_one_time then v_fail := v_fail+1;
+    raise warning 'a fortnightly customer on the one-time rate was not flagged'; end if;
+  if v_verdict <> 'overcharged' then v_fail := v_fail+1;
+    raise warning 'a customer paying the one-time rate was called %', v_verdict; end if;
+
+  -- The audit corrects nothing. Every row is a conversation with a customer,
+  -- and a migration that silently re-priced them would be the fault it detects.
+  select agreed_price_cents into v_price from recurring_plans where id = v_plan;
+  if v_price = 15000 then v_fail := v_fail+1;
+    raise warning 'the audit changed a price'; end if;
+
+  if v_fail > 0 then raise exception '% import assertions failed', v_fail; end if;
+  raise notice 'Housecall Pro import passed';
+end $$;
+SQL
+echo "  Housecall Pro import verified"
+
+echo "  checking push subscriptions"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_profile uuid; v_cleaner uuid; v_sub uuid; v_again uuid;
+  v_count integer; v_fail integer := 0; v_failures integer; v_used timestamptz;
+begin
+  v_profile := uuid_generate_v4();
+  insert into auth.users (id, email, raw_user_meta_data)
+  values (v_profile, 'push@example.com',
+          '{"role":"cleaner","full_name":"Push Cleaner","phone":"+12145550166"}'::jsonb);
+  insert into cleaners (profile_id, full_name, type, status, rating, background_check_cleared)
+    values (v_profile, 'Push Cleaner', 'contractor_1099', 'active', 4.6, true)
+    returning id into v_cleaner;
+
+  v_sub := save_push_subscription(v_profile, 'https://fcm.googleapis.com/x/1', 'p', 'a', 'iPhone');
+  if v_sub is null then v_fail := v_fail+1;
+    raise warning 'a subscription could not be saved'; end if;
+
+  -- The subscription is attached to her cleaner row, which is how the sweep
+  -- finds it without a second lookup per offer.
+  select count(*) into v_count from push_subscriptions
+   where id = v_sub and cleaner_id = v_cleaner;
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'a subscription was not attached to the cleaner'; end if;
+
+  -- A BROWSER RE-SUBSCRIBES ON ITS OWN SCHEDULE. Treating each one as new
+  -- leaves a table of dead endpoints that every sweep tries and fails on.
+  v_again := save_push_subscription(v_profile, 'https://fcm.googleapis.com/x/1', 'p2', 'a2', 'iPhone');
+  if v_again is distinct from v_sub then v_fail := v_fail+1;
+    raise warning 're-subscribing created a second row'; end if;
+  select count(*) into v_count from push_subscriptions where profile_id = v_profile;
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning '% rows for one endpoint', v_count; end if;
+
+  -- One cleaner, two devices: the phone and the tablet in the van. Both ring.
+  perform save_push_subscription(v_profile, 'https://web.push.apple.com/y/2', 'p', 'a', 'iPad');
+  select count(*) into v_count from push_targets(array[v_cleaner]);
+  if v_count <> 2 then v_fail := v_fail+1;
+    raise warning 'push_targets returned % endpoints for two devices', v_count; end if;
+
+  -- Failures accumulate, and past the threshold the endpoint is left out
+  -- rather than deleted — a push service having a bad week is not a reason to
+  -- make a cleaner re-enable notifications.
+  for v_count in 1..5 loop
+    perform settle_push('https://web.push.apple.com/y/2', false);
+  end loop;
+  select failures into v_failures from push_subscriptions
+   where endpoint = 'https://web.push.apple.com/y/2';
+  if v_failures <> 5 then v_fail := v_fail+1;
+    raise warning 'failures counted %, want 5', v_failures; end if;
+
+  select count(*) into v_count from push_targets(array[v_cleaner]);
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'a repeatedly failing endpoint was still targeted'; end if;
+
+  -- A success resets it and stamps the row: the endpoint came back.
+  perform settle_push('https://web.push.apple.com/y/2', true);
+  select failures, last_used_at into v_failures, v_used from push_subscriptions
+   where endpoint = 'https://web.push.apple.com/y/2';
+  if v_failures <> 0 then v_fail := v_fail+1;
+    raise warning 'a successful push did not reset the failure count'; end if;
+  if v_used is null then v_fail := v_fail+1;
+    raise warning 'a successful push did not stamp the row'; end if;
+
+  -- 404 or 410 from the push service: gone for good.
+  if not delete_push_subscription('https://web.push.apple.com/y/2') then v_fail := v_fail+1;
+    raise warning 'a dead subscription could not be deleted'; end if;
+  if delete_push_subscription('https://web.push.apple.com/y/2') then v_fail := v_fail+1;
+    raise warning 'deleting a subscription twice reported a second deletion'; end if;
+
+  if v_fail > 0 then raise exception '% push assertions failed', v_fail; end if;
+  raise notice 'push subscriptions passed';
+end $$;
+SQL
+echo "  push subscriptions verified"
+
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql
 echo "  access controls verified"

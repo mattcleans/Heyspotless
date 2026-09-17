@@ -21,9 +21,13 @@ export const viewport: Viewport = {
 
 const NAV = [
   { href: "/admin/dispatch", label: "Dispatch" },
+  { href: "/admin/inbox", label: "Inbox" },
+  { href: "/admin/leads", label: "Leads" },
   { href: "/admin/customers", label: "Customers" },
   { href: "/admin/quote", label: "Quote builder" },
   { href: "/admin/price-book", label: "Price book" },
+  { href: "/admin/applications", label: "Hiring" },
+  { href: "/admin/reporting", label: "Reporting" },
   { href: "/cleaner", label: "Cleaner" },
   { href: "/customer", label: "Customer" },
 ];

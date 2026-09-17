@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { PageHeader, Callout, Pill } from "@/components/ui";
 import { OfferActions } from "./offer-actions";
+import { PushPrompt } from "./push-prompt";
 import { ZIP_CENTROIDS } from "@/lib/config";
 import { getRepository } from "@/lib/data";
 import { clusterDay, zipCentroidEstimator } from "@/lib/dispatch/route";
@@ -34,6 +35,8 @@ export default async function CleanerPage() {
         Mobile-first. Offers arrive one at a time with a countdown and a payout in dollars — never a
         percentage, and never a visible ladder.
       </PageHeader>
+
+      <PushPrompt />
 
       <Callout tone="warn" label="Partly built">
         Offers, accept and decline are real, and so is the job itself: open one to start it,
