@@ -2757,6 +2757,83 @@ end $$;
 SQL
 echo "  Housecall Pro import verified"
 
+echo "  checking push subscriptions"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_profile uuid; v_cleaner uuid; v_sub uuid; v_again uuid;
+  v_count integer; v_fail integer := 0; v_failures integer; v_used timestamptz;
+begin
+  v_profile := uuid_generate_v4();
+  insert into auth.users (id, email, raw_user_meta_data)
+  values (v_profile, 'push@example.com',
+          '{"role":"cleaner","full_name":"Push Cleaner","phone":"+12145550166"}'::jsonb);
+  insert into cleaners (profile_id, full_name, type, status, rating, background_check_cleared)
+    values (v_profile, 'Push Cleaner', 'contractor_1099', 'active', 4.6, true)
+    returning id into v_cleaner;
+
+  v_sub := save_push_subscription(v_profile, 'https://fcm.googleapis.com/x/1', 'p', 'a', 'iPhone');
+  if v_sub is null then v_fail := v_fail+1;
+    raise warning 'a subscription could not be saved'; end if;
+
+  -- The subscription is attached to her cleaner row, which is how the sweep
+  -- finds it without a second lookup per offer.
+  select count(*) into v_count from push_subscriptions
+   where id = v_sub and cleaner_id = v_cleaner;
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'a subscription was not attached to the cleaner'; end if;
+
+  -- A BROWSER RE-SUBSCRIBES ON ITS OWN SCHEDULE. Treating each one as new
+  -- leaves a table of dead endpoints that every sweep tries and fails on.
+  v_again := save_push_subscription(v_profile, 'https://fcm.googleapis.com/x/1', 'p2', 'a2', 'iPhone');
+  if v_again is distinct from v_sub then v_fail := v_fail+1;
+    raise warning 're-subscribing created a second row'; end if;
+  select count(*) into v_count from push_subscriptions where profile_id = v_profile;
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning '% rows for one endpoint', v_count; end if;
+
+  -- One cleaner, two devices: the phone and the tablet in the van. Both ring.
+  perform save_push_subscription(v_profile, 'https://web.push.apple.com/y/2', 'p', 'a', 'iPad');
+  select count(*) into v_count from push_targets(array[v_cleaner]);
+  if v_count <> 2 then v_fail := v_fail+1;
+    raise warning 'push_targets returned % endpoints for two devices', v_count; end if;
+
+  -- Failures accumulate, and past the threshold the endpoint is left out
+  -- rather than deleted — a push service having a bad week is not a reason to
+  -- make a cleaner re-enable notifications.
+  for v_count in 1..5 loop
+    perform settle_push('https://web.push.apple.com/y/2', false);
+  end loop;
+  select failures into v_failures from push_subscriptions
+   where endpoint = 'https://web.push.apple.com/y/2';
+  if v_failures <> 5 then v_fail := v_fail+1;
+    raise warning 'failures counted %, want 5', v_failures; end if;
+
+  select count(*) into v_count from push_targets(array[v_cleaner]);
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'a repeatedly failing endpoint was still targeted'; end if;
+
+  -- A success resets it and stamps the row: the endpoint came back.
+  perform settle_push('https://web.push.apple.com/y/2', true);
+  select failures, last_used_at into v_failures, v_used from push_subscriptions
+   where endpoint = 'https://web.push.apple.com/y/2';
+  if v_failures <> 0 then v_fail := v_fail+1;
+    raise warning 'a successful push did not reset the failure count'; end if;
+  if v_used is null then v_fail := v_fail+1;
+    raise warning 'a successful push did not stamp the row'; end if;
+
+  -- 404 or 410 from the push service: gone for good.
+  if not delete_push_subscription('https://web.push.apple.com/y/2') then v_fail := v_fail+1;
+    raise warning 'a dead subscription could not be deleted'; end if;
+  if delete_push_subscription('https://web.push.apple.com/y/2') then v_fail := v_fail+1;
+    raise warning 'deleting a subscription twice reported a second deletion'; end if;
+
+  if v_fail > 0 then raise exception '% push assertions failed', v_fail; end if;
+  raise notice 'push subscriptions passed';
+end $$;
+SQL
+echo "  push subscriptions verified"
+
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql
 echo "  access controls verified"

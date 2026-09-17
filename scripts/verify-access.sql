@@ -74,7 +74,13 @@ begin
                                 '60000000-0000-0000-0000-000000000001')$q$,
     $q$select import_recurring_plan('x','30000000-0000-0000-0000-000000000001',
                                     '40000000-0000-0000-0000-000000000001','weekly',
-                                    'standard',15000,138,current_date)$q$
+                                    'standard',15000,138,current_date)$q$,
+    -- 0026. A browser session that could call these could route another
+    -- cleaner's offers to its own device.
+    $q$select save_push_subscription('20000000-0000-0000-0000-000000000003','https://x/1')$q$,
+    $q$select delete_push_subscription('https://x/1')$q$,
+    $q$select settle_push('https://x/1', true)$q$,
+    $q$select push_targets(array['60000000-0000-0000-0000-000000000001'::uuid])$q$
   ] loop
     begin
       execute statement;
@@ -317,7 +323,11 @@ begin
     'import_job(text,uuid,uuid,text,frequency,integer,integer,job_status,timestamptz,'
       'timestamptz,timestamptz,text)',
     'import_assignment(uuid,uuid)',
-    'import_recurring_plan(text,uuid,uuid,frequency,text,integer,integer,date,boolean)'
+    'import_recurring_plan(text,uuid,uuid,frequency,text,integer,integer,date,boolean)',
+    'save_push_subscription(uuid,text,text,text,text)',
+    'delete_push_subscription(text)',
+    'settle_push(text,boolean)',
+    'push_targets(uuid[],integer)'
   ] loop
     if not has_function_privilege(current_user, signature, 'execute') then
       raise exception 'server lost execution privilege on %', signature;

@@ -259,3 +259,37 @@ anything else here.
 The `web-lead-response` skill file contains a live HCP API token in plaintext. Rotate
 it in Housecall Pro and replace it in the skill with an environment variable
 reference. It is not in this repository and must not be added to it.
+
+
+## 11. Web Push — optional, and the cheapest thing on this page
+
+Notifications reach a cleaner in seconds; a text sits in a thread alongside
+every other text she gets. An offer rung lives 8 to 15 minutes, so that
+difference is the difference between the ladder working and the ladder running
+to its ceiling. Push also costs nothing per send, while every rung that goes to
+a tier costs money in SMS.
+
+```bash
+npm run push:keys      # once. Rotating invalidates every subscription.
+```
+
+Put `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and `VAPID_SUBJECT` in Vercel. The
+private key belongs there and nowhere else — not in the repo, not in a chat.
+
+**Push never replaces the offer text; both go out.** On iOS a push only works
+once the app is on the home screen (Share → Add to Home Screen), and a
+marketplace that quietly stopped offering work to whoever had not installed it
+would have a supply problem nobody could see.
+
+The cleaner turns it on herself, from a button on her own screen, because every
+browser requires a user gesture and a permission prompt that appears unprompted
+is the one people deny — permanently, with no way to ask again.
+
+### What is NOT built, and why it is not blocking
+
+Phase 10 in the build plan also lists Capacitor wrappers and App Store / Play
+submission. Those are procurement rather than engineering: an Apple developer
+account ($99/yr), a Google Play account ($25), signing certificates, and review
+queues measured in days. The installed PWA does everything the wrapper would do
+for this business today, including notifications. Revisit it when there is a
+reason a home-screen icon cannot answer — not before.

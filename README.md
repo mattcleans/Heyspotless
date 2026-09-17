@@ -38,6 +38,7 @@ The fixtures are not — they are a fixed set the engine tests rely on.
 | `npm run typecheck` | `tsc --noEmit`, strict |
 | `npm run lint` | ESLint |
 | `npm run build` | Production build |
+| `npm run push:keys` | Generate the VAPID pair for Web Push, once |
 | `npm run import:hcp -- --dry-run …` | The Housecall Pro importer. Always dry-run first — see `docs/setup.md` item 6 |
 | `./scripts/verify-migrations.sh` | Replays all migrations against a local Postgres, then asserts the published price table, the money invariants, the refund policy, saved-card defaults, webhook lease recovery, one-collection-per-obligation, the offer lifecycle and the role permissions — including several genuinely concurrent connections |
 
@@ -90,7 +91,8 @@ replayed webhook does not move money twice.
 
 ## Status
 
-Phases 1–9 of the build plan are built, and the app is deployed at
+Phases 1–10 of the build plan are built (phase 10 as Web Push to the installed
+PWA — the store wrappers are procurement, not code), and the app is deployed at
 `app.heyspotless.com` against a live Supabase project, with the recurring,
 dispatch and automation sweeps running green against it.
 
@@ -278,6 +280,24 @@ clean, in her first week — put her under the floor and ended her career on the
 platform. A floor a single data point can trigger is a lottery, not a quality
 bar. Ratings are now averaged against a prior worth five reviews at 4.2, so one
 three-star marks her down to 4.0 and nine of them cross the floor.
+
+### The notification that costs nothing
+
+Phase 10. SMS is the only channel a cleaner has today, and it has two properties
+that matter: it costs money per message — and a waterfall rung goes to every
+cleaner in a tier, every sweep, by design — and it arrives in a thread alongside
+everything else she gets. A rung lives 8 to 15 minutes.
+
+Web Push to the installed PWA is instant and free. **The push carries no
+payload**: it is a tickle, and the service worker fetches the offer from our own
+API when it wakes. That means less code and no cryptography we wrote ourselves,
+a notification that says what is true *now* rather than when the push was
+queued, and an address and payout that never transit Apple's or Google's
+infrastructure.
+
+Both channels go out. On iOS push only works once the app is on the home screen,
+and a marketplace that quietly stopped offering work to whoever had not
+installed it would have a supply problem nobody could see.
 
 Still on the checklist in [`docs/setup.md`](docs/setup.md): Stripe, the customer
 book, and the three things nobody else can do — the overbilling audit, the

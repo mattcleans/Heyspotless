@@ -235,7 +235,7 @@ travel, per job, per cleaner, per customer, per channel.
 | 07 | Growth | Booking widget, lead inbox, nudge sequence, at-risk detection, job costing. **Built** (`0023`). |
 | 08 | Recruiting funnel | Apply page, AI screen, documents, background check, activation. Launch-critical — the auction needs supply. **Built** (`0024`). |
 | 09 | Migration | Import HCP data, verify, 30–60 day parallel run. **Importer built** (`0025`); the parallel run is a calendar item, not code. |
-| 10 | Store wrapper | Capacitor, native push, App Store and Play submission. |
+| 10 | Store wrapper | Capacitor, native push, App Store and Play submission. **Push built** (`0026`) as Web Push to the installed PWA — no store account needed. The wrappers and the submissions are procurement, not code: an Apple developer account, a Play account, certificates and review queues. |
 
 ## Risks
 

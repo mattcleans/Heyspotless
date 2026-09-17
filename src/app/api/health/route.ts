@@ -15,6 +15,7 @@ import {
   twilioAuthToken,
   twilioMessagingServiceSid,
 } from "@/lib/messaging/env";
+import { hasPushConfig, isPushEnabled } from "@/lib/push/vapid";
 
 /**
  * Is this deployment actually wired up?
@@ -112,6 +113,10 @@ export async function GET(request: NextRequest) {
       configured: hasTwilioConfig(),
       messagingEnabled: isMessagingEnabled(),
     },
+    push: {
+      configured: hasPushConfig(),
+      enabled: isPushEnabled(),
+    },
     cron: {
       // True by definition — the caller just proved it by getting this far.
       secret: true,
@@ -148,6 +153,7 @@ async function inspectDatabase(): Promise<DatabaseReport> {
     "leads",
     "applications",
     "messages",
+    "push_subscriptions",
   ] as const;
 
   const [version, ...counts] = await Promise.all([
