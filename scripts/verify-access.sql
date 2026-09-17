@@ -36,7 +36,21 @@ begin
     $q$select resolve_payment_operation('access-test', 'failed')$q$,
     $q$select settle_payment_operation_by_ref('10000000-0000-0000-0000-000000000001', 'cs_x')$q$,
     $q$select record_autocharge_failure('10000000-0000-0000-0000-000000000001', 'test')$q$,
-    $q$select resettle_invoice('10000000-0000-0000-0000-000000000001')$q$
+    $q$select resettle_invoice('10000000-0000-0000-0000-000000000001')$q$,
+    -- 0022. A browser session that could call these could forge a text from
+    -- any number in the book, opt a cleaner out of the offers that are her
+    -- income, or rate a stranger's clean.
+    $q$select record_message('access-test', 'k', 'sms', 'b', '+12145550100')$q$,
+    $q$select record_inbound_message('SM-access', '+12145550100', '+19725550100', 'b')$q$,
+    $q$select set_sms_opt_out_by_phone('+12145550100', true, 'test')$q$,
+    $q$select schedule_automation('access-test', 't', 'a', 'job',
+                                  '50000000-0000-0000-0000-000000000001', now())$q$,
+    $q$select reschedule_automation('access-test', now())$q$,
+    $q$select claim_due_automations(gen_random_uuid(), 1)$q$,
+    $q$select settle_automation('50000000-0000-0000-0000-000000000001',
+                                gen_random_uuid(), 'sent')$q$,
+    $q$select record_rating('50000000-0000-0000-0000-000000000001', 5)$q$,
+    $q$select rateable_job('50000000-0000-0000-0000-000000000001')$q$
   ] loop
     begin
       execute statement;
@@ -226,7 +240,17 @@ begin
     'resolve_payment_operation(text,payment_operation_state,text)',
     'settle_payment_operation_by_ref(uuid,text)',
     'record_autocharge_failure(uuid,text,timestamptz)',
-    'resettle_invoice(uuid)'
+    'resettle_invoice(uuid)',
+    'record_message(text,text,message_channel,text,text,uuid,uuid,uuid,uuid)',
+    'record_inbound_message(text,text,text,text,message_channel)',
+    'set_sms_opt_out_by_phone(text,boolean,text)',
+    'schedule_automation(text,text,text,text,uuid,timestamptz)',
+    'reschedule_automation(text,timestamptz)',
+    'claim_due_automations(uuid,integer,timestamptz)',
+    'settle_automation(uuid,uuid,text,text,uuid)',
+    'record_rating(uuid,numeric,text)',
+    'rateable_job(uuid)',
+    'app_schema_version()'
   ] loop
     if not has_function_privilege(current_user, signature, 'execute') then
       raise exception 'server lost execution privilege on %', signature;

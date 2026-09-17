@@ -53,14 +53,16 @@ src/lib/recurring/    when a recurring plan's next visits fall, and generating t
 src/lib/messaging/    Twilio boundary — quiet hours, message bodies, send log
 src/lib/service/      finishing a job — rooms, photo evidence, the invoice gate
 src/lib/stripe/       SDK boundary — client, config flags, cron guard
-src/app/admin/        dispatch board, quote builder, price book
+src/app/admin/        dispatch board, quote builder, price book, inbox
 src/app/api/          Stripe webhook, checkout, saved cards, auto-charge sweep,
                       refunds, recurring generation, offer accept/decline,
-                      dispatch sweep, job start/complete/photo
+                      dispatch sweep, job start/complete/photo/on-my-way,
+                      Twilio inbound, automation sweep, ratings, health
 src/app/cleaner/      cleaner PWA — today's route, answering an offer, and
                       running a job: arrive, photograph each room, mark done
 src/lib/offline/      the photo queue — durable before sent, never discarded
 src/app/customer/     customer portal — balances, saved card, autopay
+src/app/rate/         rate-your-clean, opened from a text, no sign-in
 supabase/migrations/  schema, price book, row-level security, billing
 docs/                 build plan, setup checklist, decisions
 ```
@@ -83,11 +85,25 @@ replayed webhook does not move money twice.
 
 ## Status
 
-Phases 1–3 and 5 of the build plan are built. Billing — Checkout, saved cards,
-auto-charge, tips and refunds — is switched off: it turns on when
-`STRIPE_SECRET_KEY` is set, and `BILLING_ENABLED=0` holds it off while underwriting
-is pending. Until then the customer screen shows real balances and says plainly that
-payments are not live, rather than offering a button that fails.
+Phases 1–6 of the build plan are built, and the app is deployed at
+`app.heyspotless.com` against a live Supabase project, with the recurring,
+dispatch and automation sweeps running green against it.
+
+**Billing is the exception and it is not a small one.** Checkout, saved cards,
+auto-charge, tips and refunds are written and tested against real Postgres, and
+switched off in production: the Stripe webhook currently answers
+`503 billing is not enabled`. It turns on when `STRIPE_SECRET_KEY` is set and
+`BILLING_ENABLED=0` is not holding it. Until then the customer screen shows real
+balances and says plainly that payments are not live, rather than offering a
+button that fails. **No Stripe flow has been exercised end to end against
+Stripe's own test mode** — see `docs/release-readiness.md`.
+
+What this deployment actually has wired, in booleans and row counts and no
+secrets:
+
+```bash
+curl -s https://app.heyspotless.com/api/health -H "x-cron-secret: $CRON_SECRET" | jq
+```
 
 The money rules are written down in [`docs/money-policy.md`](docs/money-policy.md):
 what a refund does to what is owed, how an obligation is collected exactly once, and
@@ -178,6 +194,33 @@ did. That one nullable column is the whole numerator of *manager interventions p
 100 completed cleans*, and it is there from the first decision recorded because it
 cannot be backfilled.
 
-Twilio, a live Supabase project and the Vercel deploy wait on the checklist in
-[`docs/setup.md`](docs/setup.md) — **start the A2P 10DLC filing first**, carrier
-approval takes one to three weeks and it gates everything customer-facing.
+### Talking, and listening
+
+Phase 06. Until `0022` the platform could only talk: a cleaner who replied STOP
+was opted out at the carrier and nowhere else, so dispatch went on writing her
+offers she could not see and counting each expiry against the acceptance rate
+that decides what work she is shown. A customer replying "can we move Tuesday"
+was received by Twilio and discarded.
+
+Inbound messages are now verified against Twilio's signature, recorded BEFORE
+they are interpreted — evidence kept only when it was understood is evidence
+that goes missing exactly when it matters — and attached to whoever the number
+belongs to. STOP is honoured by **number**, not by role: one handset, one
+request, so the cleaner who is also a customer is opted out of both.
+
+What the business says on a schedule — the booking confirmation, the evening-
+before reminder, the review request — is **derived from the schedule rather than
+hooked to the booking path**. Nothing writes a reminder when a job is created,
+because that is the design that quietly loses them: a visit generated at 2am, or
+moved by a form that has never heard of reminders, or imported from Housecall
+Pro. The sweep asks what the next fortnight implies, keyed so that asking twice
+produces one row, and a visit that moves takes its unfired reminder with it.
+
+The rating that comes back is not a vanity metric: `record_rating` recomputes
+the cleaner's standing on the column the eligibility gate reads, so a cleaner
+who drops below the 3.9 floor stops being offered work on the next sweep rather
+than the next morning.
+
+Still on the checklist in [`docs/setup.md`](docs/setup.md): Stripe, the customer
+book, and the three things nobody else can do — the overbilling audit, the
+worker-classification opinion, and rotating the exposed HCP token.

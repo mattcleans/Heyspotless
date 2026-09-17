@@ -35,6 +35,49 @@ export function JobFlow({ jobId, initialStatus, rooms, alreadyDone }: JobFlowPro
   const [working, setWorking] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [outstanding, setOutstanding] = useState<{ label: string; missing: string[] }[]>([]);
+  const [onMyWay, setOnMyWay] = useState<"idle" | "sending" | "sent">("idle");
+
+  /**
+   * Tell the customer she is coming.
+   *
+   * Separate from Start, and BEFORE it, because they are different moments:
+   * on-my-way happens in the van and starting happens at the door. Folding
+   * them together would either text the customer when the cleaner is already
+   * on the step, or start the clock while she is still driving.
+   *
+   * One per job — the server enforces it — so this becomes a flat "Told them"
+   * rather than a button that can be leaned on.
+   */
+  async function tellThem() {
+    setOnMyWay("sending");
+    setNote(null);
+    try {
+      const response = await fetch("/api/jobs/on-my-way", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jobId }),
+      });
+      const payload: unknown = await response.json().catch(() => ({}));
+      const data = (payload ?? {}) as { sent?: unknown; reason?: unknown };
+
+      if (data.sent === true) {
+        setOnMyWay("sent");
+        return;
+      }
+
+      // A reason the customer could not be texted is hers to know: she is about
+      // to knock on a door nobody is expecting her at.
+      setOnMyWay("idle");
+      setNote(
+        typeof data.reason === "string"
+          ? `Not sent — ${data.reason}. Knock as usual.`
+          : "Could not text them. Knock as usual.",
+      );
+    } catch {
+      setOnMyWay("idle");
+      setNote("No signal. They have not been told yet.");
+    }
+  }
 
   async function start() {
     setWorking(true);
@@ -104,9 +147,20 @@ export function JobFlow({ jobId, initialStatus, rooms, alreadyDone }: JobFlowPro
       {status === "assigned" && (
         <button
           type="button"
+          onClick={() => void tellThem()}
+          disabled={onMyWay !== "idle"}
+          className="mt-6 w-full rounded-lg border border-navy px-4 py-3 text-sm font-semibold text-navy disabled:opacity-60"
+        >
+          {onMyWay === "sent" ? "They know you're coming" : onMyWay === "sending" ? "Texting…" : "On my way"}
+        </button>
+      )}
+
+      {status === "assigned" && (
+        <button
+          type="button"
           onClick={() => void start()}
           disabled={working}
-          className="mt-6 w-full rounded-lg bg-navy px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
+          className="mt-3 w-full rounded-lg bg-navy px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
         >
           {working ? "Starting…" : "I've arrived — start"}
         </button>

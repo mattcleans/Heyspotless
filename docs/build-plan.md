@@ -229,9 +229,9 @@ travel, per job, per cleaner, per customer, per channel.
 | 01 | Foundation | Repo, scaffold, schema, RLS, auth, design system, PWA shell, deploy. **Built.** |
 | 02 | Core operations | Customers, properties, price book, jobs, calendar, recurring plans. **Price book and quoting built.** |
 | 03 | Money | Quote builder, Stripe Checkout, saved cards, auto-charge, tips, refunds. **Built.** Live behind `BILLING_ENABLED` until underwriting clears. |
-| 04 | Cleaner app | Today's schedule, on-my-way, clock in/out, checklists, offline photo queue, push. |
+| 04 | Cleaner app | Today's schedule, on-my-way, clock in/out, checklists, offline photo queue, push. **Built**, except native push (phase 10). |
 | 05 | Dispatch engine | Marginal cost, clustering, overtime forecast, gate, tiers, board, waterfall, offer ledger. **Built.** |
-| 06 | Communications | Twilio two-way inbox, reminders, review requests, automation engine. |
+| 06 | Communications | Twilio two-way inbox, reminders, review requests, automation engine. **Built** (`0022`). A2P cleared 14 Sep 2026. |
 | 07 | Growth | Booking widget, lead inbox, nudge sequence, at-risk detection, job costing. |
 | 08 | Recruiting funnel | Apply page, AI screen, documents, background check, activation. Launch-critical — the auction needs supply. |
 | 09 | Migration | Import HCP data, verify, 30–60 day parallel run. |

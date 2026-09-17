@@ -1,0 +1,60 @@
+# Hourly automation sweep — phase 06.
+#
+# WHY THIS IS NOT IN vercel.json, like the dispatch sweep next door: Vercel's
+# Hobby plan allows one cron run per day and the two slots in vercel.json are
+# already spent on recurring generation and auto-charge. This one cannot be
+# daily either. It plans reminders and fires them, and a reminder queue checked
+# once a day sends the evening-before reminder at whatever hour that check
+# happens to land on — which is 2am a third of the time.
+#
+# Runs at :45, after the dispatch sweep at :30. That ordering is not required —
+# both are idempotent and neither depends on the other — but it means the
+# reminder that names a cleaner is written after the sweep that assigned her,
+# so "Marisol will be there tomorrow" is more often a name than "your cleaner".
+#
+# Needs the same two repository secrets as the dispatch sweep: APP_URL and
+# CRON_SECRET.
+name: Automation sweep
+
+on:
+  schedule:
+    - cron: "45 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: automation-sweep
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Run the automation sweep
+    runs-on: ubuntu-latest
+    steps:
+      - name: POST /api/automations/run
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
+            echo "APP_URL and CRON_SECRET must be set as repository secrets." >&2
+            exit 1
+          fi
+
+          curl --fail-with-body --silent --show-error \
+            --max-time 120 \
+            --retry 2 --retry-delay 10 --retry-connrefused \
+            -X POST "$APP_URL/api/automations/run" \
+            -H "x-cron-secret: $CRON_SECRET" \
+            | tee response.json
+
+          echo
+
+          # `failed` counts messages that could not be sent for a reason that
+          # was not a deliberate skip. Anything above zero wants a person: a
+          # customer is expecting a text nobody sent.
+          if grep -q '"failed":0' response.json; then
+            echo "Sweep clean."
+          else
+            echo "Sweep reported failures — see the response above." >&2
+            exit 1
+          fi

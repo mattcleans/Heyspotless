@@ -54,7 +54,59 @@ none of this authorizes live payment activation.
 | Saved-card selection | Implemented, verified | `0009`. Saving a card never changes which card is default unless there is no default. Replay of either card, metadata update, detachment, promotion, replacement, re-attachment and two concurrent connections asserted. Removing the last card **suspends** autopay with a stated reason rather than leaving it silently unusable. |
 | Concurrent collection | Implemented, verified | `0012`. At most one open attempt per invoice, enforced by a partial unique index under a row lock. Two tabs share one session; a repeated submission starts nothing; Checkout and the sweep block each other in both directions; two concurrent connections produce exactly one start. |
 | Billing calendar dates | Implemented, verified | `0008` + `lib/time/zone.ts`. Scheduling resolves in America/Chicago (including the skipped and repeated hours); due dates are calendar days compared against today-in-Chicago. The suite is **not** pinned to a zone — `npm run test:zones` runs it under UTC and America/Chicago, and CI runs that. The SQL assertion runs with the session zone set to UTC, Chicago and Auckland. |
-| Integrated verification | Partly done | All checks pass on the combined branch: 357 unit tests in both zones, typecheck, lint, build, all twelve migrations, and the SQL and role suites. **Stripe test-mode flows have NOT been exercised** — no Stripe credentials are configured in this environment, and no staging deploy exists to point a webhook at. This gate is open. |
+| Integrated verification | Partly done | All checks pass: the unit suites in both zones, typecheck, lint, build, all twenty-two migrations, and the SQL and role suites. **Stripe test-mode flows have STILL not been exercised.** What changed on 17 September is the reason: a deploy now exists at `app.heyspotless.com` against a live Supabase project, so the "nowhere to point a webhook at" half of this gate is closed. The remaining half is that production answers the Stripe webhook `503 billing is not enabled`, so no card, no webhook and no auto-charge has ever run against Stripe. This gate is open, and it is now the only thing between the app and taking money. |
+
+## What production actually has, as of 17 September 2026
+
+Checked against the live deployment rather than asserted from the code.
+
+| Piece | State | How it was established |
+|---|---|---|
+| Vercel deploy | Live | `app.heyspotless.com` serves the current `main`, custom domain, HTTP 200. |
+| Supabase | Live, migrated | `/admin/*` redirects to `/login?next=…` rather than erroring, and the dispatch sweep executes database functions from `0015` and `0019` without failing. |
+| Auth | Live | Role gating in middleware is active; demo mode is off. |
+| Cron secret | Set | The hourly dispatch sweep authenticates and returns 200; unauthenticated calls get 401. |
+| Dispatch sweep | Green, hourly | Nine GitHub Actions runs, all successful, most recently 17 Sep 17:10 UTC. |
+| Stripe | **OFF** | The webhook answers `503 billing is not enabled`. Either the key is unset or `BILLING_ENABLED=0`. |
+| Twilio | Unknown from outside | Nothing external distinguishes configured from not. This is what `/api/health` now answers. |
+| **Data** | **Empty** | Every sweep reports `{"jobs":0,…}`. The business is not in the database yet — phase 09. |
+
+That last row is the one worth sitting with: **a green sweep against an empty
+database is the most convincing wrong answer this system can give.** Nothing
+fails, nothing happens, and the workflow log says "Sweep clean." Until the
+Housecall Pro import lands, every green check above means the machinery works,
+not that it is doing anything.
+
+`GET /api/health` with the cron secret answers all of the above in one call,
+including the row counts, in booleans and never in secrets.
+
+## Communications
+
+Built (`0022`). Phase 06. The platform can now hear as well as speak.
+
+| Gate | Status | Evidence |
+|---|---|---|
+| STOP is honoured where it matters | Implemented, verified | Applied by **number**, not by role: a cleaner who is also a customer is opted out of both, asserted against real Postgres. The carrier half was always handled by Twilio's Advanced Opt-Out; this is the half that stops dispatch offering work to somebody who cannot see it and counting the expiry against her. |
+| An inbound message is never lost | Implemented, verified | Recorded before it is interpreted, including from numbers nobody recognises. Phone matching normalises to the last ten digits, indexed, so `(214) 555-0143` and `+12145550143` are one person. |
+| A retried delivery is not a second message | Implemented, verified | Unique on the provider's message id. Twilio retries anything it did not get a 2xx from, and a thread showing one sentence three times is a thread nobody trusts. |
+| The webhook cannot be forged | Implemented, tested | HMAC-SHA1 over the URL and every parameter, compared in constant time, signed against the configured public origin rather than the proxy's idea of it. Tampered body, tampered sender, wrong token, wrong URL and a short signature are all asserted. |
+| One reminder per visit, and it follows a reschedule | Implemented, verified | Keyed on `job:<uuid>:<action>`. The hourly sweep converges rather than accumulating, a moved visit moves its unfired reminder, and a fired one is history — it does not move and does not fire again. |
+| Two sweeps do not double-text | Implemented, verified | A lease with an owner and an expiry, the same shape as the webhook leases in `0010`. A stranger's settle changes nothing; a failure releases rather than fires. |
+| Nothing is sent at night | Implemented | The firing pass is skipped between 8pm and 8am in Dallas. Rows stay due. **When this queue grows an action that is not a message, this guard has to move down to the message actions rather than gating the whole pass.** |
+| A rating reaches the gate | Implemented, verified | `record_rating` recomputes `cleaners.rating`, which is the column the `0003` eligibility CHECK reads — so a cleaner who drops below 3.9 stops being offered work on the next sweep, not the next morning. Revising a rating replaces it rather than adding a vote. |
+
+Open, and worth stating plainly:
+
+- **The review link is the credential.** A job id in an SMS is what authorises a
+  rating: 122 random bits, sent only to the number on the customer's record,
+  usable only while the job is complete, and good for one rating. That is the
+  same bargain every one-tap review link makes, and it is written down rather
+  than assumed. What a guessed id buys is one rating on a stranger's clean and
+  no read access to anything.
+- **The inbox is unpaginated**, bounded at 400 messages. Correct for a
+  two-person office, wrong for a ten-person one.
+- **Nothing has been sent to a real handset yet.** The same gap billing has:
+  verified against Postgres, never against the provider.
 
 ## Recurring scheduling
 

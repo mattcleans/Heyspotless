@@ -2084,6 +2084,218 @@ end $$;
 SQL
 echo "  job completion verified"
 
+echo "  checking two-way messaging and the automation queue"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_prop uuid; v_job uuid; v_cleaner uuid; v_profile uuid;
+  v_msg uuid; v_again uuid; v_auto uuid; v_auto2 uuid; v_owner uuid := gen_random_uuid();
+  v_claimed integer; v_count integer; v_fail integer := 0;
+  v_opted timestamptz; v_cust_opted timestamptz; v_rating uuid; v_score numeric;
+  v_when timestamptz; v_fired timestamptz; v_ok boolean;
+begin
+  -- Signed up the way a real cleaner is: the 0004 trigger on auth.users makes
+  -- the profile, and the number lives there rather than on `cleaners`.
+  v_profile := uuid_generate_v4();
+  insert into auth.users (id, email, raw_user_meta_data)
+  values (v_profile, 'reply@example.com',
+          '{"role":"cleaner","full_name":"Reply Cleaner","phone":"(214) 555-0143"}'::jsonb);
+  insert into cleaners (profile_id, full_name, type, status, rating, background_check_cleared)
+    values (v_profile, 'Reply Cleaner', 'contractor_1099', 'active', 4.6, true)
+    returning id into v_cleaner;
+  -- The SAME number on a customer record. A cleaner who is also a customer is
+  -- an ordinary thing in a two-person business, and it is the case that decides
+  -- whether STOP is honoured per number or per role.
+  insert into customers (first_name, last_name, phone)
+    values ('Reply','Customer', '+1 214-555-0143') returning id into v_cust;
+  insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+    values (v_cust, '9 Reply Road', 'Plano', '75024', 2, 2) returning id into v_prop;
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'scheduled', 'standard', 'biweekly',
+            now() + interval '3 days', 17000, 138)
+    returning id into v_job;
+
+  -- ---------------------------------------------------------------- phones --
+  -- Every format the same number arrives in has to reduce to one key, or an
+  -- inbound message matches nobody and lands in the inbox attached to no one.
+  if normalize_phone('+12145550143') <> '2145550143' then v_fail := v_fail+1;
+    raise warning 'E.164 did not normalise'; end if;
+  if normalize_phone('(214) 555-0143') <> normalize_phone('+1 214.555.0143') then
+    v_fail := v_fail+1; raise warning 'two spellings of one number did not agree'; end if;
+
+  -- ---------------------------------------------------------------- inbound --
+  v_msg := record_inbound_message('SM-verify-1', '+12145550143', '+19725550100', 'Can we move Tuesday?');
+  if v_msg is null then v_fail := v_fail+1;
+    raise warning 'an inbound message was not recorded'; end if;
+
+  -- Attached to BOTH, from the number alone.
+  select count(*) into v_count from messages
+   where id = v_msg and customer_id = v_cust and cleaner_id = v_cleaner;
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'an inbound message was not attached to the people it came from'; end if;
+
+  -- TWILIO RETRIES. The same MessageSid arriving twice must not show the
+  -- customer's sentence twice in the thread.
+  v_again := record_inbound_message('SM-verify-1', '+12145550143', '+19725550100', 'Can we move Tuesday?');
+  if v_again is not null then v_fail := v_fail+1;
+    raise warning 'a duplicate delivery was recorded a second time'; end if;
+  select count(*) into v_count from messages where provider_id = 'SM-verify-1';
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'a retried webhook produced % rows', v_count; end if;
+
+  -- A number in nobody's record is still recorded. Dropping it would mean a
+  -- new customer texting the business disappears.
+  v_msg := record_inbound_message('SM-verify-2', '+19725559999', '+19725550100', 'do you do move-outs?');
+  if v_msg is null then v_fail := v_fail+1;
+    raise warning 'a message from an unknown number was dropped'; end if;
+  select count(*) into v_count from messages
+   where id = v_msg and customer_id is null and cleaner_id is null;
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'an unattached message was attached to somebody'; end if;
+
+  -- ------------------------------------------------------------------- STOP --
+  -- The whole point of doing this by number: she is opted out as a cleaner AND
+  -- as a customer, because she has one handset and made one request.
+  v_count := set_sms_opt_out_by_phone('+12145550143', true, 'replied STOP');
+  if v_count < 2 then v_fail := v_fail+1;
+    raise warning 'STOP touched only % records', v_count; end if;
+
+  select sms_opted_out_at into v_opted from profiles where id = v_profile;
+  select sms_opted_out_at into v_cust_opted from customers where id = v_cust;
+  if v_opted is null then v_fail := v_fail+1;
+    raise warning 'STOP did not reach the cleaner profile'; end if;
+  if v_cust_opted is null then v_fail := v_fail+1;
+    raise warning 'STOP did not reach the customer record'; end if;
+
+  -- START is the other half carriers require.
+  perform set_sms_opt_out_by_phone('214-555-0143', false, null);
+  select sms_opted_out_at into v_opted from profiles where id = v_profile;
+  if v_opted is not null then v_fail := v_fail+1;
+    raise warning 'START did not clear the opt-out'; end if;
+
+  -- --------------------------------------------------------------- outbound --
+  v_msg := record_message('job:' || v_job || ':sms.visit_reminder', 'visit.reminder',
+                          'sms', 'reminder body', '+12145550143', v_cust, null, null, v_job);
+  if v_msg is null then v_fail := v_fail+1;
+    raise warning 'a reminder was not recorded'; end if;
+
+  -- The sweep runs hourly. Without the key it reminds her every hour.
+  v_again := record_message('job:' || v_job || ':sms.visit_reminder', 'visit.reminder',
+                            'sms', 'reminder body', '+12145550143', v_cust, null, null, v_job);
+  if v_again is not null then v_fail := v_fail+1;
+    raise warning 'the same reminder was recorded twice'; end if;
+
+  -- A person typing gets no key, and may say the same thing twice on purpose.
+  if record_message(null, 'inbox.reply', 'sms', 'on our way', '+12145550143', v_cust) is null
+    then v_fail := v_fail+1; raise warning 'a typed reply was refused'; end if;
+  if record_message(null, 'inbox.reply', 'sms', 'on our way', '+12145550143', v_cust) is null
+    then v_fail := v_fail+1; raise warning 'a repeated typed reply was deduplicated'; end if;
+
+  -- ------------------------------------------------------------ automations --
+  v_auto := schedule_automation('job:' || v_job || ':reminder', 'job.reminder',
+                                'sms.visit_reminder', 'job', v_job, now() - interval '1 minute');
+  if v_auto is null then v_fail := v_fail+1;
+    raise warning 'an action could not be scheduled'; end if;
+
+  v_auto2 := schedule_automation('job:' || v_job || ':reminder', 'job.reminder',
+                                 'sms.visit_reminder', 'job', v_job, now() - interval '1 minute');
+  if v_auto2 is not null then v_fail := v_fail+1;
+    raise warning 'the same action was scheduled twice'; end if;
+
+  -- A VISIT THAT MOVES takes its unfired reminder with it.
+  if not reschedule_automation('job:' || v_job || ':reminder', now() + interval '2 days')
+    then v_fail := v_fail+1; raise warning 'a moved visit did not move its reminder'; end if;
+  select scheduled_for into v_when from automations where id = v_auto;
+  if v_when < now() then v_fail := v_fail+1;
+    raise warning 'the reminder did not move'; end if;
+
+  -- Not due yet: the sweep must leave it alone.
+  select count(*) into v_claimed from claim_due_automations(v_owner, 10);
+  if v_claimed <> 0 then v_fail := v_fail+1;
+    raise warning 'a reminder that is not due was claimed'; end if;
+
+  perform reschedule_automation('job:' || v_job || ':reminder', now() - interval '1 minute');
+
+  select count(*) into v_claimed from claim_due_automations(v_owner, 10);
+  if v_claimed <> 1 then v_fail := v_fail+1;
+    raise warning 'a due reminder was not claimed (got %)', v_claimed; end if;
+
+  -- THE LEASE. A second sweep — the scheduled one and one somebody kicked by
+  -- hand — must not text the customer about the same Tuesday twice.
+  select count(*) into v_claimed from claim_due_automations(gen_random_uuid(), 10);
+  if v_claimed <> 0 then v_fail := v_fail+1;
+    raise warning 'a leased reminder was claimed by a second sweep'; end if;
+
+  -- A settle from somebody who does not hold the lease changes nothing.
+  if settle_automation(v_auto, gen_random_uuid(), 'sent') then v_fail := v_fail+1;
+    raise warning 'a stranger settled a lease they did not hold'; end if;
+
+  -- Failure releases rather than fires, so the next sweep picks it up.
+  if not settle_automation(v_auto, v_owner, 'failed', 'twilio timeout') then v_fail := v_fail+1;
+    raise warning 'the lease holder could not settle'; end if;
+  select fired_at into v_fired from automations where id = v_auto;
+  if v_fired is not null then v_fail := v_fail+1;
+    raise warning 'a failed action was marked fired'; end if;
+
+  select count(*) into v_claimed from claim_due_automations(v_owner, 10);
+  if v_claimed <> 1 then v_fail := v_fail+1;
+    raise warning 'a released action was not picked up again'; end if;
+
+  if not settle_automation(v_auto, v_owner, 'sent', null, v_msg) then v_fail := v_fail+1;
+    raise warning 'a sent action could not be settled'; end if;
+  select fired_at into v_fired from automations where id = v_auto;
+  if v_fired is null then v_fail := v_fail+1;
+    raise warning 'a sent action was not marked fired'; end if;
+
+  -- A fired action is history. It does not move and it does not fire again.
+  if reschedule_automation('job:' || v_job || ':reminder', now() + interval '1 day')
+    then v_fail := v_fail+1; raise warning 'a fired action was rescheduled'; end if;
+  select count(*) into v_claimed from claim_due_automations(v_owner, 10);
+  if v_claimed <> 0 then v_fail := v_fail+1;
+    raise warning 'a fired action was claimed again'; end if;
+
+  -- ---------------------------------------------------------------- ratings --
+  -- Not finished yet: nothing to rate, and a link somebody is guessing at
+  -- learns nothing.
+  if record_rating(v_job, 5) is not null then v_fail := v_fail+1;
+    raise warning 'a clean that had not happened was rated'; end if;
+
+  insert into job_assignments (job_id, cleaner_id, payout_cents)
+    values (v_job, v_cleaner, 5610);
+  update jobs set status = 'complete', completed_at = now() where id = v_job;
+
+  v_rating := record_rating(v_job, 5, 'spotless');
+  if v_rating is null then v_fail := v_fail+1;
+    raise warning 'a finished clean could not be rated'; end if;
+
+  -- THE RATING IS AN INPUT TO THE ELIGIBILITY GATE, so it has to reach the
+  -- column the gate reads — not sit in a table nothing joins to.
+  select rating into v_score from cleaners where id = v_cleaner;
+  if v_score <> 5 then v_fail := v_fail+1;
+    raise warning 'the cleaner standing did not follow the rating (got %)', v_score; end if;
+
+  -- Changing your mind replaces what you said; it does not add a second vote.
+  perform record_rating(v_job, 2, 'on reflection');
+  select count(*) into v_count from ratings where job_id = v_job;
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'a second rating from one customer produced % rows', v_count; end if;
+  select rating into v_score from cleaners where id = v_cleaner;
+  if v_score <> 2 then v_fail := v_fail+1;
+    raise warning 'a revised rating did not reach the gate (got %)', v_score; end if;
+
+  -- A score outside the range is somebody editing a request body.
+  perform record_rating(v_job, 11);
+  select score into v_score from ratings where job_id = v_job;
+  if v_score <> 5 then v_fail := v_fail+1;
+    raise warning 'a score of 11 was stored as %', v_score; end if;
+
+  if v_fail > 0 then raise exception '% communications assertions failed', v_fail; end if;
+  raise notice 'communications passed';
+end $$;
+SQL
+echo "  two-way messaging and automations verified"
+
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql
 echo "  access controls verified"

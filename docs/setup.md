@@ -1,24 +1,60 @@
 # Setup checklist
 
-About an hour of your time in total. **Do item 1 first** — it is the one with a
-multi-week clock on it, and everything customer-facing waits behind it.
+About an hour of your time in total. Items 1 and 3–5 are done: the A2P campaign
+cleared on 14 September 2026, the Supabase project is live, and the app is
+deployed at `app.heyspotless.com` with the hourly sweeps running green against
+it. What remains is Stripe (item 2 — billing is switched OFF in production
+today), the customer book (item 6), and the items nobody can do for you: 7, 9
+and 10.
+
+`GET /api/health` with the cron secret answers which of these are actually
+wired, without anybody having to guess:
+
+```bash
+curl -s https://app.heyspotless.com/api/health -H "x-cron-secret: $CRON_SECRET" | jq
+```
 
 Never paste a secret key into a chat, an issue, or a pull request. Put it straight
 into `.env.local` (git-ignored) or the Vercel environment settings.
 
-## 1. Start the Twilio A2P 10DLC filing — do this today
+## 1. Twilio — A2P 10DLC ✅ approved 14 September 2026
 
-Create a Twilio account, register the business, and submit a messaging campaign.
-**Carrier approval takes one to three weeks.** Confirmations, reminders,
-on-my-way texts and review requests all wait on it; email and push cover the gap.
+Done. The brand registration is **BLISS CLEANS LLC** and the customer-facing
+campaign brand is **Hey Spotless** — the same company, and the reason there is
+no second LLC named after the brand.
 
-The legal business name on the brand registration is **BLISS CLEANS LLC**. The
-customer-facing campaign brand is **Hey Spotless**. Those are the same company.
-Do not register a second LLC named after the customer brand — it is not the USPTO
-owner and it is not what belongs on the W-9.
+What is left is wiring, not waiting:
 
-Needed: account SID, auth token, and a decision on whether to port the current
-business number.
+1. Set `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` and
+   `TWILIO_MESSAGING_SERVICE_SID` in Vercel. The **messaging service**, not a
+   bare number: the campaign is registered against the service, and traffic
+   sent from a number outside it is what carriers filter.
+2. **Point the messaging service at the inbound webhook.** Twilio console →
+   Messaging → Services → your service → Integration → *Send a webhook*, with
+
+   ```
+   https://app.heyspotless.com/api/twilio/inbound      (HTTP POST)
+   ```
+
+   Without this the platform can talk and cannot listen: a cleaner who replies
+   STOP stays opted out at the carrier and reachable in our database — so
+   dispatch goes on writing her offers she never sees, and every expiry counts
+   against the acceptance rate that decides what work she is shown. A customer
+   replying "can we move Tuesday" is received by Twilio and discarded.
+
+   The endpoint verifies Twilio's signature and refuses anything else, so it is
+   safe to have live before the number is in use. It signs against
+   `NEXT_PUBLIC_APP_URL` — if that is unset or wrong, every real delivery fails
+   the check.
+3. Leave **Advanced Opt-Out** on in the messaging service. It answers STOP,
+   START and HELP at the carrier level; the webhook records the same events so
+   the marketplace stops offering work to somebody who cannot see it.
+4. `MESSAGING_ENABLED=0` holds all sending off even with keys present — worth
+   setting while the customer book is still being imported, so a migration
+   cannot text several hundred people at once.
+
+Needed if the current business number is to be ported: that decision, which is
+independent of everything above.
 
 ## 2. Stripe
 
@@ -29,6 +65,11 @@ and not a second LLC. Enable Stripe Connect if the app should handle 1099 payout
 Underwriting usually clears in a day and blocks only card-on-file and auto-charge.
 
 Needed: publishable key + secret key. Test mode is fine to start.
+
+**Not done yet, and it is the last thing between here and taking money.** As of
+17 September 2026 production answers the Stripe webhook with
+`503 billing is not enabled`, which means either `STRIPE_SECRET_KEY` is unset in
+Vercel or `BILLING_ENABLED=0` is holding it. `/api/health` says which.
 
 The billing code is built and tested; it is switched off until you set
 `STRIPE_SECRET_KEY`, and `BILLING_ENABLED=0` keeps it off even with keys present.

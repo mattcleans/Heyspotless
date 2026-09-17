@@ -29,14 +29,21 @@ const SURFACES = [
     role: "Cleaner",
     title: "Today's route",
     body: "Offers with a countdown, on-my-way, clock in/out with a GPS stamp, room checklists, before/after photos.",
-    ready: false,
+    ready: true,
   },
   {
     href: "/customer",
     role: "Customer",
     title: "Portal",
-    body: "Quote acceptance, reschedule and skip, invoice history, saved card, rate-your-clean.",
-    ready: false,
+    body: "Balances, saved card and autopay. Rate-your-clean arrives by text and needs no sign-in.",
+    ready: true,
+  },
+  {
+    href: "/admin/inbox",
+    role: "Admin",
+    title: "Inbox",
+    body: "Two-way SMS with customers, cleaners and leads — one thread per person, with what the platform said automatically sitting alongside what a person typed.",
+    ready: true,
   },
 ];
 
@@ -69,16 +76,19 @@ export default function Home() {
       <div className="card mt-6 p-5">
         <p className="eyebrow">Where this is</p>
         <p className="mt-1.5 text-sm text-ink-2">
-          Phases 1 and 2 of the build plan, plus the pure logic of phases 3 and 5: the schema with
-          row-level security, the price book, the quote engine, and the dispatch engine — marginal
-          cost, the eligibility gate, the per-hour offer ladder, and route clustering. All of it is
-          covered by tests that assert against the figures published in the build plan itself.
+          Phases 1 through 6 of the build plan: the schema with row-level security, the price
+          book and quote engine, billing, the cleaner app, the dispatch engine — marginal cost,
+          the eligibility gate, the offer ladder, continuity and route clustering — and now
+          two-way messaging, reminders and the automation queue. All of it covered by tests that
+          assert against the figures published in the build plan itself.
         </p>
         <p className="mt-2 text-sm text-ink-2">
-          Stripe, Twilio, live Supabase and the Vercel deploy wait on the phase-00 checklist in{" "}
-          <code className="font-mono text-xs">docs/setup.md</code>. Start the A2P 10DLC filing
-          first — carrier approval takes one to three weeks and it gates everything
-          customer-facing.
+          Supabase, Twilio and the deploy are live. <strong>Billing is not:</strong> it turns on
+          when <code className="font-mono text-xs">STRIPE_SECRET_KEY</code> is set and{" "}
+          <code className="font-mono text-xs">BILLING_ENABLED</code> is not holding it off, which
+          is the last item in <code className="font-mono text-xs">docs/setup.md</code>. Until
+          then the customer screen shows real balances and says plainly that payments are not
+          live, rather than offering a button that fails.
         </p>
       </div>
     </>

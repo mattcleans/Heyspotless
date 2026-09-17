@@ -20,6 +20,7 @@
  *      quietly stops answering.
  */
 
+import { CUSTOMER_BRAND } from "../brand";
 import { formatCents } from "../money";
 import { formatDateTimeInZone } from "../time/zone";
 
@@ -102,6 +103,110 @@ export function offerAcceptedMessage(input: {
     `Booked, ${input.cleanerFirstName}.`,
     `${input.customerName} · ${input.street}`,
     `${when} · ${formatCents(input.payoutCents)}`,
+    OPT_OUT,
+  ].join("\n");
+}
+
+// ============================================================================
+// CUSTOMER-FACING MESSAGES (phase 06)
+//
+// A different audience with different rules from the cleaner messages above.
+//
+//   1. THEY SAY WHO IS TEXTING. A cleaner recognises the number because she
+//      works here. A customer gets a text from an unfamiliar Dallas number
+//      about their house, and the first question is who this is. So every one
+//      of these names the brand.
+//   2. THEY ARE NOT NEGOTIATIONS. Nothing here has a countdown, a price that
+//      moves, or anything to accept. A reminder is a courtesy.
+//   3. THEY CARRY THE OPT-OUT. A2P registration requires it on recurring
+//      traffic, and these are the recurring traffic. The one exception is the
+//      on-my-way text: the cleaner is fifteen minutes from the door, the
+//      message exists so nobody is startled, and there is no version of this
+//      business where the answer to it is "unsubscribe".
+// ============================================================================
+
+/** Sent once, when a visit is put on the calendar. */
+export function bookingConfirmedMessage(input: {
+  customerFirstName: string;
+  service: string;
+  street: string;
+  scheduledStart: Date;
+}): string {
+  return [
+    `${input.customerFirstName} — you're booked with ${CUSTOMER_BRAND}.`,
+    `${input.service} · ${input.street}`,
+    formatDateTimeInZone(input.scheduledStart),
+    `Reply to this message if anything needs to change.`,
+    OPT_OUT,
+  ].join("\n");
+}
+
+/**
+ * The evening before.
+ *
+ * Names the cleaner when there is one. A customer who knows Marisol is coming
+ * opens the door to Marisol; a customer expecting "a cleaner" opens it to a
+ * stranger. It is also the cheapest churn intervention the business has — the
+ * visit nobody remembered is the visit that gets cancelled at the door and
+ * still costs a cleaner her afternoon.
+ */
+export function visitReminderMessage(input: {
+  customerFirstName: string;
+  cleanerFirstName: string | null;
+  street: string;
+  scheduledStart: Date;
+}): string {
+  const who = input.cleanerFirstName
+    ? `${input.cleanerFirstName} will be there`
+    : `your cleaner will be there`;
+
+  return [
+    `${input.customerFirstName} — a reminder from ${CUSTOMER_BRAND}: ${who} tomorrow.`,
+    `${formatDateTimeInZone(input.scheduledStart)} · ${input.street}`,
+    `Reply here to reschedule.`,
+    OPT_OUT,
+  ].join("\n");
+}
+
+/**
+ * Sent by the cleaner, from her phone, on her way.
+ *
+ * No opt-out line, and no brand preamble either — see the header. This one is
+ * as close to a person texting a person as the platform gets.
+ */
+export function onMyWayMessage(input: {
+  customerFirstName: string;
+  cleanerFirstName: string;
+  minutesAway: number | null;
+}): string {
+  const eta =
+    input.minutesAway && input.minutesAway > 0
+      ? `about ${input.minutesAway} minutes away`
+      : `on the way now`;
+
+  return `${input.customerFirstName} — ${input.cleanerFirstName} from ${CUSTOMER_BRAND} is ${eta}.`;
+}
+
+/**
+ * After the clean.
+ *
+ * The rating is not a vanity metric: it is an input to the eligibility gate, so
+ * a cleaner nobody rates is a cleaner the gate cannot judge. Sent a few hours
+ * later rather than on completion, because the answer to "how was it" while
+ * somebody is still standing in the kitchen is not the answer they would give
+ * having lived in the house for an evening.
+ */
+export function reviewRequestMessage(input: {
+  customerFirstName: string;
+  cleanerFirstName: string | null;
+  ratingUrl: string;
+}): string {
+  const who = input.cleanerFirstName ? `${input.cleanerFirstName}'s` : "today's";
+
+  return [
+    `${input.customerFirstName} — how was ${who} clean?`,
+    `One tap: ${input.ratingUrl}`,
+    `It decides who we send back.`,
     OPT_OUT,
   ].join("\n");
 }
