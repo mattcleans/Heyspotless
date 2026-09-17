@@ -10,6 +10,7 @@ import {
   REVIEW_DELAY_HOURS,
   automationKey,
   eveningBefore,
+  isBackfill,
   nudgeStep,
   planForJob,
   planForLead,
@@ -231,5 +232,51 @@ describe("nudgeStep", () => {
 
   it("does not claim a job action is a nudge", () => {
     expect(nudgeStep(ACTION_VISIT_REMINDER)).toBeNull();
+  });
+});
+
+describe("backfill", () => {
+  /**
+   * The failure this prevents is a specific one, and it happens once: the
+   * Housecall Pro import lands, and every customer whose last clean was in the
+   * last couple of days is texted asking how it went — about a clean this
+   * system never saw, from a business they have not heard from this way before.
+   */
+  it("does not ask for a review of a clean that was imported after it happened", () => {
+    const completedAt = new Date("2026-09-16T18:00:00Z");
+    const imported = job({
+      status: "complete",
+      completedAt,
+      scheduledStart: null,
+      createdAt: NOW, // written today, about yesterday
+    });
+
+    expect(isBackfill(imported)).toBe(true);
+    expect(planForJob(imported, NOW)).toEqual([]);
+  });
+
+  it("still asks about a clean the system watched happen", () => {
+    const createdAt = new Date("2026-09-10T12:00:00Z");
+    const completedAt = new Date("2026-09-17T18:00:00Z");
+    const real = job({ status: "complete", createdAt, completedAt, scheduledStart: null });
+
+    expect(isBackfill(real)).toBe(false);
+    expect(actions(planForJob(real, NOW))).toEqual([ACTION_REVIEW_REQUEST]);
+  });
+
+  /** A row written by a sweep that ran a few minutes late is not an import. */
+  it("allows an hour of slack", () => {
+    const completedAt = new Date("2026-09-17T12:00:00Z");
+    const slightlyLate = job({
+      status: "complete",
+      completedAt,
+      createdAt: new Date(completedAt.getTime() + 30 * 60_000),
+      scheduledStart: null,
+    });
+    expect(isBackfill(slightlyLate)).toBe(false);
+  });
+
+  it("says nothing about a job that has not finished", () => {
+    expect(isBackfill(job())).toBe(false);
   });
 });

@@ -59,6 +59,24 @@ export const REVIEW_DELAY_HOURS = 3;
  */
 export const CONFIRMATION_WINDOW_HOURS = 6;
 
+/**
+ * How long after a clean finished a job row may still have been created and
+ * still be treated as real.
+ *
+ * THE OTHER HALF OF THE BLAST GUARD, and the half that is not obvious.
+ * `CONFIRMATION_WINDOW_HOURS` stops the migration confirming several hundred
+ * existing BOOKINGS. It does nothing about the review request, which is planned
+ * from `completedAt` — so importing a clean that happened last Tuesday would
+ * text that customer, today, asking how last Tuesday went.
+ *
+ * A job the system watched happen is created before it completes. A job that
+ * was imported is created months afterwards. That gap is the signal, and it
+ * costs nothing to read: an hour of slack covers a row written by a sweep that
+ * ran late, and nothing legitimate is created a day after the clean it
+ * describes.
+ */
+export const BACKFILL_GRACE_HOURS = 1;
+
 export interface PlannableJob {
   id: string;
   status: string;
@@ -117,7 +135,7 @@ export function planForJob(
   // Planned from `completedAt` rather than from the schedule, because a job
   // finished three hours late is a job whose review request is due three hours
   // later. The clean that actually happened is the event.
-  if (job.completedAt) {
+  if (job.completedAt && !isBackfill(job)) {
     plan(
       TRIGGER_COMPLETED,
       ACTION_REVIEW_REQUEST,
@@ -149,6 +167,17 @@ export function planForJob(
   }
 
   return planned;
+}
+
+/**
+ * Was this row written about a clean that had already happened?
+ *
+ * True for anything the Housecall Pro import creates, and false for every job
+ * this system watched happen. See `BACKFILL_GRACE_HOURS`.
+ */
+export function isBackfill(job: PlannableJob): boolean {
+  if (!job.completedAt) return false;
+  return job.createdAt.getTime() > job.completedAt.getTime() + BACKFILL_GRACE_HOURS * 3_600_000;
 }
 
 /**

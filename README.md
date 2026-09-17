@@ -38,6 +38,7 @@ The fixtures are not — they are a fixed set the engine tests rely on.
 | `npm run typecheck` | `tsc --noEmit`, strict |
 | `npm run lint` | ESLint |
 | `npm run build` | Production build |
+| `npm run import:hcp -- --dry-run …` | The Housecall Pro importer. Always dry-run first — see `docs/setup.md` item 6 |
 | `./scripts/verify-migrations.sh` | Replays all migrations against a local Postgres, then asserts the published price table, the money invariants, the refund policy, saved-card defaults, webhook lease recovery, one-collection-per-obligation, the offer lifecycle and the role permissions — including several genuinely concurrent connections |
 
 ## Layout
@@ -89,7 +90,7 @@ replayed webhook does not move money twice.
 
 ## Status
 
-Phases 1–8 of the build plan are built, and the app is deployed at
+Phases 1–9 of the build plan are built, and the app is deployed at
 `app.heyspotless.com` against a live Supabase project, with the recurring,
 dispatch and automation sweeps running green against it.
 

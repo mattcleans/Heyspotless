@@ -158,7 +158,7 @@ Create an account and connect it to GitHub. Set the environment variables from
 Add a `CNAME` for `app.heyspotless.com` pointing at Vercel. The Webflow marketing
 site is untouched.
 
-## 6. Export from Housecall Pro
+## 6. Export from Housecall Pro, then import
 
 Customers → Actions → Export, and Jobs → Actions → Export. Both arrive by email
 within the hour. Export the price book separately. You must be logged in as an Admin.
@@ -167,6 +167,53 @@ There is no documented export for estimates, invoices, or recurring service plan
 those get reconstructed from the CSVs and whatever the API exposes, and HCP stays
 read-only as the archive of record for a few months rather than pretending the
 migration was lossless.
+
+### Running the import
+
+**Set `MESSAGING_ENABLED=0` in Vercel first.** The automation planner already
+refuses to confirm old bookings and refuses to ask for a review of a clean that
+was imported after it happened — both are tested — but the cost of being wrong
+is texting several hundred people at once, and a flag costs nothing.
+
+Then, from a laptop, with the service-role key in the environment and never in
+CI:
+
+```bash
+export NEXT_PUBLIC_SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=...
+
+# Always first. Reads everything, writes nothing, and prints every row it
+# could not understand — which is the interesting output of a migration.
+npm run import:hcp -- --customers customers.csv --jobs jobs.csv --dry-run
+
+npm run import:hcp -- --customers customers.csv --jobs jobs.csv
+```
+
+Both files in one run: jobs reference customers by their Housecall Pro id, and
+the dry run's most useful output is the list of jobs whose customer is not in
+the customer export.
+
+It is safe to run again. Every import keys on the Housecall Pro id, so a second
+run updates what the first wrote — and a room count somebody has since verified
+on site, or a note typed in this app, survives a re-run.
+
+### Then check the price audit — this is item 7
+
+```sql
+select first_name, last_name, freq, agreed_price_cents, book_price_cents,
+       verdict, paying_one_time_rate
+from recurring_price_audit
+where verdict <> 'matches'
+order by paying_one_time_rate desc, difference_cents desc;
+```
+
+`paying_one_time_rate` is the exact shape item 7 describes: a recurring customer
+being charged the one-time price because the frequency discount was meant to be
+applied by hand after booking and nobody did. The audit corrects nothing —
+every row is a conversation with a customer, and a migration that silently
+re-priced them would be the fault it exists to detect.
+
+Every imported plan is `price_locked`, so the 9 August increase cannot reach a
+legacy customer through a regenerated quote.
 
 ## 7. Audit live recurring jobs for the missing discount — time-sensitive
 

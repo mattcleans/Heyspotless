@@ -2614,6 +2614,149 @@ end $$;
 SQL
 echo "  recruiting funnel verified"
 
+echo "  checking the Housecall Pro import"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_again uuid; v_prop uuid; v_job uuid; v_plan uuid; v_cleaner uuid;
+  v_count integer; v_fail integer := 0; v_price integer; v_notes text;
+  v_verdict text; v_one_time boolean; v_locked boolean; v_beds integer;
+  v_incumbent uuid;
+begin
+  -- ------------------------------------------------------------ idempotent --
+  -- A migration is run, found wanting, fixed and run again. Often against a
+  -- database somebody is already using.
+  v_cust := import_customer('HCP-1','Dana','Reyes','dana@example.com','(214) 555-0143',
+                            'gate code 1234', current_date - 400);
+  v_again := import_customer('HCP-1','Dana','Reyes-Smith','dana@example.com','(214) 555-0143',
+                             'gate code 1234', null);
+  if v_again is distinct from v_cust then v_fail := v_fail+1;
+    raise warning 'a second import created a second customer'; end if;
+  select count(*) into v_count from customers where hcp_customer_id = 'HCP-1';
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning '% customers for one HCP id', v_count; end if;
+
+  -- The export is the system of record for contact details during the parallel
+  -- run, so a changed surname comes across.
+  select last_name into v_notes from customers where id = v_cust;
+  if v_notes <> 'Reyes-Smith' then v_fail := v_fail+1;
+    raise warning 'a re-import did not update the name (got %)', v_notes; end if;
+
+  -- But a note typed HERE is newer than the export and must survive a re-run.
+  update customers set notes = notes || E'\n' || 'prefers Thursdays' where id = v_cust;
+  perform import_customer('HCP-1','Dana','Reyes-Smith',null,null,'gate code 1234', null);
+  select notes into v_notes from customers where id = v_cust;
+  if position('prefers Thursdays' in v_notes) = 0 then v_fail := v_fail+1;
+    raise warning 'a re-import destroyed a note somebody typed here'; end if;
+
+  -- ------------------------------------------------------------- property ---
+  v_prop := import_property('HCP-1:9 reply rd', v_cust, '9 Reply Rd', 'Plano', '75024',
+                            'TX', 3, 2, 0);
+  if v_prop is null then v_fail := v_fail+1;
+    raise warning 'a property could not be imported'; end if;
+
+  -- Somebody counts the rooms on site and corrects them. A re-run of the
+  -- importer must not put the export's guess back.
+  update properties set bedrooms = 4, size_verified_source = 'onsite' where id = v_prop;
+  perform import_property('HCP-1:9 reply rd', v_cust, '9 Reply Rd', 'Plano', '75024',
+                          'TX', 3, 2, 0);
+  select bedrooms into v_beds from properties where id = v_prop;
+  if v_beds <> 4 then v_fail := v_fail+1;
+    raise warning 'a re-import overwrote a verified room count with the export''s guess'; end if;
+
+  -- ------------------------------------------------------------ continuity --
+  -- WHY HISTORY IS IMPORTED AT ALL. A completed job is what makes a cleaner the
+  -- incumbent (0016), and continuity is what stops every existing customer
+  -- being re-auctioned to a stranger in week one.
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Marisol Import', 'contractor_1099', 'active', 4.7, true) returning id into v_cleaner;
+
+  v_job := import_job('HCP-JOB-1', v_cust, v_prop, 'standard', 'biweekly', 17000, 138,
+                      'complete', now() - interval '10 days', null, now() - interval '10 days');
+  perform import_assignment(v_job, v_cleaner);
+
+  insert into jobs (customer_id, property_id, status, service, freq, scheduled_start,
+                    price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'scheduled', 'standard', 'biweekly',
+            now() + interval '4 days', 17000, 138)
+    returning id into v_job;
+
+  select incumbent_cleaner_id into v_incumbent from job_continuity where job_id = v_job;
+  if v_incumbent is distinct from v_cleaner then v_fail := v_fail+1;
+    raise warning 'imported history did not make her the incumbent (got %)', v_incumbent; end if;
+
+  -- Re-running must not produce a second job for one HCP id.
+  perform import_job('HCP-JOB-1', v_cust, v_prop, 'standard', 'biweekly', 17000, 138,
+                     'complete', now() - interval '10 days', null, now() - interval '10 days');
+  select count(*) into v_count from jobs where hcp_job_id = 'HCP-JOB-1';
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning '% jobs for one HCP id', v_count; end if;
+
+  -- ====================================================== THE LEGACY RATE ===
+  -- From the build plan's risk list: the 9 August increase applies to NEW
+  -- customers only, and the first regenerated quote must not silently raise
+  -- every long-standing customer's price.
+  v_plan := import_recurring_plan('HCP-PLAN-1', v_cust, v_prop, 'biweekly', 'standard',
+                                  15000, 138, current_date - 30, true);
+  select agreed_price_cents, price_locked into v_price, v_locked
+    from recurring_plans where id = v_plan;
+
+  if v_price <> 15000 then v_fail := v_fail+1;
+    raise warning 'the legacy rate came across as % rather than 15000', v_price; end if;
+  if not v_locked then v_fail := v_fail+1;
+    raise warning 'an imported plan was not price-locked'; end if;
+
+  -- A plan cannot be imported without the price the customer actually pays.
+  -- Deriving it from the book is the exact bug this guards against.
+  begin
+    perform import_recurring_plan('HCP-PLAN-2', v_cust, v_prop, 'weekly', 'standard',
+                                  null, 138, current_date, true);
+    v_fail := v_fail+1;
+    raise warning 'a plan was imported with no agreed price';
+  exception when check_violation then null;
+  end;
+
+  -- A re-run must not "correct" the locked rate to the current book.
+  perform import_recurring_plan('HCP-PLAN-1', v_cust, v_prop, 'biweekly', 'standard',
+                                17000, 138, current_date - 30, true);
+  select agreed_price_cents into v_price from recurring_plans where id = v_plan;
+  if v_price <> 15000 then v_fail := v_fail+1;
+    raise warning 'a re-import raised a locked legacy rate to %', v_price; end if;
+
+  -- ---------------------------------------------------------- the audit -----
+  -- setup.md item 7 as a list rather than a worry: this customer pays $150
+  -- against a book price of $170 for a 3bd/2ba fortnightly.
+  select verdict, paying_one_time_rate into v_verdict, v_one_time
+    from recurring_price_audit where plan_id = v_plan;
+  if v_verdict <> 'undercharged' then v_fail := v_fail+1;
+    raise warning 'the audit called a $150 plan against a $170 book price %', v_verdict; end if;
+
+  -- THE SHAPE setup.md NAMES: a recurring customer paying the ONE-TIME rate,
+  -- which is what happens when the frequency discount was meant to be applied
+  -- by hand after booking and nobody did.
+  update recurring_plans
+     set agreed_price_cents = (select total_cents from quote_price('standard','one_time',4,2,0,1,1,1))
+   where id = v_plan;
+
+  select verdict, paying_one_time_rate into v_verdict, v_one_time
+    from recurring_price_audit where plan_id = v_plan;
+  if not v_one_time then v_fail := v_fail+1;
+    raise warning 'a fortnightly customer on the one-time rate was not flagged'; end if;
+  if v_verdict <> 'overcharged' then v_fail := v_fail+1;
+    raise warning 'a customer paying the one-time rate was called %', v_verdict; end if;
+
+  -- The audit corrects nothing. Every row is a conversation with a customer,
+  -- and a migration that silently re-priced them would be the fault it detects.
+  select agreed_price_cents into v_price from recurring_plans where id = v_plan;
+  if v_price = 15000 then v_fail := v_fail+1;
+    raise warning 'the audit changed a price'; end if;
+
+  if v_fail > 0 then raise exception '% import assertions failed', v_fail; end if;
+  raise notice 'Housecall Pro import passed';
+end $$;
+SQL
+echo "  Housecall Pro import verified"
+
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql
 echo "  access controls verified"

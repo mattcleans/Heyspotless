@@ -234,7 +234,7 @@ travel, per job, per cleaner, per customer, per channel.
 | 06 | Communications | Twilio two-way inbox, reminders, review requests, automation engine. **Built** (`0022`). A2P cleared 14 Sep 2026. |
 | 07 | Growth | Booking widget, lead inbox, nudge sequence, at-risk detection, job costing. **Built** (`0023`). |
 | 08 | Recruiting funnel | Apply page, AI screen, documents, background check, activation. Launch-critical — the auction needs supply. **Built** (`0024`). |
-| 09 | Migration | Import HCP data, verify, 30–60 day parallel run. |
+| 09 | Migration | Import HCP data, verify, 30–60 day parallel run. **Importer built** (`0025`); the parallel run is a calendar item, not code. |
 | 10 | Store wrapper | Capacitor, native push, App Store and Play submission. |
 
 ## Risks
@@ -243,7 +243,10 @@ travel, per job, per cleaner, per customer, per channel.
   Monthly, Bi-weekly and Weekly at $0.00, with the discount applied manually after
   booking, and at least one live monthly client is paying the full one-time rate.
   This is a churn and trust problem, it is happening right now, and it is more urgent
-  than anything else in this document.
+  than anything else in this document. **`recurring_price_audit` (`0025`) turns it
+  into a list** the moment the import lands — including the specific
+  `paying_one_time_rate` flag. It corrects nothing, because every row is a
+  conversation with a customer.
 - **Locked-in legacy rates.** The 9 August increase applies to new customers only.
   Migration must carry old rates across or the first regenerated quote silently
   raises every long-standing customer's price. `recurring_plans.price_locked` exists

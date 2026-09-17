@@ -12,6 +12,12 @@
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "noEmit": true,
+    // So the one-off Housecall Pro importer in scripts/ can be run directly by
+    // Node's type stripping (`node --experimental-strip-types`), which resolves
+    // real file paths and therefore needs the extension. It is used ONLY by the
+    // migration modules that script reaches; everything else keeps the
+    // extensionless style the rest of the codebase uses.
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",

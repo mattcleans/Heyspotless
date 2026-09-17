@@ -62,7 +62,19 @@ begin
     $q$select record_application('a','b',null,'+12145550100')$q$,
     $q$select advance_application('50000000-0000-0000-0000-000000000001','screened')$q$,
     $q$select activate_cleaner('50000000-0000-0000-0000-000000000001')$q$,
-    $q$select recompute_cleaner_rating('60000000-0000-0000-0000-000000000001')$q$
+    $q$select recompute_cleaner_rating('60000000-0000-0000-0000-000000000001')$q$,
+    -- 0025. A browser session that could call these could rewrite the customer
+    -- book, or re-price a legacy customer by re-importing them.
+    $q$select import_customer('x','a','b')$q$,
+    $q$select import_property('x','30000000-0000-0000-0000-000000000001','s','c','75024')$q$,
+    $q$select import_job('x','30000000-0000-0000-0000-000000000001',
+                         '40000000-0000-0000-0000-000000000001','standard','one_time',
+                         100,60,'scheduled')$q$,
+    $q$select import_assignment('50000000-0000-0000-0000-000000000001',
+                                '60000000-0000-0000-0000-000000000001')$q$,
+    $q$select import_recurring_plan('x','30000000-0000-0000-0000-000000000001',
+                                    '40000000-0000-0000-0000-000000000001','weekly',
+                                    'standard',15000,138,current_date)$q$
   ] loop
     begin
       execute statement;
@@ -164,6 +176,11 @@ begin
   end if;
   if exists (select 1 from customer_at_risk) then
     raise exception 'anonymous user read churn risk';
+  end if;
+  -- 0025's audit is the same shape and the same two locks: it names every
+  -- customer and what they pay.
+  if exists (select 1 from recurring_price_audit) then
+    raise exception 'anonymous user read the price audit';
   end if;
 end $$;
 reset role;
@@ -294,7 +311,13 @@ begin
       'boolean,text,jsonb,text)',
     'advance_application(uuid,application_status,text,uuid,numeric,text)',
     'activate_cleaner(uuid,cleaner_type,uuid,integer,numeric)',
-    'recompute_cleaner_rating(uuid)'
+    'recompute_cleaner_rating(uuid)',
+    'import_customer(text,text,text,text,text,text,date)',
+    'import_property(text,uuid,text,text,text,text,integer,integer,integer,text,text)',
+    'import_job(text,uuid,uuid,text,frequency,integer,integer,job_status,timestamptz,'
+      'timestamptz,timestamptz,text)',
+    'import_assignment(uuid,uuid)',
+    'import_recurring_plan(text,uuid,uuid,frequency,text,integer,integer,date,boolean)'
   ] loop
     if not has_function_privilege(current_user, signature, 'execute') then
       raise exception 'server lost execution privilege on %', signature;
