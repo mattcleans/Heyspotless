@@ -103,6 +103,36 @@ end $$;
 SQL
 echo "  price book verified"
 
+# --- extras catalog (0027) ---------------------------------------------------
+# Additive extras live in later migrations, not a rewrite of 0002. Lock the
+# blinds / high dusting row against the TypeScript PRICE_BOOK_EXTRAS constant.
+echo "  checking price_book_extras catalog"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_row price_book_extras%rowtype;
+  v_fail integer := 0;
+begin
+  select * into v_row from price_book_extras where item_key = 'blinds_high_dusting';
+  if not found then
+    raise exception 'blinds_high_dusting extra is missing';
+  end if;
+  if v_row.name <> 'Blinds / High Dusting' then v_fail := v_fail+1;
+    raise warning 'blinds name: got %, want Blinds / High Dusting', v_row.name; end if;
+  if v_row.price_cents <> 3000 then v_fail := v_fail+1;
+    raise warning 'blinds price: got %, want 3000', v_row.price_cents; end if;
+  if v_row.unit_label <> 'flat' then v_fail := v_fail+1;
+    raise warning 'blinds unit: got %, want flat', v_row.unit_label; end if;
+  if v_row.clean_minutes <> 20 then v_fail := v_fail+1;
+    raise warning 'blinds minutes: got %, want 20', v_row.clean_minutes; end if;
+  if v_row.sort_order <> 11 then v_fail := v_fail+1;
+    raise warning 'blinds sort: got %, want 11', v_row.sort_order; end if;
+  if v_fail > 0 then raise exception '% extras catalog assertions failed', v_fail; end if;
+  raise notice 'extras catalog passed';
+end $$;
+SQL
+echo "  extras catalog verified"
+
 # --- billing invariants (0006) ----------------------------------------------
 # The money rules that lib/billing/amounts.ts assumes. If these and the
 # TypeScript ever disagree, the database is right and the tests are wrong.
