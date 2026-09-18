@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PriceBookError, buildQuote, estimatedHours } from "./quote";
-import { FREQUENCIES, PRICE_BOOK, frequenciesForService } from "./price-book";
+import { FREQUENCIES, PRICE_BOOK, PRICE_BOOK_EXTRAS, frequenciesForService } from "./price-book";
 
 /**
  * These totals are not derived from the code under test. They are the published
@@ -120,6 +120,25 @@ describe("extras", () => {
     expect(() =>
       buildQuote("standard", "one_time", { bedrooms: 2, bathrooms: 2 }, [{ itemKey: "window_tint" }]),
     ).toThrow(PriceBookError);
+  });
+
+  it("Blinds / High Dusting is $30 flat at 20 minutes", () => {
+    expect(PRICE_BOOK_EXTRAS.find((e) => e.itemKey === "blinds_high_dusting")).toEqual({
+      itemKey: "blinds_high_dusting",
+      name: "Blinds / High Dusting",
+      priceCents: 3000,
+      unitLabel: "flat",
+      cleanMinutes: 20,
+      sortOrder: 11,
+    });
+
+    const base = buildQuote("standard", "one_time", { bedrooms: 2, bathrooms: 2 });
+    const withBlinds = buildQuote("standard", "one_time", { bedrooms: 2, bathrooms: 2 }, [
+      { itemKey: "blinds_high_dusting" },
+    ]);
+    expect(withBlinds.extrasCents).toBe(3000);
+    expect(withBlinds.totalCents).toBe(base.totalCents + 3000);
+    expect(withBlinds.estimatedMinutes).toBe(base.estimatedMinutes + 20);
   });
 });
 

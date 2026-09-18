@@ -1,10 +1,10 @@
 /**
  * The Hey Spotless price book, effective 9 August 2026.
  *
- * This is the TypeScript mirror of supabase/migrations/0002_price_book.sql and
- * MUST stay in lockstep with it — `npm test` and scripts/verify-migrations.sh
- * assert both against the same published totals, so a drift between them turns
- * one of the two suites red.
+ * This is the TypeScript mirror of supabase/migrations/0002_price_book.sql
+ * (plus later extras rows such as 0027) and MUST stay in lockstep with it —
+ * `npm test` and scripts/verify-migrations.sh assert both against the same
+ * published totals, so a drift between them turns one of the two suites red.
  *
  * Two rules carried over from the pricelist itself:
  *
@@ -107,6 +107,7 @@ export const PRICE_BOOK_EXTRAS: readonly PriceBookExtra[] = [
   { itemKey: "airbnb_laundry",   name: "Airbnb Laundry",                priceCents: 2500, unitLabel: "flat",     cleanMinutes: 20, sortOrder: 8 },
   { itemKey: "feather_laundry",  name: "Feather Laundry",               priceCents:  299, unitLabel: "each",     cleanMinutes:  5, sortOrder: 9 },
   { itemKey: "organization",     name: "Organization Service",          priceCents: 4000, unitLabel: "per hour", cleanMinutes: 60, sortOrder: 10 },
+  { itemKey: "blinds_high_dusting", name: "Blinds / High Dusting",       priceCents: 3000, unitLabel: "flat",     cleanMinutes: 20, sortOrder: 11 },
 ];
 
 export const SERVICE_LABELS: Record<ServiceType, string> = {
