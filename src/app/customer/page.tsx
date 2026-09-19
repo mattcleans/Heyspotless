@@ -1,227 +1,163 @@
-import { Callout, PageHeader, Pill, Stat } from "@/components/ui";
+import Link from "next/link";
 import { getRepository } from "@/lib/data";
-import type { Invoice, PaymentMethod } from "@/lib/data/types";
-import { FREQUENCY_LABELS, SERVICE_LABELS } from "@/lib/pricing/price-book";
-import { formatCents } from "@/lib/money";
-import { formatCalendarDate, formatDateInZone } from "@/lib/time/zone";
-import { isBillingEnabled } from "@/lib/stripe/env";
-import { PayInvoiceButton, SaveCardButton } from "./billing-actions";
+import { createClient } from "@/lib/supabase/server";
+import { isDemoMode } from "@/lib/supabase/env";
+import { CleanerDirectory } from "@/lib/cleaners/store";
+import { Avatar } from "@/components/cleaner-card";
+import { Pill } from "@/components/ui";
+import { firstName } from "@/lib/cleaners/profile";
+import { SERVICE_LABELS, SERVICE_TYPES } from "@/lib/pricing/price-book";
+import { STAGE_LABELS, visitHeadline, type VisitStage } from "@/lib/visits/progress";
+import { formatDateTimeInZone } from "@/lib/time/zone";
 
-export const metadata = { title: "Your cleans — Spotless Ops" };
+/**
+ * Screen 1 — home.
+ *
+ * The three things somebody opens this for, in the order they want them: am I
+ * booked, when is she coming, and how do I book another one. Everything else
+ * is a tab away.
+ *
+ * The service picker below the fold is deliberately a set of links into the
+ * booking flow rather than a form — the price is on the next screen, and this
+ * one should not be asking anybody to think.
+ */
+export const dynamic = "force-dynamic";
 
-export default async function CustomerPage() {
+export const metadata = { title: "Home" };
+
+export default async function ClientHome() {
   const repo = await getRepository();
   const profile = await repo.getCurrentProfile();
-  // Demo mode has no session, so there is no profile to look a customer up by.
-  // DemoRepository ignores the argument and returns its one demo customer,
-  // which is what lets this screen render its card and autopay state at all.
-  const customer = profile
-    ? await repo.getCustomerByProfile(profile.id)
-    : repo.isDemo
-      ? await repo.getCustomerByProfile("demo")
-      : null;
+  const customer = profile ? await repo.getCustomerByProfile(profile.id) : null;
 
-  // RLS already restricts these to the signed-in customer; the filter is for
-  // demo mode, where there is no session to scope by.
-  const scope = customer ? { customerId: customer.id } : {};
+  const properties = customer ? await repo.listProperties(customer.id) : [];
+  const home = properties[0] ?? null;
 
-  const [upcoming, invoices, cards] = await Promise.all([
-    repo.listJobs({ ...scope, limit: 3 }),
-    repo.listInvoices({ ...scope, limit: 20 }),
-    customer ? repo.listPaymentMethods(customer.id) : Promise.resolve([]),
-  ]);
+  const jobs = customer ? await repo.listJobs({ customerId: customer.id, limit: 5 }) : [];
 
-  const outstanding = invoices.filter((i) => i.balanceCents > 0 && !i.voidedAt);
-  const settled = invoices.filter((i) => i.balanceCents <= 0 || i.voidedAt);
-  const owedCents = outstanding.reduce((sum, i) => sum + i.balanceCents, 0);
+  // The next one that has not finished. A customer who has just had a clean
+  // wants the rate screen, not a visit that is already over.
+  const next = jobs.find((j) => j.status !== "complete" && j.status !== "canceled") ?? null;
+  const justDone = jobs.find((j) => j.status === "complete") ?? null;
 
-  const defaultCard = cards.find((c) => c.isDefault) ?? cards[0] ?? null;
-  const billingLive = isBillingEnabled();
-  const autopayOn = Boolean(customer?.autopayEnabled);
-  // Autopay that WE switched off, rather than the customer. Removing your
-  // last card gets you here, and it withdraws consent with it — so the state
-  // to explain is not "paused", it is "off, and here is why, and turning it
-  // back on is your call".
-  const autopayEndedByUs = !autopayOn && customer?.autopayEndedAt != null;
+  const cleaner = await nextCleaner(next?.id ?? null);
 
   return (
     <>
-      <PageHeader eyebrow="Customer" title="Your cleans">
-        Your upcoming visits, what you owe, and the card we keep on file. Rating a clean feeds
-        straight back into who is eligible for future jobs.
-      </PageHeader>
-
-      {autopayEndedByUs ? (
-        <Callout tone="warn" label="Autopay was switched off">
-          {customer?.autopayEndedReason
-            ? `We switched autopay off because ${customer.autopayEndedReason}.`
-            : "We switched autopay off because there is no card on file."}{" "}
-          Save a card below and you can turn it back on. We will ask you to authorise it
-          again rather than reusing your old permission — it applied to a card you have
-          since removed.
-        </Callout>
+      <p className="eyebrow">Good to see you</p>
+      <h1 className="mt-0.5 text-2xl font-semibold tracking-tight text-navy">
+        {customer?.firstName ?? "Welcome"}
+      </h1>
+      {home ? (
+        <p className="mt-0.5 text-sm text-ink-3">
+          {home.city}, {home.zip}
+        </p>
       ) : null}
 
-      {!billingLive ? (
-        <Callout tone="warn" label="Payments are not live yet">
-          The Stripe account is still in underwriting, so nothing on this page can take a card
-          today. Balances shown are real; the buttons will start working the moment billing is
-          switched on, with no change to this screen.
-        </Callout>
-      ) : null}
-
-      <div className="mt-6 grid gap-3 sm:grid-cols-3">
-        <Stat
-          label="Balance due"
-          value={formatCents(owedCents)}
-          tone={owedCents > 0 ? "warn" : "good"}
-          note={
-            outstanding.length === 0
-              ? "Nothing outstanding"
-              : `${outstanding.length} invoice${outstanding.length === 1 ? "" : "s"}`
-          }
-        />
-        <Stat
-          label="Card on file"
-          value={defaultCard ? `•••• ${defaultCard.last4 ?? "????"}` : "None"}
-          note={defaultCard ? cardNote(defaultCard) : "No saved card"}
-        />
-        <Stat
-          label="Autopay"
-          value={autopayOn ? "On" : "Off"}
-          tone={autopayOn ? "good" : autopayEndedByUs ? "warn" : "default"}
-          note={
-            autopayOn
-              ? "Charged when a clean is invoiced"
-              : autopayEndedByUs
-                ? "Switched off when your last card was removed — turn it back on any time"
-                : "You pay each invoice yourself"
-          }
-        />
-      </div>
-
-      {/* ---------------------------------------------------------- owed --- */}
-      <section className="mt-8">
-        <h2 className="eyebrow">Outstanding</h2>
-        {outstanding.length === 0 ? (
-          <p className="mt-2 text-sm text-ink-3">Nothing to pay.</p>
-        ) : (
-          <ul className="mt-2 space-y-3">
-            {outstanding.map((invoice) => (
-              <li key={invoice.id} className="card flex items-center justify-between gap-4 p-4">
-                <div>
-                  <p className="font-medium text-ink">
-                    {formatCents(invoice.balanceCents)} due
-                    {invoice.dueOn ? ` · ${formatCalendarDate(invoice.dueOn)}` : ""}
-                  </p>
-                  <p className="mt-1 flex items-center gap-2 text-sm text-ink-3">
-                    <Pill tone={invoice.status === "overdue" ? "bad" : "neutral"}>
-                      {invoice.status}
-                    </Pill>
-                    {invoice.amounts.tipCents > 0
-                      ? `includes ${formatCents(invoice.amounts.tipCents)} tip`
-                      : null}
-                  </p>
-                  {/*
-                    A failed auto-charge is said out loud. The alternative is a
-                    customer whose card quietly stopped working discovering it
-                    when the service stops.
-                  */}
-                  {invoice.lastError ? (
-                    <p className="mt-1.5 text-xs text-bad">
-                      Last attempt failed: {invoice.lastError}
-                      {invoice.nextAttemptAt ? ` We will try again on ${formatDateInZone(invoice.nextAttemptAt)}.` : ""}
-                    </p>
-                  ) : null}
-                </div>
-                {billingLive ? (
-                  <PayInvoiceButton
-                    invoiceId={invoice.id}
-                    balanceCents={invoice.balanceCents}
-                    hasCard={Boolean(defaultCard)}
-                  />
-                ) : (
-                  <span className="nums text-sm text-ink-3">{formatCents(invoice.balanceCents)}</span>
-                )}
-              </li>
-            ))}
-          </ul>
-        )}
+      {/* The one thing this screen is for. */}
+      <section className="card mt-5 bg-navy p-5 text-white">
+        <p className="text-[11px] font-semibold tracking-widest text-sky uppercase">
+          Book online in 60 seconds
+        </p>
+        <p className="mt-1.5 text-lg leading-snug font-semibold">
+          You relax. We&apos;ll handle the scrubbing.
+        </p>
+        <Link
+          href="/book"
+          className="mt-3 block rounded-lg bg-white px-4 py-3 text-center text-sm font-semibold text-navy"
+        >
+          Book my clean
+        </Link>
       </section>
 
-      {/* ---------------------------------------------------------- card --- */}
-      <section className="mt-8">
-        <h2 className="eyebrow">Payment method</h2>
-        <div className="card mt-2 p-4">
-          {defaultCard ? (
-            <p className="text-sm text-ink">
-              <span className="font-medium capitalize">{defaultCard.brand ?? "Card"}</span> ending{" "}
-              <span className="nums">{defaultCard.last4 ?? "????"}</span>
-              <span className="text-ink-3"> · {cardNote(defaultCard)}</span>
-            </p>
-          ) : (
-            <p className="text-sm text-ink-3">
-              No card saved. Adding one lets you pay in a tap, and is required for autopay.
-            </p>
-          )}
-          {billingLive ? (
-            <SaveCardButton hasCard={Boolean(defaultCard)} autopayEnabled={autopayOn} />
-          ) : null}
-        </div>
-      </section>
-
-      {/* ------------------------------------------------------- history --- */}
-      {settled.length > 0 ? (
-        <section className="mt-8">
-          <h2 className="eyebrow">Paid</h2>
-          <ul className="mt-2 space-y-2">
-            {settled.map((invoice) => (
-              <li
-                key={invoice.id}
-                className="card flex items-center justify-between gap-4 px-4 py-3"
-              >
-                <span className="text-sm text-ink-2">
-                  {formatDateInZone(invoice.issuedAt ?? invoice.createdAt)}
-                  {invoice.amounts.refundedCents > 0
-                    ? ` · ${formatCents(invoice.amounts.refundedCents)} refunded`
-                    : ""}
-                </span>
-                <span className="nums text-sm font-semibold text-navy">
-                  {formatCents(invoice.amounts.totalCents)}
-                </span>
-              </li>
-            ))}
-          </ul>
+      {next ? (
+        <section className="mt-5">
+          <p className="eyebrow mb-2">Your next visit</p>
+          <Link
+            href={`/customer/visits/${next.id}`}
+            className="card block p-4 transition-colors hover:border-sky-deep"
+          >
+            <div className="flex items-start gap-3">
+              {cleaner ? <Avatar cleaner={cleaner} /> : null}
+              <div className="min-w-0 flex-1">
+                <p className="font-medium text-navy">
+                  {visitHeadline(
+                    {
+                      stage: (next.status === "in_progress" ? "cleaning" : "accepted") as VisitStage,
+                      scheduledStart: next.scheduledStart,
+                      startedAt: null,
+                      completedAt: null,
+                      expectedFinishAt: null,
+                      roomsDone: 0,
+                      roomsTotal: 0,
+                    },
+                    cleaner ? firstName(cleaner.fullName) : null,
+                  )}
+                </p>
+                <p className="mt-0.5 text-xs text-ink-3">
+                  {next.scheduledStart
+                    ? formatDateTimeInZone(next.scheduledStart)
+                    : "Time to be confirmed"}
+                </p>
+              </div>
+              <Pill tone="sky">
+                {next.status === "in_progress" ? "Track" : STAGE_LABELS.accepted}
+              </Pill>
+            </div>
+          </Link>
         </section>
       ) : null}
 
-      {/* ------------------------------------------------------ upcoming --- */}
-      <section className="mt-8">
-        <h2 className="eyebrow">Upcoming</h2>
-        <ul className="mt-2 space-y-3">
-          {upcoming.map((job) => (
-            <li key={job.id} className="card flex items-center justify-between gap-4 p-4">
-              <div>
-                <p className="font-medium text-ink">
-                  {SERVICE_LABELS[job.service]} · {FREQUENCY_LABELS[job.frequency]}
-                </p>
-                <p className="mt-0.5 text-sm text-ink-3">
-                  {job.street}, {job.city}
-                  {job.scheduledStart ? ` · ${formatDateInZone(job.scheduledStart)}` : ""}
-                </p>
-              </div>
-              <span className="nums font-semibold text-navy">{formatCents(job.priceCents)}</span>
-            </li>
+      {!next && justDone ? (
+        <section className="mt-5">
+          <p className="eyebrow mb-2">Your last clean</p>
+          <Link
+            href={`/customer/visits/${justDone.id}/rate`}
+            className="card block p-4 transition-colors hover:border-sky-deep"
+          >
+            <p className="font-medium text-navy">How did it go?</p>
+            <p className="mt-0.5 text-xs text-ink-3">
+              Rate your clean — it decides who we send back.
+            </p>
+          </Link>
+        </section>
+      ) : null}
+
+      <section className="mt-6">
+        <p className="eyebrow mb-2">Pick a service</p>
+        <div className="grid grid-cols-3 gap-2">
+          {SERVICE_TYPES.map((service) => (
+            <Link
+              key={service}
+              href={`/book?service=${service}`}
+              className="card p-3 text-center text-xs font-medium text-ink transition-colors hover:border-sky-deep"
+            >
+              {SERVICE_LABELS[service]}
+            </Link>
           ))}
-        </ul>
+        </div>
       </section>
+
+      <p className="mt-6 text-center text-xs text-ink-3">
+        Every cleaner is background-checked and insured before their first visit.
+      </p>
     </>
   );
 }
 
-function cardNote(card: PaymentMethod): string {
-  if (!card.expMonth || !card.expYear) return "Saved";
-  return `expires ${String(card.expMonth).padStart(2, "0")}/${String(card.expYear).slice(-2)}`;
+/** Who is coming, where the engine has decided. */
+async function nextCleaner(jobId: string | null) {
+  if (!jobId || isDemoMode()) return null;
+
+  const db = await createClient();
+  const { data } = await db
+    .from("visit_progress")
+    .select("cleaner_id")
+    .eq("job_id", jobId)
+    .maybeSingle();
+
+  const cleanerId = (data as Record<string, unknown> | null)?.["cleaner_id"];
+  if (typeof cleanerId !== "string") return null;
+
+  return new CleanerDirectory(db).get(cleanerId);
 }
-
-

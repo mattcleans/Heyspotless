@@ -174,7 +174,12 @@ export function applyRefund(amounts: InvoiceAmounts, refundCents: number): Invoi
   return { ...amounts, refundedCents: amounts.refundedCents + refundCents };
 }
 
-function assertWholeCents(value: number, label: string): void {
+/**
+ * Exported since 0027: the tip pass-through in `tips.ts` needs the SAME
+ * invariant rather than its own copy of it. Two money modules disagreeing
+ * about what a valid amount is, is the seam a rounding bug lives in.
+ */
+export function assertWholeCents(value: number, label: string): void {
   if (!Number.isFinite(value) || !Number.isInteger(value)) {
     throw new BillingError(`${label} must be an integer number of cents, got ${value}`);
   }

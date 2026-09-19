@@ -159,6 +159,59 @@ Two rules live in Postgres because a UI bug must not be able to route around the
 The TypeScript in `lib/dispatch/eligibility.ts` mirrors the SQL so the UI can explain
 *why* someone is ineligible without a round trip. The database remains the authority.
 
+## The client app design, and three things it asked for that were declined
+
+The customer app design (September 2026) was implemented as `0028` and the
+`/customer` screens. Three of its elements were not built, and each was declined
+for a reason that already existed in this codebase rather than a matter of
+taste.
+
+### Browse and pick your cleaner, with a rate on each
+
+**Declined.** It is a different business. A customer choosing from a priced list
+bypasses the marginal-cost ceiling, the tier ordering and the exclusive
+incumbent hold — every mechanism in section 03 — and it makes the cleaner a
+price-setter in a system whose whole economic argument is that the engine prices
+the offer against the cheapest W-2 alternative for that specific job.
+
+What was built instead answers the question the design was really asking: a
+customer is entitled to know who is coming into their house. So `/customer/cleaners`
+shows the people who serve their postcode with no rate and no book button, and
+the profile of the one the engine matched them with.
+
+### A live map of the cleaner's position
+
+**Declined.** Continuous location tracking of a 1099 contractor is close to the
+centre of what worker classification turns on (`setup.md` item 9), and `0020`
+already refused to store a completion coordinate for exactly this reason. Adding
+a position stream would contradict a decision this codebase has already made and
+paid for.
+
+The replacement is better regardless. "She is 1.4 miles away" is not actionable;
+"she is four rooms in, finishing about 11:30" is the question people actually
+have. `visit_progress` derives all of it from `jobs`, `time_entries` and
+`job_photos`, and contains no coordinate.
+
+### A tip as a line on the invoice
+
+**Built, but not as designed.** The design treated the tip as an invoice line,
+which is what it already was — and that made it revenue, because `payouts` had
+no tip column and no path to one. A tip that never reaches the person it thanks
+is worse than no tip button.
+
+`0028` records a tip as its own three columns on `payouts`, with a CHECK that
+they reconcile, and deducts only the card **percentage** on the tip itself. Not
+the fixed 30¢: that is charged once per transaction and the tip rides on an
+invoice charge that was paying it anyway, so taking a second one would be
+charging her for a fee the business does not incur. The fraction of a cent is
+floored in her favour.
+
+### Publishing a profile is hers to agree to
+
+`profile_published` defaults to false and the `cleaner_profiles` view filters on
+it, so activating a cleaner does not put her face in front of customers. The bio
+is hers, in her words. See [`cleaner-profiles.md`](cleaner-profiles.md).
+
 ## Known risks
 
 - **Cold start.** Below roughly ten active vetted cleaners the waterfall is just

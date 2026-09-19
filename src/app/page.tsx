@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { PageHeader, Pill } from "@/components/ui";
+import { OpsChrome } from "@/components/ops-chrome";
 import { CUSTOMER_BRAND } from "@/lib/brand";
 
 const SURFACES = [
@@ -49,7 +50,7 @@ const SURFACES = [
 
 export default function Home() {
   return (
-    <>
+    <OpsChrome>
       <PageHeader eyebrow={CUSTOMER_BRAND} title="Spotless Ops">
         One system to book, schedule, dispatch, bill, and communicate — plus the thing Housecall Pro
         cannot do at any price: route every job to the cheapest cleaner who will still do it well.
@@ -91,6 +92,6 @@ export default function Home() {
           live, rather than offering a button that fails.
         </p>
       </div>
-    </>
+    </OpsChrome>
   );
 }
