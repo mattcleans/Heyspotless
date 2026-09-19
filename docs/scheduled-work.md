@@ -169,10 +169,20 @@ actually went wrong:
   file, visit canceled, messaging disabled. **These are not failures** and the
   reason is in the row: "why did this customer not get their reminder" has an
   answer.
+
+  A send the provider refused in a way it will refuse identically next time
+  lands here too, prefixed `not retryable` — a missing credential, an
+  unreachable number, an unregistered sender. Those are settled rather than
+  released: retrying hourly cannot fix them, and doing so turns a configuration
+  problem into a recurring red build that says nothing new on the twentieth
+  repetition. **The message still did not go out.** The row says why.
 - **abandoned** — tried four times and given up, left for a person. Same
   number as auto-charge, for the same reason.
-- **failed** — the send was attempted and the provider refused. A person is
-  owed a text nobody sent, so a non-zero number here fails the workflow run.
+- **failed** — the send was attempted and might work next time: a 5xx, a 429,
+  a timeout. A person is owed a text nobody sent, so a non-zero number here
+  fails the workflow run — and because permanent refusals are skipped rather
+  than counted here, a red run now means something that a retry could
+  plausibly fix.
 - **quietHours** — present and true when the whole firing pass was skipped
   because it is between 8pm and 8am in Dallas. Nothing is lost: the rows stay
   due and the first sweep after 08:00 sends them.
