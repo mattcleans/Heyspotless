@@ -2864,6 +2864,223 @@ end $$;
 SQL
 echo "  push subscriptions verified"
 
+echo "  checking the client app: profiles, tips and visit progress"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_prop uuid; v_job uuid; v_cleaner uuid; v_other uuid;
+  v_count integer; v_fail integer := 0; v_payout uuid; v_rating uuid;
+  v_tip integer; v_fee integer; v_net integer; v_stage text; v_rooms integer;
+  v_highlights text[]; v_note text;
+begin
+  insert into customers (first_name, last_name, phone)
+    values ('Alex','Mercer','+12145550222') returning id into v_cust;
+  insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+    values (v_cust, '4 Las Colinas Blvd', 'Irving', '75039', 3, 2) returning id into v_prop;
+  insert into cleaners (full_name, type, status, rating, background_check_cleared,
+                        bio, specialties, languages, hired_on, profile_published)
+    values ('Maria Gonzalez', 'contractor_1099', 'active', 4.9, true,
+            'I have cleaned homes in DFW for three years.',
+            array['recurring','pet_friendly'], array['es'],
+            current_date - 1100, true)
+    returning id into v_cleaner;
+
+  -- ------------------------------------------------------------- profiles --
+  select count(*) into v_count from cleaner_profiles where id = v_cleaner;
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'a published cleaner did not appear in the profile view'; end if;
+
+  -- PUBLISHING IS A CHOICE. Being activated puts her on the roster; it does
+  -- not put her face in front of customers.
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Unpublished Cleaner', 'contractor_1099', 'active', 4.7, true)
+    returning id into v_other;
+  select count(*) into v_count from cleaner_profiles where id = v_other;
+  if v_count <> 0 then v_fail := v_fail+1;
+    raise warning 'an unpublished cleaner was shown to customers'; end if;
+
+  -- A cleaner who leaves stops being shown, without anybody unpublishing her.
+  update cleaners set status = 'terminated' where id = v_cleaner;
+  select count(*) into v_count from cleaner_profiles where id = v_cleaner;
+  if v_count <> 0 then v_fail := v_fail+1;
+    raise warning 'a terminated cleaner was still on show'; end if;
+  update cleaners set status = 'active' where id = v_cleaner;
+
+  -- ============================ THE EXPOSURE BOUNDARY ======================
+  -- The whole reason this is a view rather than a policy: a row policy on
+  -- `cleaners` would hand a customer her pay terms along with her name.
+  select count(*) into v_count
+    from information_schema.columns
+   where table_name = 'cleaner_profiles'
+     and column_name in ('hourly_rate_cents','default_payout_rate','profile_id',
+                         'insurance_expires_on','acceptance_rate','guaranteed_hours_per_week',
+                         'employer_burden_rate','reliability_score');
+  if v_count <> 0 then v_fail := v_fail+1;
+    raise warning 'the customer-facing profile view exposes % private column(s)', v_count; end if;
+
+  -- ------------------------------------------------------------- the tip ---
+  insert into jobs (customer_id, property_id, status, service, freq, scheduled_start,
+                    price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'assigned', 'standard', 'biweekly',
+            now() - interval '2 hours', 17000, 138)
+    returning id into v_job;
+  insert into job_assignments (job_id, cleaner_id, payout_cents)
+    values (v_job, v_cleaner, 5610);
+
+  -- $20.00 tip: 2.9% is 58c, floored. She gets 1942.
+  v_payout := record_tip_payout(v_job, 2000);
+  if v_payout is null then v_fail := v_fail+1;
+    raise warning 'a tip could not be passed through'; end if;
+
+  select tip_cents, tip_fee_cents, tip_net_cents into v_tip, v_fee, v_net
+    from payouts where id = v_payout;
+  if v_fee <> 58 then v_fail := v_fail+1;
+    raise warning 'the fee on a $20 tip came out at %, want 58', v_fee; end if;
+  if v_net <> 1942 then v_fail := v_fail+1;
+    raise warning 'the cleaner receives % of a $20 tip, want 1942', v_net; end if;
+
+  -- THE ROUNDING GOES TO HER. 2.9% of 1050 is 30.45; the fee is 30, not 31.
+  perform record_tip_payout(v_job, 1050);
+  select tip_fee_cents, tip_net_cents into v_fee, v_net from payouts where id = v_payout;
+  if v_fee <> 30 then v_fail := v_fail+1;
+    raise warning 'the fraction of a cent went to the business (fee %)', v_fee; end if;
+
+  -- EDITING A TIP REPLACES IT. A second payout row would pay her twice.
+  select count(*) into v_count from payouts where job_id = v_job;
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'editing a tip produced % payout rows', v_count; end if;
+
+  -- A tip too small to attract a whole cent of fee is passed on whole.
+  perform record_tip_payout(v_job, 10);
+  select tip_fee_cents, tip_net_cents into v_fee, v_net from payouts where id = v_payout;
+  if v_fee <> 0 or v_net <> 10 then v_fail := v_fail+1;
+    raise warning 'a 10c tip was split % / %', v_fee, v_net; end if;
+
+  -- The constraint that makes this auditable: every cent is hers or the
+  -- processor's, and a row that does not add up is one somebody reconciles by
+  -- hand.
+  begin
+    update payouts set tip_net_cents = tip_net_cents + 5 where id = v_payout;
+    v_fail := v_fail+1;
+    raise warning 'a tip was allowed not to reconcile';
+  exception when check_violation then null;
+  end;
+
+  -- No assignment, nobody to tip — and the money is not quietly kept.
+  insert into jobs (customer_id, property_id, status, service, freq, scheduled_start,
+                    price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'scheduled', 'standard', 'biweekly',
+            now() + interval '3 days', 17000, 138)
+    returning id into v_job;
+  if record_tip_payout(v_job, 2000) is not null then v_fail := v_fail+1;
+    raise warning 'a tip was recorded against a job nobody has been assigned to'; end if;
+
+  -- -------------------------------------------------------- the tracker ----
+  select stage, rooms_done into v_stage, v_rooms from visit_progress where job_id = v_job;
+  if v_stage <> 'scheduled' then v_fail := v_fail+1;
+    raise warning 'an unassigned visit reads as %', v_stage; end if;
+
+  insert into job_assignments (job_id, cleaner_id, payout_cents) values (v_job, v_cleaner, 5610);
+  select stage into v_stage from visit_progress where job_id = v_job;
+  if v_stage <> 'accepted' then v_fail := v_fail+1;
+    raise warning 'an assigned visit reads as %', v_stage; end if;
+
+  update jobs set status = 'in_progress', started_at = now() where id = v_job;
+  select stage into v_stage from visit_progress where job_id = v_job;
+  if v_stage <> 'cleaning' then v_fail := v_fail+1;
+    raise warning 'a started visit reads as %', v_stage; end if;
+
+  -- Rooms are counted from photographic evidence, which is the same number the
+  -- invoice gate in 0020 reads. The customer watches the real figure.
+  insert into job_photos (job_id, cleaner_id, storage_path, kind, room_key)
+    values (v_job, v_cleaner, 'a.jpg', 'after', 'kitchen'),
+           (v_job, v_cleaner, 'b.jpg', 'after', 'primary_bath'),
+           (v_job, v_cleaner, 'c.jpg', 'before', 'kitchen');
+  select rooms_done into v_rooms from visit_progress where job_id = v_job;
+  if v_rooms <> 2 then v_fail := v_fail+1;
+    raise warning 'rooms done counted % distinct rooms, want 2', v_rooms; end if;
+
+  update jobs set status = 'complete', completed_at = now() where id = v_job;
+  select stage into v_stage from visit_progress where job_id = v_job;
+  if v_stage <> 'done' then v_fail := v_fail+1;
+    raise warning 'a finished visit reads as %', v_stage; end if;
+
+  -- NOT A COORDINATE ANYWHERE. setup.md item 9, and the reason 0020 refused to
+  -- store one at completion.
+  select count(*) into v_count
+    from information_schema.columns
+   where table_name = 'visit_progress'
+     and (column_name like '%lat%' or column_name like '%lng%'
+          or column_name like '%location%' or column_name like '%coord%');
+  if v_count <> 0 then v_fail := v_fail+1;
+    raise warning 'the customer-facing tracker exposes % location column(s)', v_count; end if;
+
+  -- -------------------------------------------------------- rate and tip ---
+  v_rating := record_rating_detailed(v_job, 5, 'Spotless, as always.',
+                                     array['on_time','thorough'], 'Gate code changed.');
+  if v_rating is null then v_fail := v_fail+1;
+    raise warning 'a detailed rating could not be recorded'; end if;
+
+  select highlights, private_note into v_highlights, v_note from ratings where id = v_rating;
+  if array_length(v_highlights, 1) <> 2 then v_fail := v_fail+1;
+    raise warning 'the highlights were not kept'; end if;
+  if v_note <> 'Gate code changed.' then v_fail := v_fail+1;
+    raise warning 'the private note was not kept'; end if;
+
+  -- THE PRIVATE NOTE IS PRIVATE. It exists so somebody can say the thing they
+  -- would not say publicly, and a profile must never carry it.
+  select count(*) into v_count
+    from information_schema.columns
+   where table_name = 'cleaner_reviews' and column_name = 'private_note';
+  if v_count <> 0 then v_fail := v_fail+1;
+    raise warning 'the private note reached the public reviews view'; end if;
+
+  -- A review carries a first name and an initial, never a full name.
+  select count(*) into v_count from cleaner_reviews
+   where cleaner_id = v_cleaner and reviewer_name = 'Alex M.';
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'a review did not reduce the reviewer to a first name and initial'; end if;
+
+  -- The rating still reaches the gate, through the 0024 path.
+  perform 1 from cleaners where id = v_cleaner and rating is not null;
+
+  -- --------------------------------------------------- the tip on the bill --
+  -- The tip is asked for on the rate screen, hours before the card is charged.
+  -- It has to be on the invoice by then or the sweep collects the balance
+  -- without it and the cleaner's tip is stranded.
+  declare v_inv uuid; v_total integer; v_balance integer;
+  begin
+    insert into invoices (customer_id, job_id, status, subtotal_cents, total_cents)
+      values (v_cust, v_job, 'sent', 17000, 17000) returning id into v_inv;
+
+    perform set_invoice_tip(v_inv, 2000);
+    select total_cents, balance_cents into v_total, v_balance from invoices where id = v_inv;
+    if v_total <> 19000 then v_fail := v_fail+1;
+      raise warning 'a tipped invoice totals %, want 19000', v_total; end if;
+    if v_balance <> 19000 then v_fail := v_fail+1;
+      raise warning 'the tip did not reach the balance the sweep collects (%)', v_balance; end if;
+
+    -- Changing your mind owes the new figure, not the sum of both.
+    perform set_invoice_tip(v_inv, 2500);
+    select total_cents into v_total from invoices where id = v_inv;
+    if v_total <> 19500 then v_fail := v_fail+1;
+      raise warning 'editing a tip totalled %, want 19500', v_total; end if;
+
+    -- The fat-finger: $1,700 typed into a $170 clean.
+    begin
+      perform set_invoice_tip(v_inv, 170000);
+      v_fail := v_fail+1;
+      raise warning 'a tip larger than the work it thanks was accepted';
+    exception when check_violation then null;
+    end;
+  end;
+
+  if v_fail > 0 then raise exception '% client app assertions failed', v_fail; end if;
+  raise notice 'client app passed';
+end $$;
+SQL
+echo "  client app verified"
+
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql
 echo "  access controls verified"

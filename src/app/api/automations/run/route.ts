@@ -24,6 +24,7 @@ import {
   reviewRequestMessage,
   visitReminderMessage,
 } from "@/lib/messaging/templates";
+import { outcomeForFailedSend } from "@/lib/automations/retry";
 import { isQuietHour } from "@/lib/messaging/quiet-hours";
 import { sendSms } from "@/lib/messaging/gateway";
 import { isMessagingEnabled } from "@/lib/messaging/env";
@@ -259,9 +260,11 @@ async function fire(
   const sent = await sendSms(contact.customerPhone, built.body);
   if (!sent.ok) {
     await deps.messaging.settle(messageId, null, sent.reason);
-    // Retryable failures come back around; the rest burn an attempt and give
-    // up at four, which is what MAX_ATTEMPTS is counting.
-    return { kind: "failed", reason: sent.reason };
+    // A failure the provider will give identically next time — a missing
+    // credential, an unreachable number — is settled rather than released.
+    // Retrying it hourly cannot fix it and only turns a configuration problem
+    // into a recurring red build. See lib/automations/retry.ts.
+    return outcomeForFailedSend(sent.reason, sent.retryable);
   }
 
   await deps.messaging.settle(messageId, sent.providerId);
@@ -371,7 +374,7 @@ async function fireLead(
   const sent = await sendSms(lead.phone, body);
   if (!sent.ok) {
     await messaging.settle(messageId, null, sent.reason);
-    return { kind: "failed", reason: sent.reason };
+    return outcomeForFailedSend(sent.reason, sent.retryable);
   }
 
   await messaging.settle(messageId, sent.providerId);

@@ -10,6 +10,7 @@ import {
   frequenciesForService,
 } from "@/lib/pricing/price-book";
 import { buildQuote } from "@/lib/pricing/quote";
+import { bestFrequencySaving, frequencySaving } from "@/lib/pricing/discount";
 import { formatCents } from "@/lib/money";
 import { CUSTOMER_BRAND } from "@/lib/brand";
 import { SMS_CONSENT_TEXT } from "@/lib/growth/consent";
@@ -74,6 +75,25 @@ export function BookingWidget() {
     const allowed = frequenciesForService(next);
     if (!allowed.includes(frequency)) setFrequency(allowed[0] ?? "one_time");
   }
+
+  /**
+   * What committing to a schedule saves, against the one-time rate.
+   *
+   * DERIVED, NEVER STORED. The price book holds a rate per (item, frequency) —
+   * there is no discount column anywhere — so the saving is the difference
+   * between two quotes for the same house. It can therefore never disagree
+   * with the price, and it is about THEIR rooms rather than a marketing figure
+   * that may not apply to them.
+   */
+  const saving = useMemo(() => {
+    const counts = { ...rooms, kitchens: 1, livingRooms: 1, utilityRooms: 1 };
+    return frequencySaving(service, frequency, counts);
+  }, [service, frequency, rooms]);
+
+  const bestSaving = useMemo(() => {
+    const counts = { ...rooms, kitchens: 1, livingRooms: 1, utilityRooms: 1 };
+    return bestFrequencySaving(service, counts);
+  }, [service, rooms]);
 
   const quote = useMemo(() => {
     try {
@@ -172,7 +192,13 @@ export function BookingWidget() {
           ))}
         </div>
 
-        <div className="mt-4 flex flex-wrap gap-2">
+        {bestSaving ? (
+          <p className="mt-4 text-xs font-medium text-good">
+            Save up to {formatCents(bestSaving.savingCents)} a clean when it repeats
+          </p>
+        ) : null}
+
+        <div className="mt-2 flex flex-wrap gap-2">
           {available.map((f) => (
             <button
               key={f}
@@ -204,17 +230,32 @@ export function BookingWidget() {
         </div>
       </div>
 
-      <div className="card flex items-center justify-between gap-4 p-5">
-        <div>
-          <p className="eyebrow">Your price</p>
-          <p className="mt-1 text-xs text-ink-3">
-            {FREQUENCY_LABELS[frequency]} · confirmed against the real property before anything is
-            booked
+      <div className="card p-5">
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <p className="eyebrow">Your price</p>
+            <p className="mt-1 text-xs text-ink-3">
+              {FREQUENCY_LABELS[frequency]} · confirmed against the real property before anything
+              is booked
+            </p>
+          </div>
+          <p className="nums text-3xl leading-none font-semibold text-navy">
+            {quote ? formatCents(quote.totalCents) : "—"}
           </p>
         </div>
-        <p className="nums text-3xl leading-none font-semibold text-navy">
-          {quote ? formatCents(quote.totalCents) : "—"}
-        </p>
+
+        {saving ? (
+          <dl className="mt-3 space-y-1 border-t border-line pt-3 text-sm">
+            <div className="flex justify-between text-ink-3">
+              <dt>One-time price</dt>
+              <dd className="nums line-through">{formatCents(saving.oneTimeCents)}</dd>
+            </div>
+            <div className="flex justify-between font-medium text-good">
+              <dt>{FREQUENCY_LABELS[frequency]} saving</dt>
+              <dd className="nums">−{formatCents(saving.savingCents)}</dd>
+            </div>
+          </dl>
+        ) : null}
       </div>
 
       {stage === "quote" ? (

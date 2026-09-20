@@ -65,12 +65,15 @@ src/app/api/          Stripe webhook, checkout, saved cards, auto-charge sweep,
 src/app/cleaner/      cleaner PWA — today's route, answering an offer, and
                       running a job: arrive, photograph each room, mark done
 src/lib/offline/      the photo queue — durable before sent, never discarded
-src/app/customer/     customer portal — balances, saved card, autopay
+src/app/customer/     the client app — next visit, the cleaners who serve you,
+                      the stage tracker, rate and tip, balances and autopay
+src/lib/cleaners/     what a customer may see of a cleaner, and nothing else
+src/lib/visits/       the stage tracker — rooms and an ETA, never a location
 src/app/rate/         rate-your-clean, opened from a text, no sign-in
 src/app/book/         the public booking widget — a price before a form
 src/app/apply/        the public application form — the pay before the questions
 supabase/migrations/  schema, price book, row-level security, billing
-docs/                 build plan, setup checklist, decisions
+docs/                 build plan, setup checklist, decisions, cleaner profiles
 ```
 
 ## Why the tests matter
@@ -92,7 +95,8 @@ replayed webhook does not move money twice.
 ## Status
 
 Phases 1–10 of the build plan are built (phase 10 as Web Push to the installed
-PWA — the store wrappers are procurement, not code), and the app is deployed at
+PWA — the store wrappers are procurement, not code), the customer-facing client
+app is built on top of them, and the app is deployed at
 `app.heyspotless.com` against a live Supabase project, with the recurring,
 dispatch and automation sweeps running green against it.
 
@@ -135,7 +139,8 @@ Tuesday"), because cleaning schedules are weekday-shaped and "the 31st" does not
 exist half the year. See [`src/lib/recurring/schedule.ts`](src/lib/recurring/schedule.ts)
 and [`docs/scheduled-work.md`](docs/scheduled-work.md).
 
-Still unbuilt: a customer-facing view of their own schedule.
+The customer now sees it: `/customer/visits` lists what is booked and what is
+done, and each one opens the stage tracker.
 
 ### Continuity, and answering an offer
 
@@ -298,6 +303,55 @@ infrastructure.
 Both channels go out. On iOS push only works once the app is on the home screen,
 and a marketplace that quietly stopped offering work to whoever had not
 installed it would have a supply problem nobody could see.
+
+### The client app
+
+Seven screens at `/customer`: what is booked next, the cleaners who serve this
+postcode, a cleaner's profile, the visits list, the stage tracker, and rate-and-
+tip. Three decisions shaped it, each recorded in `0028`.
+
+**The engine still routes.** The design showed a browse-and-pick list with a rate
+on every cleaner. That is a different business: it bypasses the marginal-cost
+ceiling, the tier ordering and the exclusive incumbent hold, and it makes the
+cleaner a price-setter. So there is no pick-a-cleaner and no per-cleaner rate
+anywhere. What a customer gets is the person the engine matched them with, and
+an honest answer to "who are these people".
+
+**Tracking is the stage, not the person.** The other thing that did not survive
+was a live map with her position on it. Continuous location tracking of a 1099
+contractor sits close to the centre of what worker classification turns on
+(`docs/setup.md` item 9), and `0020` already refused to store even a completion
+coordinate. The tracker shows the stage, the rooms done — counted from the same
+photographic evidence the invoice gate reads — and an ETA that moves when the
+day moves. "She is 1.4 miles away" answers nothing anybody can act on.
+
+**A tip is hers.** Until `0028` a tip was folded into the invoice total with no
+payout path at all, which made it revenue. It now reaches her less the card
+*percentage* on the tip and nothing else — not a share of the fixed 30¢, because
+that rides on a charge the invoice was paying anyway. On a $20 tip the fee is
+58¢ and $19.42 reaches her; the fraction of a cent is floored in her favour, and
+a CHECK constraint on `payouts` means a row where the three numbers do not add
+up cannot be written. See [`src/lib/billing/tips.ts`](src/lib/billing/tips.ts).
+
+Who a cleaner is to a customer — a first name and an initial, a face, a tenure
+rounded down, chips and reviews, and nothing about her pay or her address — is
+enumerated once in the `cleaner_profiles` view, because there is no column-level
+RLS to lean on and a row policy on `cleaners` would hand over her rate with her
+name. A profile is published only when she has seen it and agreed to it; the
+bios, the photo guidance and that process are in
+[`docs/cleaner-profiles.md`](docs/cleaner-profiles.md).
+
+### The discount that is never stored
+
+The booking widget now shows what committing to a schedule saves, against the
+one-time rate for *their* rooms: "One-time $189, fortnightly saving −$24".
+
+There is no discount column anywhere, and there is not going to be one. The
+price book holds a rate per (item, frequency), so the saving is the difference
+between two `buildQuote` calls on the same house. It therefore cannot disagree
+with the price it is shown next to — which is exactly how the Housecall Pro
+Services book and the pricing forms drifted apart in the first place — and it is
+about their house rather than a marketing figure that may not apply to them.
 
 Still on the checklist in [`docs/setup.md`](docs/setup.md): Stripe, the customer
 book, and the three things nobody else can do — the overbilling audit, the

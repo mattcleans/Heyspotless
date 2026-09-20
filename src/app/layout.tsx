@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import Link from "next/link";
 import { CUSTOMER_BRAND } from "@/lib/brand";
 import "./globals.css";
 
@@ -19,49 +18,18 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-const NAV = [
-  { href: "/admin/dispatch", label: "Dispatch" },
-  { href: "/admin/inbox", label: "Inbox" },
-  { href: "/admin/leads", label: "Leads" },
-  { href: "/admin/customers", label: "Customers" },
-  { href: "/admin/quote", label: "Quote builder" },
-  { href: "/admin/price-book", label: "Price book" },
-  { href: "/admin/applications", label: "Hiring" },
-  { href: "/admin/reporting", label: "Reporting" },
-  { href: "/cleaner", label: "Cleaner" },
-  { href: "/customer", label: "Customer" },
-];
-
+/**
+ * The document, and nothing else.
+ *
+ * Chrome is per area: staff pages ask for `OpsChrome`, the client app has its
+ * own shell, and the public pages — /book, /apply, /rate — deliberately wear
+ * none. See components/ops-chrome.tsx for what that fixed.
+ */
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <body className="min-h-screen">
-        <header className="bg-navy-deep text-white">
-          <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3">
-            <Link href="/" className="font-semibold tracking-tight">
-              Spotless<span className="text-sky"> Ops</span>
-            </Link>
-            <nav className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-              {NAV.map((item) => (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className="text-sky/80 transition-colors hover:text-white"
-                >
-                  {item.label}
-                </Link>
-              ))}
-            </nav>
-            <span className="ml-auto rounded-full border border-cream/40 px-2.5 py-0.5 font-mono text-[10px] tracking-widest text-cream uppercase">
-              demo data
-            </span>
-          </div>
-        </header>
-        <main className="mx-auto max-w-6xl px-5 py-8">{children}</main>
-        <footer className="mx-auto max-w-6xl px-5 pb-10 text-xs text-ink-3">
-          Running on demo fixtures — no Supabase, Stripe, or Twilio connection. See{" "}
-          <code className="font-mono">docs/setup.md</code>.
-        </footer>
+        {children}
       </body>
     </html>
   );
