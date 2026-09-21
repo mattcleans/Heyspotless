@@ -44,12 +44,20 @@ const COUNTS = [
 
 type CountKey = (typeof COUNTS)[number]["key"];
 
-type Stage = "quote" | "details" | "sent";
+type Stage = "quote" | "details" | "review" | "sent";
 
-export function BookingWidget() {
+export function BookingWidget({
+  initialService = "standard",
+  demo = false,
+}: {
+  initialService?: ServiceType;
+  demo?: boolean;
+}) {
   const [stage, setStage] = useState<Stage>("quote");
-  const [service, setService] = useState<ServiceType>("standard");
-  const [frequency, setFrequency] = useState<Frequency>("biweekly");
+  const [service, setService] = useState<ServiceType>(initialService);
+  const [frequency, setFrequency] = useState<Frequency>(
+    initialService === "standard" ? "biweekly" : "one_time",
+  );
   const [rooms, setRooms] = useState<Record<CountKey, number>>({
     bedrooms: 3,
     bathrooms: 2,
@@ -63,7 +71,7 @@ export function BookingWidget() {
   const [address, setAddress] = useState("");
   const [zip, setZip] = useState("");
   const [note, setNote] = useState("");
-  const [consent, setConsent] = useState(true);
+  const [consent, setConsent] = useState(false);
 
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -109,7 +117,7 @@ export function BookingWidget() {
   }, [service, frequency, rooms]);
 
   async function send() {
-    if (!quote) return;
+    if (!quote || demo || sending) return;
     setSending(true);
     setError(null);
 
@@ -139,14 +147,18 @@ export function BookingWidget() {
       if (!response.ok) {
         const payload: unknown = await response.json().catch(() => ({}));
         const data = (payload ?? {}) as { error?: unknown };
-        setError(typeof data.error === "string" ? data.error : "That did not send.");
+        setError(
+          typeof data.error === "string" ? data.error : "That did not send.",
+        );
         setSending(false);
         return;
       }
 
       setStage("sent");
     } catch {
-      setError("No connection. Nothing was sent — try again.");
+      setError(
+        "We could not confirm receipt. Please call 469-280-0397 before trying again.",
+      );
     } finally {
       setSending(false);
     }
@@ -155,23 +167,121 @@ export function BookingWidget() {
   if (stage === "sent") {
     return (
       <div className="card p-6 text-center">
-        <p className="text-lg font-semibold text-navy">Got it, {firstName || "thanks"}.</p>
+        <p className="text-lg font-semibold text-navy">
+          Got it, {firstName || "thanks"}.
+        </p>
         <p className="mt-2 text-sm text-ink-2">
-          Somebody will confirm your {SERVICE_LABELS[service].toLowerCase()} and the exact price
-          shortly — usually within the hour during the day.
+          Somebody will confirm your {SERVICE_LABELS[service].toLowerCase()} and
+          the exact price with you. Your visit is not booked until we confirm
+          the date, time, and price.
         </p>
         <p className="mt-4 nums text-2xl font-semibold text-navy">
           {quote ? formatCents(quote.totalCents) : ""}
         </p>
         <p className="mt-1 text-xs text-ink-3">
-          {FREQUENCY_LABELS[frequency]} · {rooms.bedrooms} bed · {rooms.bathrooms} bath
+          {FREQUENCY_LABELS[frequency]} · {rooms.bedrooms} bed ·{" "}
+          {rooms.bathrooms} bath
         </p>
       </div>
     );
   }
 
+  if (stage === "review") {
+    return (
+      <section className="visit-feature" aria-labelledby="review-title">
+        <p className="text-sm text-ink-2">Step 3 of 3</p>
+        <h2 id="review-title" className="mt-2 text-xl font-semibold text-navy">
+          Review your request
+        </h2>
+        <dl className="mt-5 space-y-4 text-sm">
+          <div>
+            <dt className="text-ink-2">Your clean</dt>
+            <dd className="mt-1 font-semibold">
+              {SERVICE_LABELS[service]} · {FREQUENCY_LABELS[frequency]}
+            </dd>
+            <dd>
+              {rooms.bedrooms} bedrooms, {rooms.bathrooms} full baths,{" "}
+              {rooms.halfBaths} half baths
+            </dd>
+          </div>
+          <div>
+            <dt className="text-ink-2">Your home</dt>
+            <dd className="mt-1">
+              {address}, {zip}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-ink-2">Contact</dt>
+            <dd className="mt-1">
+              {firstName} {lastName}
+            </dd>
+            <dd>{phone}</dd>
+            {email && <dd>{email}</dd>}
+          </div>
+          {note && (
+            <div>
+              <dt className="text-ink-2">Your notes</dt>
+              <dd className="mt-1 whitespace-pre-wrap">{note}</dd>
+            </div>
+          )}
+          <div>
+            <dt className="text-ink-2">Text updates</dt>
+            <dd>
+              {consent
+                ? "You opted in to booking texts."
+                : "No text updates requested."}
+            </dd>
+          </div>
+          <div className="flex justify-between border-t border-line pt-4">
+            <dt>Estimated visit price</dt>
+            <dd className="text-xl font-semibold text-navy">
+              {quote ? formatCents(quote.totalCents) : "Not available"}
+            </dd>
+          </div>
+        </dl>
+        <p className="mt-4 text-sm leading-relaxed text-ink-2">
+          This requests a clean. Our team will confirm your time, cleaner, and
+          final price. No appointment is reserved and no payment is taken now.
+        </p>
+        {error && (
+          <p role="alert" className="mt-4 text-sm text-bad">
+            {error}
+          </p>
+        )}
+        <button
+          type="button"
+          disabled={sending || demo || !quote}
+          onClick={() => void send()}
+          className="primary-action mt-5 w-full disabled:opacity-50"
+        >
+          {demo
+            ? "Preview only, sending is off"
+            : sending
+              ? "Sending request…"
+              : "Send my request"}
+        </button>
+        <button
+          type="button"
+          disabled={sending}
+          onClick={() => {
+            setStage("details");
+            setError(null);
+          }}
+          className="secondary-action mt-3 w-full"
+        >
+          Edit my details
+        </button>
+      </section>
+    );
+  }
+
   return (
     <div className="space-y-4">
+      <p className="text-sm text-ink-2">
+        {stage === "quote"
+          ? "Step 1 of 3: Your home & service"
+          : "Step 2 of 3: Your details"}
+      </p>
       <div className="card p-5">
         <p className="eyebrow">What needs cleaning</p>
 
@@ -180,6 +290,7 @@ export function BookingWidget() {
             <button
               key={s}
               type="button"
+              aria-pressed={s === service}
               onClick={() => pickService(s)}
               className={`rounded-lg border px-3 py-2 text-sm font-medium transition-colors ${
                 s === service
@@ -194,7 +305,8 @@ export function BookingWidget() {
 
         {bestSaving ? (
           <p className="mt-4 text-xs font-medium text-good">
-            Save up to {formatCents(bestSaving.savingCents)} a clean when it repeats
+            Save up to {formatCents(bestSaving.savingCents)} a clean when it
+            repeats
           </p>
         ) : null}
 
@@ -203,6 +315,7 @@ export function BookingWidget() {
             <button
               key={f}
               type="button"
+              aria-pressed={f === frequency}
               onClick={() => setFrequency(f)}
               className={`rounded-lg border px-3 py-1.5 text-sm transition-colors ${
                 f === frequency
@@ -217,7 +330,10 @@ export function BookingWidget() {
 
         <div className="mt-5 space-y-3">
           {COUNTS.map((count) => (
-            <div key={count.key} className="flex items-center justify-between gap-4">
+            <div
+              key={count.key}
+              className="flex items-center justify-between gap-4"
+            >
               <span className="text-sm text-ink">{count.label}</span>
               <Stepper
                 value={rooms[count.key]}
@@ -233,14 +349,14 @@ export function BookingWidget() {
       <div className="card p-5">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p className="eyebrow">Your price</p>
+            <p className="eyebrow">Your estimate</p>
             <p className="mt-1 text-xs text-ink-3">
-              {FREQUENCY_LABELS[frequency]} · confirmed against the real property before anything
-              is booked
+              {FREQUENCY_LABELS[frequency]} · confirmed against the real
+              property before anything is booked
             </p>
           </div>
           <p className="nums text-3xl leading-none font-semibold text-navy">
-            {quote ? formatCents(quote.totalCents) : "—"}
+            {quote ? formatCents(quote.totalCents) : "Unavailable"}
           </p>
         </div>
 
@@ -248,7 +364,9 @@ export function BookingWidget() {
           <dl className="mt-3 space-y-1 border-t border-line pt-3 text-sm">
             <div className="flex justify-between text-ink-3">
               <dt>One-time price</dt>
-              <dd className="nums line-through">{formatCents(saving.oneTimeCents)}</dd>
+              <dd className="nums line-through">
+                {formatCents(saving.oneTimeCents)}
+              </dd>
             </div>
             <div className="flex justify-between font-medium text-good">
               <dt>{FREQUENCY_LABELS[frequency]} saving</dt>
@@ -265,32 +383,44 @@ export function BookingWidget() {
           onClick={() => setStage("details")}
           className="w-full rounded-lg bg-navy px-4 py-3 text-sm font-semibold text-white disabled:opacity-40"
         >
-          Book this clean
+          Continue to my details
         </button>
       ) : (
         <div className="card space-y-3 p-5">
           <p className="eyebrow">Where, and who</p>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <Input label="First name" value={firstName} onChange={setFirstName} required />
+            <Input
+              label="First name"
+              value={firstName}
+              onChange={setFirstName}
+              required
+            />
             <Input label="Last name" value={lastName} onChange={setLastName} />
           </div>
 
-          <Input label="Phone" value={phone} onChange={setPhone} type="tel" required />
+          <Input
+            label="Phone"
+            value={phone}
+            onChange={setPhone}
+            type="tel"
+            required
+          />
           <Input label="Email" value={email} onChange={setEmail} type="email" />
-          <Input label="Address" value={address} onChange={setAddress} required />
+          <Input
+            label="Address"
+            value={address}
+            onChange={setAddress}
+            required
+          />
           <Input label="ZIP" value={zip} onChange={setZip} required />
-          <Input label="Anything we should know?" value={note} onChange={setNote} />
+          <Input
+            label="Anything we should know?"
+            value={note}
+            onChange={setNote}
+          />
 
-          {/*
-            A2P requires express written consent before texting a number
-            somebody typed into a form, and the evidence is this exact wording
-            plus a timestamp — the same shape as autopay consent in 0006. It
-            defaults to ticked because that is what the customer expects when
-            they have asked to be contacted, and it is honestly reversible: STOP
-            works, and the nudge sequence checks the timestamp rather than
-            anybody's memory.
-          */}
+          {/* Customers explicitly choose whether to receive text updates. */}
           <label className="flex items-start gap-2 text-xs text-ink-2">
             <input
               type="checkbox"
@@ -305,15 +435,21 @@ export function BookingWidget() {
 
           <button
             type="button"
-            disabled={sending || !firstName.trim() || !phone.trim() || !address.trim()}
-            onClick={() => void send()}
+            disabled={
+              !firstName.trim() ||
+              !phone.trim() ||
+              !address.trim() ||
+              !/^\d{5}$/.test(zip.trim())
+            }
+            onClick={() => setStage("review")}
             className="w-full rounded-lg bg-navy px-4 py-3 text-sm font-semibold text-white disabled:opacity-40"
           >
-            {sending ? "Sending…" : `Book ${quote ? formatCents(quote.totalCents) : ""}`}
+            Review my request
           </button>
 
           <p className="text-center text-[11px] text-ink-3">
-            {CUSTOMER_BRAND} will confirm before anything is charged. Nothing is taken now.
+            {CUSTOMER_BRAND} will confirm before anything is charged. Nothing is
+            taken now.
           </p>
         </div>
       )}
@@ -338,16 +474,18 @@ function Stepper({
         type="button"
         aria-label={`One fewer ${label}`}
         onClick={() => onChange(Math.max(0, value - 1))}
-        className="h-9 w-9 rounded-lg border border-line bg-surface-2 text-lg leading-none"
+        className="h-11 w-11 rounded-lg border border-line bg-surface-2 text-lg leading-none"
       >
         −
       </button>
-      <span className="nums w-6 text-center text-sm font-semibold text-navy">{value}</span>
+      <span className="nums w-6 text-center text-sm font-semibold text-navy">
+        {value}
+      </span>
       <button
         type="button"
         aria-label={`One more ${label}`}
         onClick={() => onChange(Math.min(max, value + 1))}
-        className="h-9 w-9 rounded-lg border border-line bg-surface-2 text-lg leading-none"
+        className="h-11 w-11 rounded-lg border border-line bg-surface-2 text-lg leading-none"
       >
         +
       </button>
@@ -376,6 +514,7 @@ function Input({
       </span>
       <input
         type={type}
+        required={required}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="mt-1 w-full rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm"

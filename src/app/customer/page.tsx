@@ -4,160 +4,155 @@ import { createClient } from "@/lib/supabase/server";
 import { isDemoMode } from "@/lib/supabase/env";
 import { CleanerDirectory } from "@/lib/cleaners/store";
 import { Avatar } from "@/components/cleaner-card";
+import { AppIcon } from "@/components/app-navigation";
 import { Pill } from "@/components/ui";
-import { firstName } from "@/lib/cleaners/profile";
 import { SERVICE_LABELS, SERVICE_TYPES } from "@/lib/pricing/price-book";
-import { STAGE_LABELS, visitHeadline, type VisitStage } from "@/lib/visits/progress";
 import { formatDateTimeInZone } from "@/lib/time/zone";
+import { activeVisits } from "@/lib/experience/schedule";
+import { STAGES, STAGE_LABELS, type VisitStage } from "@/lib/visits/progress";
 
-/**
- * Screen 1 — home.
- *
- * The three things somebody opens this for, in the order they want them: am I
- * booked, when is she coming, and how do I book another one. Everything else
- * is a tab away.
- *
- * The service picker below the fold is deliberately a set of links into the
- * booking flow rather than a form — the price is on the next screen, and this
- * one should not be asking anybody to think.
- */
 export const dynamic = "force-dynamic";
-
-export const metadata = { title: "Home" };
-
+export const metadata = { title: "Your home | Hey Spotless" };
 export default async function ClientHome() {
   const repo = await getRepository();
   const profile = await repo.getCurrentProfile();
   const customer = profile ? await repo.getCustomerByProfile(profile.id) : null;
-
   const properties = customer ? await repo.listProperties(customer.id) : [];
-  const home = properties[0] ?? null;
-
-  const jobs = customer ? await repo.listJobs({ customerId: customer.id, limit: 5 }) : [];
-
-  // The next one that has not finished. A customer who has just had a clean
-  // wants the rate screen, not a visit that is already over.
-  const next = jobs.find((j) => j.status !== "complete" && j.status !== "canceled") ?? null;
-  const justDone = jobs.find((j) => j.status === "complete") ?? null;
-
-  const cleaner = await nextCleaner(next?.id ?? null);
-
+  const home = properties[0];
+  const jobs = customer ? await repo.listJobs({ customerId: customer.id }) : [];
+  const next = activeVisits(jobs)[0];
+  const last = jobs
+    .filter((j) => j.status === "complete")
+    .sort(
+      (a, b) =>
+        (b.scheduledStart?.getTime() ?? 0) - (a.scheduledStart?.getTime() ?? 0),
+    )[0];
+  const details = next ? await nextVisit(next.id) : null;
+  const stage =
+    details?.stage ??
+    (next?.status === "in_progress" ? "cleaning" : "scheduled");
   return (
     <>
-      <p className="eyebrow">Good to see you</p>
-      <h1 className="mt-0.5 text-2xl font-semibold tracking-tight text-navy">
-        {customer?.firstName ?? "Welcome"}
+      <h1 className="welcome-title">
+        {customer
+          ? `Hey, ${customer.firstName}.`
+          : "A little more time for you."}
       </h1>
-      {home ? (
-        <p className="mt-0.5 text-sm text-ink-3">
-          {home.city}, {home.zip}
+      <p className="mt-2 text-sm text-ink-2">
+        {home
+          ? `${home.city}, ${home.zip}`
+          : "A clean home. A familiar face. One less thing to do."}
+      </p>
+      {next && (
+        <section aria-labelledby="next-visit">
+          <div className="section-heading">
+            <h2 id="next-visit">Your next visit</h2>
+            <Link href="/customer/visits">All visits</Link>
+          </div>
+          <div className="visit-feature">
+            <Pill tone={stage === "cleaning" ? "good" : "sky"}>
+              {next.scheduledStart
+                ? STAGE_LABELS[stage]
+                : "Time to be confirmed"}
+            </Pill>
+            <h3 className="mt-3 text-xl font-semibold text-navy">
+              {next.scheduledStart
+                ? formatDateTimeInZone(next.scheduledStart)
+                : "Let’s find your next clean"}
+            </h3>
+            <p className="mt-1 text-sm text-ink-2">
+              {SERVICE_LABELS[next.service]} · {next.bedrooms} bedrooms,{" "}
+              {next.bathrooms} bathrooms
+            </p>
+            <div className="mt-4 flex items-center gap-3">
+              {details?.cleaner && <Avatar cleaner={details.cleaner} />}
+              <p className="text-sm text-ink-2">
+                {details?.cleaner
+                  ? `${details.cleaner.fullName}, your cleaner`
+                  : "We’ll confirm your cleaner here once matched."}
+              </p>
+            </div>
+            <Link
+              className="secondary-action mt-5"
+              href={`/customer/visits/${next.id}`}
+            >
+              {stage === "cleaning"
+                ? "Follow your clean"
+                : "View visit details"}
+            </Link>
+          </div>
+        </section>
+      )}
+      <section className="booking-feature">
+        <h2>{next ? "Make room for life." : "Come home to a fresh start."}</h2>
+        <p>
+          Tell us about your home. See your price and request a clean that fits
+          your routine.
         </p>
-      ) : null}
-
-      {/* The one thing this screen is for. */}
-      <section className="card mt-5 bg-navy p-5 text-white">
-        <p className="text-[11px] font-semibold tracking-widest text-sky uppercase">
-          Book online in 60 seconds
-        </p>
-        <p className="mt-1.5 text-lg leading-snug font-semibold">
-          You relax. We&apos;ll handle the scrubbing.
-        </p>
-        <Link
-          href="/book"
-          className="mt-3 block rounded-lg bg-white px-4 py-3 text-center text-sm font-semibold text-navy"
-        >
-          Book my clean
+        <Link className="primary-action" href="/book">
+          {next ? "Book another clean" : "Build my clean"}
         </Link>
       </section>
-
-      {next ? (
-        <section className="mt-5">
-          <p className="eyebrow mb-2">Your next visit</p>
-          <Link
-            href={`/customer/visits/${next.id}`}
-            className="card block p-4 transition-colors hover:border-sky-deep"
-          >
-            <div className="flex items-start gap-3">
-              {cleaner ? <Avatar cleaner={cleaner} /> : null}
-              <div className="min-w-0 flex-1">
-                <p className="font-medium text-navy">
-                  {visitHeadline(
-                    {
-                      stage: (next.status === "in_progress" ? "cleaning" : "accepted") as VisitStage,
-                      scheduledStart: next.scheduledStart,
-                      startedAt: null,
-                      completedAt: null,
-                      expectedFinishAt: null,
-                      roomsDone: 0,
-                      roomsTotal: 0,
-                    },
-                    cleaner ? firstName(cleaner.fullName) : null,
-                  )}
-                </p>
-                <p className="mt-0.5 text-xs text-ink-3">
-                  {next.scheduledStart
-                    ? formatDateTimeInZone(next.scheduledStart)
-                    : "Time to be confirmed"}
-                </p>
-              </div>
-              <Pill tone="sky">
-                {next.status === "in_progress" ? "Track" : STAGE_LABELS.accepted}
-              </Pill>
-            </div>
-          </Link>
-        </section>
-      ) : null}
-
-      {!next && justDone ? (
-        <section className="mt-5">
-          <p className="eyebrow mb-2">Your last clean</p>
-          <Link
-            href={`/customer/visits/${justDone.id}/rate`}
-            className="card block p-4 transition-colors hover:border-sky-deep"
-          >
-            <p className="font-medium text-navy">How did it go?</p>
-            <p className="mt-0.5 text-xs text-ink-3">
-              Rate your clean — it decides who we send back.
-            </p>
-          </Link>
-        </section>
-      ) : null}
-
-      <section className="mt-6">
-        <p className="eyebrow mb-2">Pick a service</p>
-        <div className="grid grid-cols-3 gap-2">
-          {SERVICE_TYPES.map((service) => (
+      {last && (
+        <Link
+          href={`/customer/visits/${last.id}/rate`}
+          className="visit-feature mt-5 block"
+        >
+          <strong className="text-navy">How was your last clean?</strong>
+          <p className="mt-1 text-sm text-ink-2">
+            Leave a rating, add a tip, or tell us what could be better.
+          </p>
+        </Link>
+      )}
+      <section aria-labelledby="services">
+        <div className="section-heading">
+          <h2 id="services">A clean for every occasion</h2>
+        </div>
+        <div className="service-options">
+          {SERVICE_TYPES.map((service, i) => (
             <Link
               key={service}
+              className="service-option"
               href={`/book?service=${service}`}
-              className="card p-3 text-center text-xs font-medium text-ink transition-colors hover:border-sky-deep"
             >
+              <AppIcon
+                name={i === 0 ? "calendar" : i === 1 ? "sparkle" : "home"}
+              />
               {SERVICE_LABELS[service]}
             </Link>
           ))}
         </div>
       </section>
-
-      <p className="mt-6 text-center text-xs text-ink-3">
-        Every cleaner is background-checked and insured before their first visit.
-      </p>
+      <section className="care-note">
+        <AppIcon name="message" />
+        <div>
+          <strong>Real people, here to help.</strong>Have a special request or
+          need help with a visit? Call{" "}
+          <a className="underline" href="tel:+14692800397">
+            469-280-0397
+          </a>{" "}
+          and talk with Hey Spotless.
+        </div>
+      </section>
     </>
   );
 }
-
-/** Who is coming, where the engine has decided. */
-async function nextCleaner(jobId: string | null) {
-  if (!jobId || isDemoMode()) return null;
-
+async function nextVisit(jobId: string) {
+  if (isDemoMode()) return null;
   const db = await createClient();
-  const { data } = await db
+  const { data, error } = await db
     .from("visit_progress")
-    .select("cleaner_id")
+    .select("cleaner_id, stage")
     .eq("job_id", jobId)
     .maybeSingle();
-
-  const cleanerId = (data as Record<string, unknown> | null)?.["cleaner_id"];
-  if (typeof cleanerId !== "string") return null;
-
-  return new CleanerDirectory(db).get(cleanerId);
+  if (error) throw new Error("Unable to load your visit. Please try again.");
+  if (!data) return null;
+  const cleaner =
+    typeof data.cleaner_id === "string"
+      ? await new CleanerDirectory(db).get(data.cleaner_id)
+      : null;
+  const stage = STAGES.includes(data.stage as VisitStage)
+    ? (data.stage as VisitStage)
+    : "scheduled";
+  return { cleaner, stage };
 }

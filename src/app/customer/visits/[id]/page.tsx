@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { VisitRefresh } from "@/components/visit-refresh";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { isDemoMode } from "@/lib/supabase/env";
@@ -166,6 +167,10 @@ export default async function VisitPage({ params }: { params: Promise<{ id: stri
           </p>
         </section>
       ) : null}
+
+      {visit.stage !== "done" ? <VisitRefresh /> : null}
+
+      <p className="mt-5 text-sm text-ink-2">Need help with this visit? <a href="tel:+14692800397" className="text-navy underline">Call Hey Spotless</a>.</p>
 
       {visit.stage === "done" ? (
         <Link
