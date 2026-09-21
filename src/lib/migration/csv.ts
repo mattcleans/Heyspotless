@@ -108,10 +108,29 @@ export function toRecords(rows: readonly string[][]): Record<string, string>[] {
     .map((row) => {
       const record: Record<string, string> = {};
       keys.forEach((key, i) => {
-        if (key) record[key] = (row[i] ?? "").trim();
+        if (key) record[key] = unescapeSpreadsheetLiteral((row[i] ?? "").trim());
       });
       return record;
     });
+}
+
+/**
+ * `="1068"` → `1068`.
+ *
+ * Housecall Pro wraps ids in a spreadsheet formula so Excel shows `007` rather
+ * than `7` and does not turn a long number into scientific notation. It is an
+ * artefact of the file being written for Excel, not part of the value — and
+ * left in place it makes every id in the file unrecognisable, which is exactly
+ * how a jobs export imports as zero rows.
+ *
+ * Only the whole-field form is unwrapped. A cell that merely contains an equals
+ * sign or a quote is somebody's note and is left alone.
+ */
+export function unescapeSpreadsheetLiteral(value: string): string {
+  const match = /^="(.*)"$/s.exec(value);
+  if (!match) return value;
+  // Excel doubles interior quotes inside the formula, the same as CSV does.
+  return (match[1] ?? "").replace(/""/g, '"').trim();
 }
 
 export function normaliseHeader(name: string): string {

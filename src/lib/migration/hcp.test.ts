@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
+import { parseCsv, toRecords } from "./csv";
 import {
+  customerKeys,
+  hasUnsupportedCadence,
   mapCustomer,
   mapFrequency,
   mapJob,
   mapJobStatus,
   mapService,
+  normalisePhone,
   parseExportDate,
   parseMoneyCents,
 } from "./hcp";
@@ -43,12 +47,24 @@ describe("parseMoneyCents", () => {
 
 describe("parseExportDate", () => {
   it("reads ISO", () => {
-    expect(parseExportDate("2026-09-17 10:00")).toEqual({ date: "2026-09-17", time: "10:00" });
-    expect(parseExportDate("2026-09-17")).toEqual({ date: "2026-09-17", time: null });
+    expect(parseExportDate("2026-09-17 10:00")).toEqual({
+      date: "2026-09-17",
+      time: "10:00",
+      offset: null,
+    });
+    expect(parseExportDate("2026-09-17")).toEqual({
+      date: "2026-09-17",
+      time: null,
+      offset: null,
+    });
   });
 
   it("reads the US format the dashboard exports", () => {
-    expect(parseExportDate("9/17/2026 10:00 AM")).toEqual({ date: "2026-09-17", time: "10:00" });
+    expect(parseExportDate("9/17/2026 10:00 AM")).toEqual({
+      date: "2026-09-17",
+      time: "10:00",
+      offset: null,
+    });
   });
 
   /** The two everybody gets backwards. */
@@ -218,5 +234,190 @@ describe("mapJob", () => {
 
   it("refuses a job with no customer", () => {
     expect(mapJob({ job_id: "job-4", total: "170" }).ok).toBe(false);
+  });
+});
+
+/**
+ * The real export, as it actually arrived.
+ *
+ * Every case below is something the September 2026 Housecall Pro export does
+ * that this mapper was not originally written for, and each one was found by
+ * the dry run rather than by reading the documentation — because the
+ * documentation describes an export that is not the one the dashboard writes.
+ */
+describe("the shape a real HCP export arrives in", () => {
+  /** The jobs export writes ids as `="1068"` so Excel does not reformat them. */
+  it("reads a job id out of a spreadsheet escape", () => {
+    const [row] = toRecords(parseCsv('Job #,Customer name\n"=""1068""",Dana Reyes\n'));
+    expect(row?.["job"]).toBe("1068");
+
+    const mapped = mapJob({ ...row!, total_service_price: "$130.00" });
+    if (!mapped.ok) throw new Error(mapped.problem);
+    expect(mapped.value.hcpId).toBe("1068");
+  });
+
+  /**
+   * THE ONE THAT MADE EVERY JOB FAIL. The jobs export carries no customer id at
+   * all — only a name, an email and a phone.
+   */
+  it("finds the customer by what the jobs file actually carries", () => {
+    const keys = customerKeys({
+      customer_name: "Dana  REYES",
+      customer_email: "Dana@Example.com",
+      customer_mobile_number: "+1 (214) 555-0143",
+    });
+
+    expect(keys.hcpId).toBeNull();
+    expect(keys.displayName).toBe("dana reyes");
+    expect(keys.email).toBe("dana@example.com");
+    expect(keys.phone).toBe("2145550143");
+  });
+
+  it("reduces a phone to the ten digits both files agree on", () => {
+    expect(normalisePhone("(214) 555-0143")).toBe("2145550143");
+    expect(normalisePhone("+12145550143")).toBe("2145550143");
+    expect(normalisePhone("555-0143")).toBeNull();
+  });
+
+  /**
+   * A property manager with one billing email and a customer record per unit.
+   * Matching on the email would file half their cleans against the wrong flat,
+   * so the display name — which carries the unit number — is tried first.
+   */
+  it("keeps the unit number, which is the only thing telling two units apart", () => {
+    const a = customerKeys({
+      customer_name: "Bexley Grapevine 3535 Bluffs Ln #14214",
+      customer_email: "service@switchplace.com",
+    });
+    const b = customerKeys({
+      customer_name: "Bexley Grapevine 3535 Bluffs Ln #17209",
+      customer_email: "service@switchplace.com",
+    });
+
+    expect(a.displayName).not.toBe(b.displayName);
+    expect(a.email).toBe(b.email);
+  });
+
+  it("takes the address off the job row, where the cleaner was actually sent", () => {
+    const mapped = mapJob({
+      job: "5",
+      customer_email: "dana@example.com",
+      total_service_price: "$130.00",
+      street: "9 Reply  Rd",
+      street_2: "Apt 4",
+      city: "Plano",
+      state: "TX",
+      zipcode: "75024",
+    });
+    if (!mapped.ok) throw new Error(mapped.problem);
+    expect(mapped.value.address?.street).toBe("9 Reply  Rd Apt 4");
+    expect(mapped.value.address?.zip).toBe("75024");
+  });
+
+  /** A property is a place. Two visits to one house are not two houses. */
+  it("gives two visits to the same house one property key", () => {
+    const address = { customer_email: "d@e.com", total_service_price: "$1", street: "9 Reply Rd", zipcode: "75024" };
+    const first = mapJob({ ...address, job: "1" });
+    const again = mapJob({ ...address, job: "2", street: "9  REPLY  RD" });
+    if (!first.ok || !again.ok) throw new Error("expected both to map");
+    expect(first.value.address?.hcpAddressId).toBe(again.value.address?.hcpAddressId);
+  });
+
+  /**
+   * The export states the offset, which makes the value an absolute instant.
+   * Discarding it and re-reading the wall clock as Dallas happens to round-trip
+   * while the offset IS Dallas's, and shifts every row the moment it is not.
+   */
+  it("keeps an offset the export stated, summer and winter alike", () => {
+    expect(parseExportDate("2024-05-27T21:30:00-05:00")).toEqual({
+      date: "2024-05-27",
+      time: "21:30",
+      offset: "-05:00",
+    });
+    expect(parseExportDate("2022-02-11T08:00:00-06:00")?.offset).toBe("-06:00");
+    expect(parseExportDate("2024-05-27T21:30:00Z")?.offset).toBe("+00:00");
+    expect(parseExportDate("2024-05-27T21:30:00-0500")?.offset).toBe("-05:00");
+  });
+
+  it("carries that offset through to the mapped job, so the instant is unambiguous", () => {
+    const mapped = mapJob({
+      job: "7",
+      customer_email: "d@e.com",
+      total_service_price: "$130.00",
+      job_scheduled_start_date: "2022-02-11T08:00:00-06:00",
+      job_status: "Completed",
+    });
+    if (!mapped.ok) throw new Error(mapped.problem);
+    expect(mapped.value.scheduledStart).toBe("2022-02-11T08:00-06:00");
+    expect(new Date(mapped.value.scheduledStart!).toISOString()).toBe("2022-02-11T14:00:00.000Z");
+  });
+
+  /** A date with no offset stays wall clock, for the caller to resolve. */
+  it("does not invent an offset the export did not state", () => {
+    const mapped = mapJob({
+      job: "8",
+      customer_email: "d@e.com",
+      total_service_price: "$130.00",
+      scheduled_start: "9/15/2026 10:00 AM",
+    });
+    if (!mapped.ok) throw new Error(mapped.problem);
+    expect(mapped.value.scheduledStart).toBe("2026-09-15T10:00");
+  });
+
+  it("reads the cadence out of the job tags, which is where it lives", () => {
+    const mapped = mapJob({
+      job: "9",
+      customer_email: "d@e.com",
+      total_service_price: "$130.00",
+      job_tags: "Biweekly, complete",
+    });
+    if (!mapped.ok) throw new Error(mapped.problem);
+    expect(mapped.value.frequency).toBe("biweekly");
+  });
+
+  /**
+   * "2x a week" contains "week". Reading it as weekly halves that customer's
+   * visits and points a re-quote at the wrong column of the price book — so it
+   * is reported as unmappable rather than rounded to the nearest thing that
+   * parses.
+   */
+  it("refuses a cadence the price book cannot sell, rather than calling it weekly", () => {
+    expect(mapFrequency("2x a week")).toBeNull();
+    expect(mapFrequency("twice a week")).toBeNull();
+    expect(mapFrequency("3 x per week")).toBeNull();
+    expect(hasUnsupportedCadence("2x a week")).toBe(true);
+    expect(hasUnsupportedCadence("Biweekly")).toBe(false);
+    expect(hasUnsupportedCadence(null)).toBe(false);
+
+    const mapped = mapJob({
+      job: "10",
+      customer_email: "d@e.com",
+      total_service_price: "$130.00",
+      job_tags: "2x a week, complete",
+    });
+    if (!mapped.ok) throw new Error(mapped.problem);
+    expect(mapped.value.cadenceUnsupported).toBe(true);
+  });
+
+  it("reads the customer file's own numbered address columns", () => {
+    const mapped = mapCustomer({
+      id: "126637495",
+      first_name: "Dana",
+      last_name: "Reyes",
+      display_name: "Dana Reyes",
+      address_1_street_line_1: "9 Reply Rd",
+      address_1_city: "Plano",
+      address_1_state: "TX",
+      address_1_postal_code: "75024",
+    });
+    if (!mapped.ok) throw new Error(mapped.problem);
+    expect(mapped.value.address?.street).toBe("9 Reply Rd");
+    expect(mapped.value.address?.city).toBe("Plano");
+    expect(mapped.value.displayName).toBe("dana reyes");
+  });
+
+  it("refuses a job with nothing at all identifying its customer", () => {
+    const mapped = mapJob({ job: "11", total_service_price: "$130.00" });
+    expect(mapped.ok).toBe(false);
   });
 });

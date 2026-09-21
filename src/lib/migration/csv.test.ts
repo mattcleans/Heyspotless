@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normaliseHeader, parseCsv, pick, toRecords } from "./csv";
+import { normaliseHeader, parseCsv, pick, toRecords, unescapeSpreadsheetLiteral } from "./csv";
 
 describe("parseCsv", () => {
   it("reads a plain file", () => {
@@ -88,5 +88,30 @@ describe("pick", () => {
 
   it("is null when none of them are there", () => {
     expect(pick({}, "customer_id")).toBeNull();
+  });
+});
+
+describe("unescapeSpreadsheetLiteral", () => {
+  /**
+   * Housecall Pro wraps ids in a formula so Excel shows `007` rather than `7`.
+   * Left in place it makes every id in the file unrecognisable, which is how a
+   * 1,782-row jobs export imports as zero rows.
+   */
+  it("unwraps the formula Excel exports are written with", () => {
+    expect(unescapeSpreadsheetLiteral('="1068"')).toBe("1068");
+    expect(unescapeSpreadsheetLiteral('="007"')).toBe("007");
+    expect(unescapeSpreadsheetLiteral('=""')).toBe("");
+  });
+
+  /** A cell that merely contains an equals sign is somebody's note. */
+  it("leaves anything that is not the whole-field form alone", () => {
+    expect(unescapeSpreadsheetLiteral("1068")).toBe("1068");
+    expect(unescapeSpreadsheetLiteral("gate code = 345")).toBe("gate code = 345");
+    expect(unescapeSpreadsheetLiteral('="unterminated')).toBe('="unterminated');
+    expect(unescapeSpreadsheetLiteral("")).toBe("");
+  });
+
+  it("undoubles interior quotes, as the formula doubles them", () => {
+    expect(unescapeSpreadsheetLiteral('="say ""hi"""')).toBe('say "hi"');
   });
 });

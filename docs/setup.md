@@ -196,6 +196,38 @@ It is safe to run again. Every import keys on the Housecall Pro id, so a second
 run updates what the first wrote — and a room count somebody has since verified
 on site, or a note typed in this app, survives a re-run.
 
+### What the real export looks like — checked against it on 21 September 2026
+
+The mapper was originally written against a described export. The one the
+dashboard actually writes differs in five ways, each of which was found by a
+dry run and none of which fails loudly:
+
+| What the export does | What it broke |
+|---|---|
+| Writes ids as `="1068"`, a formula so Excel does not reformat them | Every job id unreadable — **all 1,782 jobs skipped** |
+| **Carries no customer id on jobs at all** — only name, email and phone | Nothing to join the two files on |
+| Puts the address on the JOB row; 458 of 975 customer rows have none | Jobs skipped for a customer "without an address" |
+| Keeps the cadence in `Job tags` ("Biweekly, complete") | Every job read as one-time |
+| Stamps dates with an explicit offset (`2024-05-27T21:30:00-05:00`) | Re-reading the wall clock as Dallas shifts any row not exported from Dallas |
+
+All five are handled now, and asserted in `src/lib/migration/hcp.test.ts`
+against these exact shapes. Jobs are matched to customers by display name,
+then email, then phone, then name — **display name first**, because a property
+manager has one billing email and a customer record per unit, and matching on
+the email files half their cleans against the wrong flat.
+
+The dry run on the 21 September export: **975 of 975 customers, 1,712 of 1,782
+jobs**, $331,546 of job history. The 70 that do not place have no address in
+either file — the fix is in Housecall Pro, not here. The importer writes them
+to `jobs-unplaceable.tsv` so they can be corrected and re-exported; a re-run
+then picks them up, because every import keys on the Housecall Pro id.
+
+**45 jobs are tagged "2x a week"**, which the price book cannot express — it
+sells weekly, fortnightly and monthly. They import at the price they were sold
+for, so nobody is billed differently, but their frequency is a fallback rather
+than a reading and the importer counts them separately. Decide what twice a
+week costs before anything re-quotes those customers.
+
 ### Then check the price audit — this is item 7
 
 ```sql
