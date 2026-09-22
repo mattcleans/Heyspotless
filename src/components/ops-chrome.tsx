@@ -62,6 +62,7 @@ export function OpsChrome({ children }: { children: ReactNode }) {
 }
 
 const NAV = [
+  { href: "/admin", label: "Today" },
   { href: "/admin/dispatch", label: "Dispatch" },
   { href: "/admin/inbox", label: "Inbox" },
   { href: "/admin/leads", label: "Leads" },

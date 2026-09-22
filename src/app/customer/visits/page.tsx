@@ -2,6 +2,8 @@ import Link from "next/link";
 import { getRepository } from "@/lib/data";
 import { Pill } from "@/components/ui";
 import { formatDateTimeInZone } from "@/lib/time/zone";
+import { SERVICE_LABELS } from "@/lib/pricing/price-book";
+import { activeVisits } from "@/lib/experience/schedule";
 import { formatCents } from "@/lib/money";
 
 /**
@@ -21,19 +23,24 @@ export default async function VisitsPage() {
   const profile = await repo.getCurrentProfile();
   const customer = profile ? await repo.getCustomerByProfile(profile.id) : null;
 
-  const jobs = customer ? await repo.listJobs({ customerId: customer.id, limit: 40 }) : [];
+  const jobs = customer
+    ? await repo.listJobs({ customerId: customer.id, limit: 40 })
+    : [];
 
-  const upcoming = jobs
-    .filter((j) => j.status !== "complete" && j.status !== "canceled")
-    .sort((a, b) => (a.scheduledStart?.getTime() ?? 0) - (b.scheduledStart?.getTime() ?? 0));
+  const upcoming = activeVisits(jobs);
 
   const past = jobs
     .filter((j) => j.status === "complete")
-    .sort((a, b) => (b.scheduledStart?.getTime() ?? 0) - (a.scheduledStart?.getTime() ?? 0));
+    .sort(
+      (a, b) =>
+        (b.scheduledStart?.getTime() ?? 0) - (a.scheduledStart?.getTime() ?? 0),
+    );
 
   return (
     <>
-      <h1 className="text-xl font-semibold tracking-tight text-navy">Your visits</h1>
+      <h1 className="text-xl font-semibold tracking-tight text-navy">
+        Your visits
+      </h1>
 
       {jobs.length === 0 ? (
         <div className="card mt-4 p-6 text-center text-sm text-ink-3">
@@ -56,7 +63,9 @@ export default async function VisitsPage() {
                   className="card flex items-center justify-between gap-3 p-4 transition-colors hover:border-sky-deep"
                 >
                   <div className="min-w-0">
-                    <p className="font-medium text-navy">{job.service}</p>
+                    <p className="font-medium text-navy">
+                      {SERVICE_LABELS[job.service]}
+                    </p>
                     <p className="mt-0.5 text-xs text-ink-3">
                       {job.scheduledStart
                         ? formatDateTimeInZone(job.scheduledStart)
@@ -84,10 +93,14 @@ export default async function VisitsPage() {
                   className="card flex items-center justify-between gap-3 p-4 transition-colors hover:border-sky-deep"
                 >
                   <div className="min-w-0">
-                    <p className="font-medium text-ink">{job.service}</p>
+                    <p className="font-medium text-ink">
+                      {SERVICE_LABELS[job.service]}
+                    </p>
                     <p className="mt-0.5 text-xs text-ink-3">
-                      {job.scheduledStart ? formatDateTimeInZone(job.scheduledStart) : ""} ·{" "}
-                      {formatCents(job.priceCents)}
+                      {job.scheduledStart
+                        ? formatDateTimeInZone(job.scheduledStart)
+                        : ""}{" "}
+                      · {formatCents(job.priceCents)}
                     </p>
                   </div>
                   <Pill>Rate</Pill>

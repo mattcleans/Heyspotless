@@ -1,143 +1,216 @@
 import Link from "next/link";
-import { PageHeader, Callout, Pill } from "@/components/ui";
 import { OfferActions } from "./offer-actions";
 import { PushPrompt } from "./push-prompt";
-import { ZIP_CENTROIDS } from "@/lib/config";
+import { Pill } from "@/components/ui";
 import { getRepository } from "@/lib/data";
-import { clusterDay, zipCentroidEstimator } from "@/lib/dispatch/route";
-import { CLEANER_SHARE_OF_TICKET, payoutForTicket } from "@/lib/pricing/payout";
+import { createClient } from "@/lib/supabase/server";
 import { formatCents, formatHours } from "@/lib/money";
-import { formatDateTimeInZone } from "@/lib/time/zone";
+import { formatDateTimeInZone, formatDateInZone } from "@/lib/time/zone";
+import { visitsOnDay, JOB_LABELS } from "@/lib/experience/schedule";
+import { SERVICE_LABELS } from "@/lib/pricing/price-book";
 
-export const metadata = { title: "Today — Spotless Ops" };
-
-const estimate = zipCentroidEstimator(ZIP_CENTROIDS);
-
+export const dynamic = "force-dynamic";
+export const metadata = { title: "My day | Hey Spotless" };
 export default async function CleanerPage() {
   const repo = await getRepository();
   const profile = await repo.getCurrentProfile();
-  const cleaner = profile ? await repo.getCleanerByProfile(profile.id) : null;
-
-  const jobs = await repo.listJobs(cleaner ? { cleanerId: cleaner.id } : {});
+  const cleaner = profile
+    ? await repo.getCleanerByProfile(profile.id)
+    : repo.isDemo
+      ? await repo.getCleanerByProfile("demo")
+      : null;
+  // Never request the unfiltered job list when a live cleaner has no profile.
+  const jobs = cleaner ? await repo.listJobs({ cleanerId: cleaner.id }) : [];
   const offers = cleaner ? await repo.listLiveOffers(cleaner.id) : [];
-
-  // Today's route, ordered to minimise driving rather than by booking time.
-  const today = jobs.filter((j) => j.scheduledStart !== null).slice(0, 4);
-  const { ordered, totalDriveMinutes } = clusterDay(
-    today,
-    cleaner?.lastStopZip ?? "75024",
-    estimate,
-  );
-
+  const now = new Date();
+  const today = visitsOnDay(jobs, now);
+  const upcoming = jobs
+    .filter(
+      (j) =>
+        j.scheduledStart &&
+        j.scheduledStart > now &&
+        !today.some((t) => t.id === j.id) &&
+        !["complete", "canceled"].includes(j.status),
+    )
+    .sort((a, b) => a.scheduledStart!.getTime() - b.scheduledStart!.getTime());
+  const payouts = new Map<string, number>();
+  if (cleaner && !repo.isDemo && today.length > 0) {
+    const db = await createClient();
+    const { data, error } = await db
+      .from("job_assignments")
+      .select("job_id, payout_cents")
+      .eq("cleaner_id", cleaner.id)
+      .in(
+        "job_id",
+        today.map((j) => j.id),
+      );
+    if (error)
+      throw new Error("Unable to load your agreed pay. Please try again.");
+    for (const row of data ?? [])
+      payouts.set(String(row.job_id), Number(row.payout_cents));
+  }
+  const done = today.filter((j) => j.status === "complete").length;
   return (
     <>
-      <PageHeader eyebrow="Cleaner" title="Today's route">
-        Mobile-first. Offers arrive one at a time with a countdown and a payout in dollars — never a
-        percentage, and never a visible ladder.
-      </PageHeader>
-
+      <p className="text-sm text-ink-2">{formatDateInZone(now)}</p>
+      <h1 className="welcome-title mt-2">
+        {cleaner
+          ? `Hey, ${cleaner.name.split(" ")[0]}.`
+          : "Your day, at a glance."}
+      </h1>
+      <p className="mt-3 text-sm text-ink-2">
+        {today.length
+          ? `${today.length} visits today. ${done} complete.`
+          : "No visits scheduled for today."}
+      </p>
+      {!cleaner && !repo.isDemo && (
+        <div className="visit-feature mt-5">
+          <h2 className="font-semibold text-navy">Let’s get you connected</h2>
+          <p className="mt-2 text-sm">
+            Your account needs a cleaner profile before jobs can appear. Call
+            the office for help.
+          </p>
+        </div>
+      )}
       <PushPrompt />
-
-      <Callout tone="warn" label="Partly built">
-        Offers, accept and decline are real, and so is the job itself: open one to start it,
-        photograph each room, and mark it done. Photos are saved to the phone before anything
-        touches the network and keep retrying until they land, so a house with no signal costs a
-        wait rather than the work. Ratings, and the customer&rsquo;s view of any of this, are not
-        built yet.
-      </Callout>
-
-      {offers.length > 0 && (
-        <section className="mt-6">
-          <h2 className="text-sm font-semibold text-ink">
-            {offers.length === 1 ? "1 offer" : `${offers.length} offers`}
-          </h2>
-          <ul className="mt-3 space-y-3">
+      <section aria-labelledby="schedule">
+        <div className="section-heading">
+          <h2 id="schedule">Today’s visits</h2>
+          <span className="text-xs text-ink-2">Dallas time</span>
+        </div>
+        {today.length ? (
+          <ol className="space-y-3">
+            {today.map((job) => (
+              <li key={job.id} className="visit-feature">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-navy">
+                    {formatDateTimeInZone(job.scheduledStart!)}
+                  </p>
+                  <Pill tone={job.status === "complete" ? "good" : "sky"}>
+                    {JOB_LABELS[job.status] ?? "Scheduled"}
+                  </Pill>
+                </div>
+                <h3 className="mt-3 text-xl font-semibold text-navy">
+                  {job.customerName}
+                </h3>
+                <p className="mt-1 text-sm text-ink-2">
+                  {job.street}, {job.city}
+                </p>
+                <p className="mt-2 text-sm text-ink-2">
+                  {SERVICE_LABELS[job.service]} · {job.bedrooms} bed,{" "}
+                  {job.bathrooms} bath
+                </p>
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
+                  <p className="text-sm text-ink-2">
+                    About {formatHours(job.estimatedCleanMinutes)}
+                  </p>
+                  <p className="text-sm font-semibold text-navy">
+                    {cleaner?.type === "w2_core"
+                      ? "Paid under your hourly terms"
+                      : payouts.has(job.id)
+                        ? `${formatCents(payouts.get(job.id)!)} agreed pay`
+                        : "Pay details with the office"}
+                  </p>
+                </div>
+                <Link
+                  href={`/cleaner/job/${job.id}`}
+                  className="primary-action mt-4 w-full"
+                >
+                  {job.status === "complete"
+                    ? "View completed visit"
+                    : job.status === "in_progress"
+                      ? "Continue this clean"
+                      : "Open visit & home notes"}
+                </Link>
+              </li>
+            ))}
+          </ol>
+        ) : (
+          <div className="visit-feature">
+            <h3 className="font-semibold text-navy">A clear day ahead</h3>
+            <p className="mt-2 text-sm text-ink-2">
+              Check available offers below, or contact the office if you
+              expected a visit.
+            </p>
+          </div>
+        )}
+      </section>
+      <section
+        id="offers"
+        aria-labelledby="offers-heading"
+        className="scroll-mt-6"
+      >
+        <div className="section-heading">
+          <h2 id="offers-heading">Available offers</h2>
+          <span className="text-sm text-ink-2">{offers.length} open</span>
+        </div>
+        {offers.length ? (
+          <ul className="space-y-3">
             {offers.map((offer) => (
-              <li key={offer.id} className="card p-4">
-                <div className="flex items-start justify-between gap-4">
+              <li key={offer.id} className="card p-5">
+                <div className="flex justify-between gap-3">
                   <div>
-                    <h3 className="font-semibold text-ink">{offer.customerName}</h3>
-                    <p className="mt-0.5 text-sm text-ink-3">
-                      {offer.street}, {offer.city}
-                    </p>
-                    <p className="mt-1 text-xs text-ink-3">
-                      {offer.scheduledStart
-                        ? formatDateTimeInZone(offer.scheduledStart)
-                        : "Not yet scheduled"}
-                    </p>
+                    <h3 className="font-semibold text-navy">
+                      {offer.customerName}
+                    </h3>
+                    <p className="mt-1 text-sm text-ink-2">{offer.city}</p>
                   </div>
                   <div className="text-right">
-                    <p className="nums text-lg font-semibold text-navy">
+                    <p className="text-xl font-semibold text-navy">
                       {formatCents(offer.payoutCents)}
                     </p>
-                    <p className="mt-1 text-[11px] text-ink-3">
-                      for {formatHours(offer.estimatedMinutes)}
-                    </p>
+                    <p className="text-xs text-ink-2">Visit pay</p>
                   </div>
                 </div>
-
+                <p className="mt-3 text-sm text-ink-2">
+                  {offer.scheduledStart
+                    ? formatDateTimeInZone(offer.scheduledStart)
+                    : "Time to be confirmed"}{" "}
+                  · About {formatHours(offer.estimatedMinutes)}
+                </p>
                 {offer.isExclusive && (
-                  <p className="mt-2.5">
-                    {/* She is entitled to know the job is being held for her —
-                        that is the whole point of the hold, and it is the one
-                        thing about the dispatch decision that is hers. */}
-                    <Pill tone="good">Your customer · held for you</Pill>
+                  <p className="mt-3">
+                    <Pill tone="good">A familiar home, held for you</Pill>
                   </p>
                 )}
-
                 <OfferActions offerId={offer.id} />
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="rounded-xl bg-surface-2 p-5 text-sm text-ink-2">
+            You’re all caught up. New offers will appear here.
+          </p>
+        )}
+      </section>
+      {upcoming.length > 0 && (
+        <section>
+          <div className="section-heading">
+            <h2>Coming up next</h2>
+          </div>
+          <ul className="divide-y divide-line">
+            {upcoming.slice(0, 5).map((job) => (
+              <li key={job.id}>
+                <Link href={`/cleaner/job/${job.id}`} className="block py-4">
+                  <p className="font-semibold text-navy">{job.customerName}</p>
+                  <p className="mt-1 text-sm text-ink-2">
+                    {formatDateTimeInZone(job.scheduledStart!)} · {job.city}
+                  </p>
+                </Link>
               </li>
             ))}
           </ul>
         </section>
       )}
-
-      <p className="mt-6 mb-3 text-sm text-ink-2">
-        {ordered.length} jobs · {formatHours(totalDriveMinutes)} driving, clustered from your last
-        stop
-      </p>
-
-      <ol className="space-y-3">
-        {ordered.map((job, i) => (
-          <li key={job.id} className="card p-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="nums text-xs text-ink-3">{i + 1}</span>
-                  <h3 className="font-semibold text-ink">{job.customerName}</h3>
-                </div>
-                <p className="mt-0.5 text-sm text-ink-3">
-                  {job.street}, {job.city}
-                </p>
-                <p className="mt-1 text-xs text-ink-3">
-                  {job.bedrooms}bd/{job.bathrooms}ba · about{" "}
-                  {formatHours(job.estimatedCleanMinutes)}
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="nums text-lg font-semibold text-navy">
-                  {formatCents(payoutForTicket(job.priceCents, CLEANER_SHARE_OF_TICKET))}
-                </p>
-                <p className="mt-1 text-[11px] text-ink-3">
-                  for {formatHours(job.estimatedCleanMinutes)}
-                </p>
-              </div>
-            </div>
-            <div className="mt-3 border-t border-line-soft pt-3">
-              <Link
-                href={`/cleaner/job/${job.id}`}
-                className="block rounded-lg bg-navy px-4 py-2.5 text-center text-sm font-semibold text-white"
-              >
-                {job.status === "complete"
-                  ? "View"
-                  : job.status === "in_progress"
-                    ? "Continue"
-                    : "Open"}
-              </Link>
-            </div>
-          </li>
-        ))}
-      </ol>
+      <div className="care-note">
+        <div>
+          <strong>Something at the home needs attention?</strong>Call{" "}
+          <a href="tel:+14692800397" className="underline">
+            469-280-0397
+          </a>{" "}
+          for access problems, unexpected conditions, or help with a visit.
+        </div>
+      </div>
     </>
   );
 }

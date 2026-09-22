@@ -1,97 +1,70 @@
 import Link from "next/link";
-import { PageHeader, Pill } from "@/components/ui";
-import { OpsChrome } from "@/components/ops-chrome";
-import { CUSTOMER_BRAND } from "@/lib/brand";
-
-const SURFACES = [
-  {
-    href: "/admin/dispatch",
-    role: "Admin",
-    title: "Dispatch board",
-    body: "Jobs needing a cleaner, what the engine decided for each, idle guaranteed hours, and the week's overtime before you commit it.",
-    ready: true,
-  },
-  {
-    href: "/admin/quote",
-    role: "Admin",
-    title: "Quote builder",
-    body: "Room counts to a price, off the live price book. Shows the opening cleaner offer alongside the customer total.",
-    ready: true,
-  },
-  {
-    href: "/admin/price-book",
-    role: "Admin",
-    title: "Price book",
-    body: "The 9 August 2026 pricelist as structured data, including the recurring rates and extras.",
-    ready: true,
-  },
-  {
-    href: "/cleaner",
-    role: "Cleaner",
-    title: "Today's route",
-    body: "Offers with a countdown, on-my-way, clock in/out with a GPS stamp, room checklists, before/after photos.",
-    ready: true,
-  },
-  {
-    href: "/customer",
-    role: "Customer",
-    title: "Portal",
-    body: "Balances, saved card and autopay. Rate-your-clean arrives by text and needs no sign-in.",
-    ready: true,
-  },
-  {
-    href: "/admin/inbox",
-    role: "Admin",
-    title: "Inbox",
-    body: "Two-way SMS with customers, cleaners and leads — one thread per person, with what the platform said automatically sitting alongside what a person typed.",
-    ready: true,
-  },
-];
+import { AppIcon } from "@/components/app-navigation";
+import { isDemoMode } from "@/lib/supabase/env";
 
 export default function Home() {
   return (
-    <OpsChrome>
-      <PageHeader eyebrow={CUSTOMER_BRAND} title="Spotless Ops">
-        One system to book, schedule, dispatch, bill, and communicate — plus the thing Housecall Pro
-        cannot do at any price: route every job to the cheapest cleaner who will still do it well.
-      </PageHeader>
-
-      <ul className="grid gap-3 md:grid-cols-2">
-        {SURFACES.map((s) => (
-          <li key={s.href}>
-            <Link
-              href={s.href}
-              className="card block h-full p-5 transition-colors hover:border-sky-deep"
-            >
-              <div className="flex items-center gap-2">
-                <span className="eyebrow">{s.role}</span>
-                {s.ready ? <Pill tone="good">Built</Pill> : <Pill>Scaffolded</Pill>}
-              </div>
-              <h2 className="mt-1.5 font-semibold text-navy">{s.title}</h2>
-              <p className="mt-1 text-sm text-ink-2">{s.body}</p>
+    <div className="mx-auto max-w-5xl px-6 py-12 sm:py-20">
+      <Link href="/" className="brand-lockup">
+        <span className="brand-mark">
+          <AppIcon name="sparkle" />
+        </span>
+        Hey Spotless
+      </Link>
+      <h1 className="mt-12 max-w-xl text-4xl font-semibold leading-tight tracking-tight text-navy sm:text-5xl">
+        Good care starts with good connections.
+      </h1>
+      <p className="mt-5 max-w-xl text-base leading-relaxed text-ink-2">
+        A welcoming home for customers. A clear day for cleaners. A helping hand
+        for the people who keep it all running.
+      </p>
+      {isDemoMode() && (
+        <p className="preview-note mt-6 rounded-lg">
+          You’re exploring a preview. Sample data only, with no live bookings or
+          charges.
+        </p>
+      )}
+      <div className="mt-10 grid gap-5 md:grid-cols-3">
+        {[
+          {
+            href: "/customer",
+            title: "Your home",
+            body: "Plan a clean, follow your visit, and keep your home feeling its best.",
+            action: "Open customer app",
+          },
+          {
+            href: "/cleaner",
+            title: "Your workday",
+            body: "See your visits, review job offers, and find what each home needs.",
+            action: "Open cleaner app",
+          },
+          {
+            href: "/admin",
+            title: "Your business",
+            body: "See what needs attention, support your team, and care for your customers.",
+            action: "Open management",
+          },
+        ].map((item) => (
+          <section key={item.href} className="card flex flex-col p-6">
+            <h2 className="text-xl font-semibold text-navy">{item.title}</h2>
+            <p className="mt-3 mb-6 flex-1 text-sm leading-relaxed text-ink-2">
+              {item.body}
+            </p>
+            <Link className="secondary-action" href={item.href}>
+              {item.action}
             </Link>
-          </li>
+          </section>
         ))}
-      </ul>
-
-      <div className="card mt-6 p-5">
-        <p className="eyebrow">Where this is</p>
-        <p className="mt-1.5 text-sm text-ink-2">
-          Phases 1 through 6 of the build plan: the schema with row-level security, the price
-          book and quote engine, billing, the cleaner app, the dispatch engine — marginal cost,
-          the eligibility gate, the offer ladder, continuity and route clustering — and now
-          two-way messaging, reminders and the automation queue. All of it covered by tests that
-          assert against the figures published in the build plan itself.
-        </p>
-        <p className="mt-2 text-sm text-ink-2">
-          Supabase, Twilio and the deploy are live. <strong>Billing is not:</strong> it turns on
-          when <code className="font-mono text-xs">STRIPE_SECRET_KEY</code> is set and{" "}
-          <code className="font-mono text-xs">BILLING_ENABLED</code> is not holding it off, which
-          is the last item in <code className="font-mono text-xs">docs/setup.md</code>. Until
-          then the customer screen shows real balances and says plainly that payments are not
-          live, rather than offering a button that fails.
-        </p>
       </div>
-    </OpsChrome>
+      <p className="mt-8 text-sm text-ink-2">
+        New here?{" "}
+        <Link
+          href="/book"
+          className="font-semibold text-navy underline underline-offset-4"
+        >
+          Get an estimate for your clean.
+        </Link>
+      </p>
+    </div>
   );
 }
