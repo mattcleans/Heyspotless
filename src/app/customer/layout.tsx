@@ -1,3 +1,4 @@
+import { WorkspaceIdentity } from "@/components/workspace-identity";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { CUSTOMER_BRAND } from "@/lib/brand";
@@ -6,7 +7,7 @@ import { isDemoMode } from "@/lib/supabase/env";
 
 export default function ClientAppLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="service-app">
+    <div className="service-app workspace-app">
       <a href="#customer-content" className="skip-link">
         Skip to content
       </a>
@@ -21,6 +22,7 @@ export default function ClientAppLayout({ children }: { children: ReactNode }) {
           Get help
         </a>
       </header>
+      <WorkspaceIdentity area="customer" />
       {isDemoMode() && (
         <div className="preview-note">
           Preview only. No live bookings or charges.
