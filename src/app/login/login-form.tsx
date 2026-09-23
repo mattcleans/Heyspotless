@@ -9,25 +9,40 @@ import { createClient } from "@/lib/supabase/client";
  */
 export function LoginForm({ next }: { next: string }) {
   const [email, setEmail] = useState("");
-  const [state, setState] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [state, setState] = useState<"idle" | "sending" | "sent" | "error">(
+    "idle",
+  );
   const [message, setMessage] = useState("");
+  const [retryAt, setRetryAt] = useState(0);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (state === "sending") return;
+    if (Date.now() < retryAt) {
+      setMessage("Please wait a minute before requesting another link.");
+      return;
+    }
+    setMessage("");
     setState("sending");
     try {
+      // Keep the allowed email callback fixed. Query-specific callbacks can fall
+      // back to Supabase Site URL when the production allowlist is exact.
+      document.cookie = `hs_login_next=${encodeURIComponent(next)}; Path=/auth; Max-Age=3600; SameSite=Lax${window.location.protocol === "https:" ? "; Secure" : ""}`;
       const supabase = createClient();
       const { error } = await supabase.auth.signInWithOtp({
-        email,
+        email: email.trim(),
         options: {
-          emailRedirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
         },
       });
       if (error) throw error;
+      setRetryAt(Date.now() + 60_000);
       setState("sent");
     } catch (err) {
       setState("error");
-      setMessage(err instanceof Error ? err.message : "Could not send the link.");
+      setMessage(
+        err instanceof Error ? err.message : "Could not send the link.",
+      );
     }
   }
 
@@ -36,9 +51,24 @@ export function LoginForm({ next }: { next: string }) {
       <div className="card p-6">
         <p className="eyebrow">Check your email</p>
         <p className="mt-2 text-sm text-ink-2">
-          A sign-in link is on its way to <strong className="text-ink">{email}</strong>. It expires
-          in an hour.
+          A sign-in link is on its way to{" "}
+          <strong className="text-ink">{email}</strong>. Open the newest link in
+          this same browser on this device to finish signing in.
         </p>
+        <p className="mt-3 text-sm text-ink-2">
+          Check spam or junk if it hasn’t arrived. If it still doesn’t arrive,
+          email delivery may need attention from our team.
+        </p>
+        <button
+          type="button"
+          className="secondary-action mt-4"
+          onClick={() => {
+            setState("idle");
+            setMessage("");
+          }}
+        >
+          Try again or change email
+        </button>
       </div>
     );
   }
@@ -66,7 +96,11 @@ export function LoginForm({ next }: { next: string }) {
         {state === "sending" ? "Sending…" : "Email me a sign-in link"}
       </button>
 
-      {state === "error" ? <p className="mt-3 text-sm text-bad">{message}</p> : null}
+      {message ? (
+        <p role="alert" className="mt-3 text-sm text-bad">
+          {message}
+        </p>
+      ) : null}
     </form>
   );
 }

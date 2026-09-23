@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { ROLE_HOME } from "@/lib/auth/navigation";
 import { createServerClient } from "@supabase/ssr";
 import { isDemoMode, supabaseAnonKey, supabaseUrl } from "@/lib/supabase/env";
 
@@ -20,12 +21,6 @@ const AREA_ROLES: { prefix: string; roles: string[] }[] = [
   { prefix: "/cleaner", roles: ["cleaner", "admin"] },
   { prefix: "/customer", roles: ["customer", "admin"] },
 ];
-
-const HOME_FOR_ROLE: Record<string, string> = {
-  admin: "/admin/dispatch",
-  cleaner: "/cleaner",
-  customer: "/customer",
-};
 
 export async function middleware(request: NextRequest) {
   // Demo mode has no auth at all, so every surface is open. That is what lets
@@ -62,14 +57,19 @@ export async function middleware(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const path = request.nextUrl.pathname;
-  const area = AREA_ROLES.find((a) => path === a.prefix || path.startsWith(`${a.prefix}/`));
+  const area = AREA_ROLES.find(
+    (a) => path === a.prefix || path.startsWith(`${a.prefix}/`),
+  );
   if (!area) return response;
 
   if (!user) {
     const login = request.nextUrl.clone();
     login.pathname = "/login";
-    login.searchParams.set("next", path);
-    return NextResponse.redirect(login);
+    login.search = "";
+    login.searchParams.set("next", `${path}${request.nextUrl.search}`);
+    const result = NextResponse.redirect(login);
+    for (const cookie of response.cookies.getAll()) result.cookies.set(cookie);
+    return result;
   }
 
   const { data: profile } = await supabase
@@ -83,9 +83,13 @@ export async function middleware(request: NextRequest) {
   if (!role || !area.roles.includes(role)) {
     // Send them to their own surface rather than a dead end.
     const home = request.nextUrl.clone();
-    home.pathname = role ? (HOME_FOR_ROLE[role] ?? "/") : "/";
+    home.pathname = role
+      ? (ROLE_HOME[role] ?? "/account-setup")
+      : "/account-setup";
     home.search = "";
-    return NextResponse.redirect(home);
+    const result = NextResponse.redirect(home);
+    for (const cookie of response.cookies.getAll()) result.cookies.set(cookie);
+    return result;
   }
 
   return response;

@@ -293,3 +293,35 @@ account ($99/yr), a Google Play account ($25), signing certificates, and review
 queues measured in days. The installed PWA does everything the wrapper would do
 for this business today, including notifications. Revisit it when there is a
 reason a home-screen icon cannot answer — not before.
+
+## Sign-in readiness and testing
+
+In Supabase Authentication > URL Configuration, set Site URL to
+`https://app.heyspotless.com`, not `http://localhost:3000`. Keep
+`https://app.heyspotless.com/auth/callback` in Redirect URLs. The application sends
+that fixed callback and carries the requested workspace in a short-lived,
+same-site cookie. Old deployments that append `?next=%2Fadmin` need that exact
+callback allowed until the fixed-callback release is deployed.
+
+A link that lands on localhost is a redirect configuration problem. After saving
+configuration, request a fresh email from the hosted app; an old email retains
+its original destination. Open the newest link in the same browser and device
+where you requested it, because the existing PKCE flow uses a browser verifier.
+
+After authentication, /auth/continue verifies the user and profile, then sends
+admins to /admin, cleaners to /cleaner, and customers to /customer. Customers and
+cleaners also need their records linked by profile_id. Missing setup has a visible
+explanation, rather than silently rendering empty account data. Assign roles and
+record links deliberately through trusted administration; never self-promote
+accounts based on email addresses or signup metadata.
+
+For a first acceptance test, sign in as the owner and verify Management opens.
+Then use separately provisioned cleaner and customer test accounts with linked
+records. Test an expired link, a link opened in a different browser, and a new
+unlinked account. Neither an email send success nor a passing unit suite proves
+that a production mailbox received the message or that the role is provisioned.
+
+If no email arrives, check the auth delivery log and SMTP configuration. The
+default Supabase sender only permits the organization's team addresses; customer
+and cleaner testing needs a configured production sender. Reference:
+https://supabase.com/docs/guides/auth/auth-smtp
