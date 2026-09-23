@@ -1,3 +1,4 @@
+import { WorkspaceIdentity } from "@/components/workspace-identity";
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { AppIcon } from "@/components/app-navigation";
@@ -5,7 +6,7 @@ import { isDemoMode } from "@/lib/supabase/env";
 
 export default function CleanerLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="service-app">
+    <div className="service-app workspace-app">
       <a href="#cleaner-content" className="skip-link">
         Skip to content
       </a>
@@ -20,6 +21,7 @@ export default function CleanerLayout({ children }: { children: ReactNode }) {
           Call the office
         </a>
       </header>
+      <WorkspaceIdentity area="cleaner" />
       {isDemoMode() && (
         <div className="preview-note">
           Preview only. Offers and visits use sample data.

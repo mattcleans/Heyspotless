@@ -297,3 +297,218 @@
     top: 12px;
   }
 }
+
+@layer components {
+  .workspace-identity {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 14px 24px;
+    background: #f0f7f9;
+    border-bottom: 1px solid #dce8ed;
+    color: #174d63;
+    font-size: 12px;
+  }
+  .workspace-identity > div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  .workspace-role {
+    background: #dceff4;
+    color: #075e7b;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-weight: 750;
+  }
+  .workspace-return {
+    padding: 8px 0;
+    font-weight: 700;
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+  .workspace-area {
+    color: #526977;
+  }
+  .management-app {
+    min-height: 100dvh;
+    background: #f6f9fb;
+  }
+  .management-header {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    justify-content: space-between;
+    padding: 20px 24px;
+    padding-right: 100px;
+    background: #fff;
+    border-bottom: 1px solid #dce8ed;
+  }
+  .management-label {
+    font-size: 12px;
+    font-weight: 600;
+    color: #526977;
+    display: none;
+  }
+  .management-body {
+    min-width: 0;
+  }
+  .management-body main {
+    max-width: 1400px;
+    margin: auto;
+    padding: 24px 20px 60px;
+  }
+  .management-menu-toggle {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    min-height: 40px;
+    padding: 8px 12px;
+    border: 1px solid #bdd5df;
+    border-radius: 8px;
+    color: #075e7b;
+    background: #fff;
+    font-size: 13px;
+  }
+  .management-navigation {
+    display: none;
+    padding: 20px;
+    background: #fff;
+    border-bottom: 1px solid #dce8ed;
+  }
+  .management-navigation.is-open {
+    display: block;
+  }
+  .management-navigation section + section {
+    margin-top: 24px;
+  }
+  .management-navigation h2 {
+    padding: 0 12px;
+    margin-bottom: 8px;
+    color: #526977;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .management-navigation a {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 44px;
+    padding: 10px 12px;
+    border-radius: 9px;
+    color: #32586a;
+    font-size: 14px;
+  }
+  .management-navigation a[aria-current="page"] {
+    background: #075e7b;
+    color: white;
+    font-weight: 650;
+  }
+  .management-navigation a:hover:not([aria-current="page"]) {
+    background: #e8f5f8;
+  }
+  @media (min-width: 1024px) {
+    .management-app {
+      display: grid;
+      grid-template-columns: 240px minmax(0, 1fr);
+      grid-template-rows: auto 1fr;
+    }
+    .management-header {
+      grid-column: 1/-1;
+      padding: 20px 32px;
+      position: sticky;
+      top: 0;
+      z-index: 30;
+    }
+    .management-label {
+      display: block;
+    }
+    .management-menu-toggle {
+      display: none;
+    }
+    .management-navigation,
+    .management-navigation.is-open {
+      display: block;
+      grid-column: 1;
+      grid-row: 2;
+      position: sticky;
+      top: 77px;
+      align-self: start;
+      height: calc(100dvh - 77px);
+      overflow-y: auto;
+      border-right: 1px solid #dce8ed;
+      border-bottom: 0;
+    }
+    .management-body {
+      grid-column: 2;
+      grid-row: 2;
+    }
+    .management-body main {
+      padding: 36px 40px 72px;
+    }
+    .workspace-app {
+      max-width: 1280px;
+      display: grid;
+      grid-template-columns: 210px minmax(0, 1fr);
+      grid-template-rows: auto auto auto 1fr;
+      border-inline: 1px solid #dce8ed;
+    }
+    .workspace-app > .service-header {
+      grid-column: 1/-1;
+      padding: 24px 32px;
+    }
+    .workspace-app > .workspace-identity {
+      grid-column: 1/-1;
+      padding-inline: 32px;
+    }
+    .workspace-app > .preview-note {
+      grid-column: 1/-1;
+    }
+    .workspace-app > .service-content {
+      grid-column: 2;
+      grid-row: 4;
+      padding: 36px 40px 64px;
+      min-width: 0;
+    }
+    .workspace-app > .app-tabs {
+      position: sticky;
+      inset: auto;
+      top: 16px;
+      grid-column: 1;
+      grid-row: 4;
+      align-self: start;
+      width: 100%;
+      border-top: 0;
+      padding: 20px 16px;
+      margin: 0;
+      background: transparent;
+    }
+    .workspace-app > .app-tabs ul {
+      display: block;
+    }
+    .workspace-app > .app-tabs a {
+      flex-direction: row;
+      justify-content: flex-start;
+      gap: 14px;
+      padding: 14px;
+      font-size: 14px;
+      margin-bottom: 8px;
+    }
+    .workspace-app .booking-feature {
+      padding: 36px;
+    }
+    .workspace-app .booking-feature h2 {
+      max-width: 22ch;
+    }
+    .workspace-app .service-options {
+      gap: 16px;
+    }
+    .workspace-app .service-option {
+      padding: 24px;
+      font-size: 15px;
+    }
+  }
+}
