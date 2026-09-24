@@ -46,6 +46,8 @@ export const LOGIN_ERRORS: Record<string, string> = {
     "This link has expired, was already used, or opened in a different browser. Request a new link and open it in this browser on this device.",
   service_unavailable:
     "Sign-in is temporarily unavailable. Try again shortly or call 469-280-0397.",
+  sign_out_failed:
+    "We couldn’t sign you out. Please try again, or call 469-280-0397.",
 };
 
 export function savedNext(value: string | undefined): string {
