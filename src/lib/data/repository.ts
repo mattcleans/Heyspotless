@@ -21,7 +21,7 @@ import type {
   Property,
 } from "./types";
 import type { ScheduledWork } from "../dispatch/manual";
-import type { WeeklyAvailability } from "../dispatch/store";
+import type { ManagerOffer, WeeklyAvailability } from "../dispatch/store";
 
 export interface Repository {
   /** Jobs, optionally filtered. Ordered soonest-first; unscheduled last. */
@@ -46,6 +46,8 @@ export interface Repository {
   listScheduledWork(from: Date, to: Date): Promise<ScheduledWork[]>;
   /** Declared working hours, by cleaner. Absent means nothing declared. */
   listAvailability(): Promise<WeeklyAvailability>;
+  /** Live offers a manager made to one contractor, by job id. */
+  listManagerOffers(): Promise<Map<string, ManagerOffer>>;
 
   listCustomers(limit?: number): Promise<Customer[]>;
   getCustomer(id: string): Promise<Customer | null>;

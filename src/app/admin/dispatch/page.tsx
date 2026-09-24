@@ -203,7 +203,8 @@ function pickerOptions(plan: ManualAssignmentPlan): PickerOption[] {
     label:
       o.cleaner.type === "w2_core"
         ? `${o.cleaner.name} · W-2 · ${o.weekHours.toFixed(1)}h that week`
-        : `${o.cleaner.name} · 1099`,
+        : `${o.cleaner.name} · 1099 · offer`,
+    kind: o.cleaner.type === "w2_core" ? "assign" : "offer",
     blockedBy: o.eligible ? undefined : REASON_LABELS[o.reasons[0]!],
   }));
 }
@@ -213,11 +214,14 @@ function JobCard({
   decision,
   now,
   plan,
+  pending,
 }: {
   job: Job;
   decision: DispatchDecision;
   now: Date;
   plan: ManualAssignmentPlan;
+  /** A live offer a manager made to one contractor. */
+  pending?: { cleanerName: string; expiresAt: Date };
 }) {
   const hours = hoursUntil(job, now);
 
@@ -240,9 +244,22 @@ function JobCard({
           : "unscheduled"}
       </p>
       <div className="mt-3.5 border-t border-line-soft pt-3.5">
-        <DecisionSummary decision={decision} />
-        <SpreadNote job={job} decision={decision} />
-        <ContinuityNote decision={decision} />
+        {pending ? (
+          <>
+            <Pill tone="sky">Offered by a manager</Pill>
+            <p className="mt-2 text-sm text-ink-2">
+              Waiting for <strong className="text-ink">{pending.cleanerName}</strong> to accept,
+              until {formatDateTimeInZone(pending.expiresAt)}. Dispatch leaves this job alone
+              until then.
+            </p>
+          </>
+        ) : (
+          <>
+            <DecisionSummary decision={decision} />
+            <SpreadNote job={job} decision={decision} />
+            <ContinuityNote decision={decision} />
+          </>
+        )}
       </div>
       <AssignPicker
         jobId={job.id}
@@ -313,10 +330,17 @@ export default async function DispatchPage() {
     (max, j) => (j.scheduledStart && j.scheduledStart > max ? j.scheduledStart : max),
     now,
   );
-  const [work, availability] = await Promise.all([
+  const [work, availability, managerOffers] = await Promise.all([
     repo.listScheduledWork(businessWeekOf(now).start, businessWeekOf(latest).end),
     repo.listAvailability(),
+    repo.listManagerOffers(),
   ]);
+  const pendingFor = (job: Job) => {
+    const offer = managerOffers.get(job.id);
+    if (!offer) return undefined;
+    const name = cleaners.find((c) => c.id === offer.cleanerId)?.name ?? "the contractor";
+    return { cleanerName: name, expiresAt: offer.expiresAt };
+  };
   const planFor = (job: Job) =>
     planManualAssignment(job, cleaners, {
       eligibilityFor: (c) => ({
@@ -436,7 +460,14 @@ export default async function DispatchPage() {
       </h2>
       <ul className="grid gap-3 md:grid-cols-2">
         {board.map(({ job, decision }) => (
-          <JobCard key={job.id} job={job} decision={decision} now={now} plan={planFor(job)} />
+          <JobCard
+            key={job.id}
+            job={job}
+            decision={decision}
+            now={now}
+            plan={planFor(job)}
+            pending={pendingFor(job)}
+          />
         ))}
       </ul>
 

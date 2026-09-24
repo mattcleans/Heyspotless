@@ -111,11 +111,26 @@ export function addDemoJob(priced: PricedJob): Job {
  * On globalThis because the assign API route and the dispatch page are bundled
  * separately, and a module-level Map would give each its own copy.
  */
-const globalDemo = globalThis as { __demoAssigned?: Map<string, string> };
+const globalDemo = globalThis as {
+  __demoAssigned?: Map<string, string>;
+  __demoOffered?: Map<string, { cleanerId: string; expiresAt: Date }>;
+};
 const assigned = (globalDemo.__demoAssigned ??= new Map<string, string>());
+/** Jobs a manager has offered to a contractor in demo mode, by job id. */
+const offered = (globalDemo.__demoOffered ??= new Map());
+
+export function offerDemoJob(jobId: string, cleanerId: string, expiresAt: Date): void {
+  offered.set(jobId, { cleanerId, expiresAt });
+}
+
+export function demoManagerOffers(): Map<string, { cleanerId: string; expiresAt: Date }> {
+  const now = new Date();
+  return new Map([...offered].filter(([, o]) => o.expiresAt > now));
+}
 
 export function assignDemoJob(jobId: string, cleanerId: string): void {
   assigned.set(jobId, cleanerId);
+  offered.delete(jobId);
 }
 
 export function demoAssignedCleaner(jobId: string): string | undefined {

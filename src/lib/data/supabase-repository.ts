@@ -30,7 +30,9 @@ import {
   availabilityFor,
   continuityFor,
   offeredUpToFor,
+  managerOffersFor,
   passedOverFor,
+  type ManagerOffer,
   type WeeklyAvailability,
 } from "../dispatch/store";
 import type { ScheduledWork } from "../dispatch/manual";
@@ -267,6 +269,10 @@ export class SupabaseRepository implements Repository {
 
   async listAvailability(): Promise<WeeklyAvailability> {
     return availabilityFor(this.db);
+  }
+
+  async listManagerOffers(): Promise<Map<string, ManagerOffer>> {
+    return managerOffersFor(this.db);
   }
 
   async listCustomers(limit = 100): Promise<Customer[]> {

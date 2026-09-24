@@ -84,7 +84,9 @@ begin
     -- 0029. A browser session that could call this could put any cleaner on
     -- any job, at any payout.
     $q$select assign_job_manually('50000000-0000-0000-0000-000000000001',
-                                  '60000000-0000-0000-0000-000000000001', 0, null)$q$
+                                  '60000000-0000-0000-0000-000000000001', 0, null)$q$,
+    $q$select offer_job_manually('50000000-0000-0000-0000-000000000001',
+                                 '60000000-0000-0000-0000-000000000001', 0.33, 0, now(), null)$q$
   ] loop
     begin
       execute statement;
@@ -332,7 +334,8 @@ begin
     'delete_push_subscription(text)',
     'settle_push(text,boolean)',
     'push_targets(uuid[],integer)',
-    'assign_job_manually(uuid,uuid,integer,uuid)'
+    'assign_job_manually(uuid,uuid,integer,uuid)',
+    'offer_job_manually(uuid,uuid,numeric,integer,timestamptz,uuid)'
   ] loop
     if not has_function_privilege(current_user, signature, 'execute') then
       raise exception 'server lost execution privilege on %', signature;

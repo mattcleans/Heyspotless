@@ -5,7 +5,13 @@
  * reviewable and demoable, and it is what the 148 engine tests exercise.
  */
 
-import { demoAssignedCleaner, demoCustomers, demoJobs, demoProperties } from "../demo/added";
+import {
+  demoAssignedCleaner,
+  demoCustomers,
+  demoJobs,
+  demoManagerOffers,
+  demoProperties,
+} from "../demo/added";
 import {
   DEMO_CLEANERS,
   DEMO_INVOICES,
@@ -16,7 +22,7 @@ import { CLEANER_SHARE_OF_TICKET, payoutForTicket } from "../pricing/payout";
 import type { ContinuityContext } from "../dispatch/continuity";
 import type { Repository } from "./repository";
 import type { ScheduledWork } from "../dispatch/manual";
-import type { WeeklyAvailability } from "../dispatch/store";
+import type { ManagerOffer, WeeklyAvailability } from "../dispatch/store";
 import type {
   Cleaner,
   Customer,
@@ -138,6 +144,10 @@ export class DemoRepository implements Repository {
 
   async listAvailability(): Promise<WeeklyAvailability> {
     return new Map();
+  }
+
+  async listManagerOffers(): Promise<Map<string, ManagerOffer>> {
+    return demoManagerOffers();
   }
 
   async getCleaner(id: string): Promise<Cleaner | null> {

@@ -1,19 +1,21 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SupabaseRepository } from "@/lib/data/supabase-repository";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { DispatchStore, availabilityFor, busyWindowsFor } from "@/lib/dispatch/store";
+import {
+  DispatchStore,
+  availabilityFor,
+  busyWindowsFor,
+  managerOffersFor,
+} from "@/lib/dispatch/store";
+import { textOffer, wakeCleaner } from "@/lib/dispatch/notify";
 import {
   MessagingStore,
-  OFFER_SENT,
   reachabilityOf,
   type Recipient,
 } from "@/lib/messaging/store";
 import { sendWindowFor } from "@/lib/messaging/quiet-hours";
-import { offerMessage } from "@/lib/messaging/templates";
-import { sendSms } from "@/lib/messaging/gateway";
 import { isMessagingEnabled } from "@/lib/messaging/env";
 import { PushStore } from "@/lib/push/store";
-import { sendPush } from "@/lib/push/gateway";
 import { isPushEnabled } from "@/lib/push/vapid";
 import { windowsOn } from "@/lib/dispatch/availability";
 import { dispatchBoard, hoursUntil, type DispatchDecision } from "@/lib/dispatch/engine";
@@ -66,10 +68,15 @@ export async function POST(request: NextRequest) {
   // on somebody who never replied and the visit is never filled.
   const expired = await store.expireStaleOffers();
 
-  const [jobs, cleaners] = await Promise.all([
+  const [allJobs, cleaners, managerOffers] = await Promise.all([
     repo.listJobs({ needingCleaner: true }),
     repo.listCleaners(),
+    managerOffersFor(db),
   ]);
+
+  // A job a manager has offered to one contractor is hers to answer. Deciding
+  // it again here would offer it to others, or assign an employee over her.
+  const jobs = allJobs.filter((j) => !managerOffers.has(j.id));
 
   const now = new Date();
 
@@ -140,6 +147,7 @@ export async function POST(request: NextRequest) {
 
   const result = {
     jobs: jobs.length,
+    heldByManager: allJobs.length - jobs.length,
     expiredOffers: expired,
     assigned: 0,
     held: 0,
@@ -409,83 +417,22 @@ async function offerAndNotify(
   // The offer exists now, so wake her devices whatever happens with the text.
   // Deliberately before the SMS: the push is the fast half, and a Twilio
   // timeout should not delay it by ten seconds.
-  if (offerId) await wake(deps, plan.cleanerId);
+  if (offerId) deps.result.pushed += await wakeCleaner(deps, plan.cleanerId);
 
   if (!offerId || !announcing || !reach.reachable || !recipient) return Boolean(offerId);
 
-  const body = offerMessage({
-    cleanerFirstName: recipient.firstName,
-    customerName: job.customerName,
-    street: job.street,
-    city: job.city,
+  const sent = await textOffer(deps, {
+    offerId,
+    job,
+    cleanerId: plan.cleanerId,
+    recipient,
+    phone: reach.phone,
     payoutCents: plan.payoutCents,
-    scheduledStart: job.scheduledStart,
     expiresAt: plan.expiresAt,
     isExclusive: plan.isExclusive,
-    offerUrl: `${deps.origin}/cleaner`,
   });
-
-  // Claimed before the provider is called: a crash between sending and
-  // recording would otherwise leave no row, and the next sweep would send
-  // again. Null means an earlier sweep already told her.
-  const messageId = await deps.messaging.claim({
-    offerId,
-    kind: OFFER_SENT,
-    cleanerId: plan.cleanerId,
-    jobId: job.id,
-    body,
-    to: reach.phone,
-  });
-  if (!messageId) return true;
-
-  const sent = await sendSms(reach.phone, body);
-  if (sent.ok) {
-    await deps.messaging.settle(messageId, sent.providerId);
-    result.notified += 1;
-  } else {
-    // Recorded, never swallowed. A cleaner we could not reach must not end up
-    // indistinguishable from one who ignored us.
-    await deps.messaging.settle(messageId, null, sent.reason);
-  }
+  if (sent) result.notified += 1;
   return true;
-}
-
-/**
- * Ring every device this cleaner has registered.
- *
- * Never throws and never blocks the offer: a notification is an improvement on
- * the text, not a replacement for it, and a push service having a bad minute
- * must not cost anybody a job.
- *
- * A subscription the service says is GONE is deleted on the spot. The
- * alternative is a table that fills with dead endpoints, each of them tried and
- * failed on every sweep for ever.
- */
-async function wake(deps: Deps, cleanerId: string): Promise<void> {
-  const endpoints = deps.pushTargets.get(cleanerId);
-  if (!endpoints || endpoints.length === 0) return;
-
-  for (const endpoint of endpoints) {
-    try {
-      const sent = await sendPush(endpoint);
-
-      if (sent.ok) {
-        deps.result.pushed += 1;
-        await deps.pushStore.settle(endpoint, true);
-        continue;
-      }
-
-      if (sent.gone) {
-        await deps.pushStore.remove(endpoint);
-        continue;
-      }
-
-      await deps.pushStore.settle(endpoint, false);
-    } catch (error) {
-      // Recorded and moved past. She still gets the text.
-      console.warn(`push failed for cleaner ${cleanerId}: ${messageOf(error)}`);
-    }
-  }
 }
 
 function messageOf(error: unknown): string {

@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { businessWeekOf, hoursInWeek, planManualAssignment } from "./manual";
+import {
+  MIN_MANUAL_OFFER_SECONDS,
+  businessWeekOf,
+  hoursInWeek,
+  manualOfferTerms,
+  planManualAssignment,
+} from "./manual";
+import { DEFAULT_LADDER } from "./ladder";
+import { payoutForTicket } from "../pricing/payout";
 import { contractor, iggy, shonda } from "./fixtures";
 import type { Cleaner, DispatchJob } from "./types";
 
@@ -112,5 +120,35 @@ describe("weekly hours", () => {
       { cleanerId: "iggy", start: new Date("2026-09-09T15:00:00Z"), end: new Date("2026-09-09T15:00:00Z"), minutes: 600, status: "assigned" },
     ];
     expect(hoursInWeek(work, "shonda", week)).toBe(6);
+  });
+});
+
+describe("a manager's offer to a contractor", () => {
+  const now = new Date("2026-09-01T14:00:00Z");
+
+  it("opens at the opening share, with a day to answer on a job days away", () => {
+    const terms = manualOfferTerms(job(), now);
+    expect(terms.share).toBe(DEFAULT_LADDER.openingShare);
+    expect(terms.payoutCents).toBe(payoutForTicket(21900, DEFAULT_LADDER.openingShare));
+    expect(terms.expiresAt.getTime() - now.getTime()).toBe(24 * 3_600_000);
+  });
+
+  it("never offers less than the ladder has already reached", () => {
+    expect(manualOfferTerms(job({ offeredUpToShare: 0.41 }), now).share).toBe(0.41);
+  });
+
+  it("keeps a relationship's agreed share", () => {
+    const j = job({
+      continuity: { agreedPayoutShare: 0.37 } as DispatchJob["continuity"],
+    });
+    expect(manualOfferTerms(j, now).share).toBe(0.37);
+  });
+
+  it("still gives her time to answer on a same-day job, but not past the start", () => {
+    const soon = manualOfferTerms(job({ scheduledStart: new Date("2026-09-01T16:00:00Z") }), now);
+    expect(soon.expiresAt.getTime() - now.getTime()).toBe(MIN_MANUAL_OFFER_SECONDS * 1000);
+
+    const start = new Date("2026-09-01T14:10:00Z");
+    expect(manualOfferTerms(job({ scheduledStart: start }), now).expiresAt).toEqual(start);
   });
 });

@@ -109,11 +109,15 @@ actually went wrong:
 ## Reading the dispatch response
 
 ```json
-{ "jobs": 18, "expiredOffers": 2, "assigned": 4, "held": 3,
+{ "jobs": 18, "heldByManager": 1, "expiredOffers": 2, "assigned": 4, "held": 3,
   "offered": 9, "notified": 9, "deferred": 0, "unreachable": 0,
   "refused": 0, "unfilled": 1, "failed": 0 }
 ```
 
+- **heldByManager** — visits a manager offered to one contractor from the
+  dispatch board, still waiting on her answer. The sweep leaves them alone
+  until she declines or the countdown runs out, then treats them like any
+  other unfilled visit. Not counted in `jobs`.
 - **held** — visits being kept for the cleaner who already has that customer,
   offered to her alone with a countdown. This number going to zero on a book
   full of recurring customers means continuity has stopped working, and is

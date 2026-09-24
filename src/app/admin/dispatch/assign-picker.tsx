@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 export interface PickerOption {
   id: string;
   label: string;
+  /** Employees are assigned; contractors are offered the job and must accept. */
+  kind: "assign" | "offer";
   /** Why this cleaner can't take the job; absent when they can. */
   blockedBy?: string;
 }
@@ -13,11 +15,14 @@ export interface PickerOption {
 const POOL = "";
 
 /**
- * Assign a cleaner to one job.
+ * Assign a cleaner to one job, or offer it to a contractor.
  *
  * Preselects the default (Shonda, then Ignis, then the contractor pool). The
  * pool is not an assignment: leaving it selected means the dispatch sweep
  * offers the job to contractors, so the button is disabled on it.
+ *
+ * Picking a contractor sends her an offer rather than assigning her. She is on
+ * the job only once she accepts it.
  */
 export function AssignPicker({
   jobId,
@@ -32,10 +37,13 @@ export function AssignPicker({
   const [choice, setChoice] = useState(defaultCleanerId ?? POOL);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const kind = options.find((o) => o.id === choice)?.kind ?? "assign";
 
   async function assign() {
     setWorking(true);
     setError(null);
+    setNote(null);
     try {
       const response = await fetch("/api/dispatch/assign", {
         method: "POST",
@@ -48,6 +56,8 @@ export function AssignPicker({
         setError(typeof message === "string" ? message : "That did not save.");
         return;
       }
+      const message = (payload as { message?: unknown }).message;
+      if (typeof message === "string") setNote(message);
       router.refresh();
     } catch {
       setError("No connection.");
@@ -83,9 +93,21 @@ export function AssignPicker({
           disabled={working || choice === POOL}
           className="rounded-lg bg-navy px-3.5 py-2 text-sm font-semibold text-white transition-colors hover:bg-navy-deep disabled:opacity-50"
         >
-          {working ? "Assigning…" : "Assign"}
+          {working
+            ? kind === "offer"
+              ? "Sending…"
+              : "Assigning…"
+            : kind === "offer"
+              ? "Send offer"
+              : "Assign"}
         </button>
       </div>
+      {kind === "offer" && choice !== POOL ? (
+        <p className="mt-1.5 text-xs text-ink-3">
+          Contractors get an offer to accept. They&apos;re only on the job once they say yes.
+        </p>
+      ) : null}
+      {note ? <p className="mt-1.5 text-xs text-ink-2">{note}</p> : null}
       {error ? (
         <p role="alert" className="mt-1.5 text-xs text-bad">
           {error}

@@ -16,11 +16,18 @@
  * cheapest choice. Ordering by terms rather than names keeps the rule working
  * through a rename or a new hire.
  *
+ * Picking a W-2 cleaner assigns her. Picking a contractor only OFFERS her the
+ * job — exclusively, on the terms below — and she is on it once she accepts.
+ *
  * Pure, like the rest of lib/dispatch.
  */
 
 import { checkEligibility, type EligibilityContext, type IneligibilityReason } from "./eligibility";
+import { holdWindowSeconds } from "./continuity";
+import { hoursUntil } from "./engine";
+import { DEFAULT_LADDER } from "./ladder";
 import type { Cleaner, DispatchJob } from "./types";
+import { payoutForTicket } from "../pricing/payout";
 import { addCalendarDays, dayOfWeek, startOfCalendarDay, todayIn } from "../time/zone";
 
 /** The weekly ceiling for the default pick. Past it is overtime. */
@@ -117,4 +124,36 @@ export function planManualAssignment(
   );
 
   return { options, defaultCleanerId: pick?.cleaner.id ?? null };
+}
+
+/** However close the job, a contractor gets at least this long to answer. */
+export const MIN_MANUAL_OFFER_SECONDS = 30 * 60;
+
+export interface ManualOfferTerms {
+  share: number;
+  payoutCents: number;
+  expiresAt: Date;
+}
+
+/**
+ * What a contractor is offered when a manager picks her.
+ *
+ * The same terms the engine would give her: a relationship's agreed share if
+ * the job has one, otherwise the opening share or wherever the ladder has
+ * already carried this job, never lower. The countdown is the incumbent-hold
+ * window for this much lead time, with a floor so a same-day pick is still
+ * answerable, and never past the start of the job.
+ */
+export function manualOfferTerms(job: DispatchJob, now: Date): ManualOfferTerms {
+  const share =
+    job.continuity?.agreedPayoutShare ??
+    Math.max(DEFAULT_LADDER.openingShare, job.offeredUpToShare ?? 0);
+
+  const seconds = Math.max(holdWindowSeconds(hoursUntil(job, now)), MIN_MANUAL_OFFER_SECONDS);
+  let expiresAt = new Date(now.getTime() + seconds * 1000);
+  if (job.scheduledStart && job.scheduledStart > now && job.scheduledStart < expiresAt) {
+    expiresAt = job.scheduledStart;
+  }
+
+  return { share, payoutCents: payoutForTicket(job.priceCents, share), expiresAt };
 }

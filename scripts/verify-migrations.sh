@@ -1593,14 +1593,15 @@ SQL
 echo "  continuity inputs verified"
 
 # --- manual assignment (0029) --------------------------------------------------
-# A manager can put any cleaner on a job, contractors included, but not one who
-# fails the gate, not onto a job somebody already has, and never silently: the
-# decision is recorded as an intervention.
+# A manager assigns an EMPLOYEE directly, but only OFFERS a contractor the job:
+# she is on it once she accepts, never before. Neither route passes someone who
+# fails the gate, fills a job somebody already has, or goes unrecorded.
 echo "  checking manual assignment"
 as_super $PSQL -d "$DB" <<'SQL'
 do $$
 declare
-  v_cust uuid; v_prop uuid; v_con uuid; v_other uuid; v_job uuid; v_done uuid;
+  v_cust uuid; v_prop uuid; v_w2 uuid; v_con uuid; v_rival uuid; v_uncleared uuid;
+  v_job uuid; v_job2 uuid; v_done uuid; v_offer uuid;
   v_result text; v_count integer; v_fail integer := 0;
 begin
   insert into customers (first_name, last_name) values ('Manual','Assign')
@@ -1608,9 +1609,14 @@ begin
   insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
     values (v_cust, '3 Pick Ln', 'Plano', '75024', 3, 2) returning id into v_prop;
   insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Wes', 'w2_core', 'active', 4.8, true) returning id into v_w2;
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
     values ('Cora', 'contractor_1099', 'active', 4.6, true) returning id into v_con;
   insert into cleaners (full_name, type, status, rating, background_check_cleared)
-    values ('Dee', 'contractor_1099', 'active', 4.6, false) returning id into v_other;
+    values ('Rae', 'contractor_1099', 'active', 4.6, true) returning id into v_rival;
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Dee', 'w2_core', 'active', 4.6, false) returning id into v_uncleared;
+
   insert into jobs (customer_id, property_id, status, service, freq,
                     scheduled_start, price_cents, estimated_clean_minutes)
     values (v_cust, v_prop, 'dispatching', 'standard', 'one_time',
@@ -1618,39 +1624,82 @@ begin
     returning id into v_job;
   insert into offers (job_id, cleaner_id, channel, tier, hourly_rate_cents, payout_cents,
                       payout_pct, estimated_minutes, expires_at)
-    values (v_job, v_con, 'open_board', 1, 2800, 7000, 0.32, 150, now() + interval '1 day');
+    values (v_job, v_rival, 'open_board', 1, 2800, 7000, 0.32, 150, now() + interval '1 day');
 
-  v_result := assign_job_manually(v_job, v_other, 7000, null);
+  -- A contractor cannot be assigned, by a manager or anyone else.
+  v_result := assign_job_manually(v_job, v_con, 7000, null);
+  if v_result <> 'contractor' then v_fail := v_fail+1;
+    raise warning 'a contractor was assigned without accepting: %', v_result; end if;
+  if exists (select 1 from job_assignments where job_id = v_job) then
+    v_fail := v_fail+1; raise warning 'a refused assignment left an assignment behind'; end if;
+
+  -- She is offered it instead, exclusively.
+  select outcome, offer_id into v_result, v_offer
+    from offer_job_manually(v_job, v_con, 0.33, 7227, now() + interval '1 day', null);
+  if v_result <> 'offered' or v_offer is null then v_fail := v_fail+1;
+    raise warning 'a contractor could not be offered the job: %', v_result; end if;
+  if exists (select 1 from job_assignments where job_id = v_job) then
+    v_fail := v_fail+1; raise warning 'an offer put the contractor on the job'; end if;
+  if not exists (select 1 from offers where id = v_offer and status = 'sent'
+                   and is_exclusive and payout_cents = 7227) then
+    v_fail := v_fail+1; raise warning 'the manager offer is not a live exclusive offer'; end if;
+  if exists (select 1 from offers where job_id = v_job and cleaner_id = v_rival
+               and status = 'sent') then
+    v_fail := v_fail+1; raise warning 'a rival offer survived a manager offer'; end if;
+  if not exists (select 1 from offers o join dispatch_decisions d on d.id = o.decision_id
+                   where o.id = v_offer and d.kind = 'manual_offer') then
+    v_fail := v_fail+1; raise warning 'a manager offer left no decision behind'; end if;
+
+  -- Only her acceptance puts her on it.
+  v_result := respond_to_offer(v_offer, v_con, true);
+  if v_result <> 'accepted' then v_fail := v_fail+1;
+    raise warning 'accepting a manager offer gave %', v_result; end if;
+  if not exists (select 1 from job_assignments where job_id = v_job and cleaner_id = v_con
+                   and payout_cents = 7227) then
+    v_fail := v_fail+1; raise warning 'an accepted manager offer did not assign her'; end if;
+
+  select outcome into v_result
+    from offer_job_manually(v_job, v_rival, 0.33, 7227, now() + interval '1 day', null);
+  if v_result <> 'already_assigned' then v_fail := v_fail+1;
+    raise warning 'a filled job was offered again: %', v_result; end if;
+
+  -- Employees are assigned directly, gate permitting.
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'scheduled', 'standard', 'one_time',
+            now() + interval '6 days', 21900, 150)
+    returning id into v_job2;
+
+  select outcome into v_result
+    from offer_job_manually(v_job2, v_w2, 0.33, 7227, now() + interval '1 day', null);
+  if v_result <> 'not_contractor' then v_fail := v_fail+1;
+    raise warning 'an employee was offered a job: %', v_result; end if;
+
+  v_result := assign_job_manually(v_job2, v_uncleared, 7000, null);
   if v_result <> 'ineligible' then v_fail := v_fail+1;
     raise warning 'an uncleared cleaner was assigned manually: %', v_result; end if;
 
-  v_result := assign_job_manually(v_job, v_con, 7000, null);
+  v_result := assign_job_manually(v_job2, v_w2, 7000, null);
   if v_result <> 'assigned' then v_fail := v_fail+1;
-    raise warning 'a contractor could not be assigned manually: %', v_result; end if;
-  if not exists (select 1 from jobs where id = v_job and status = 'assigned'
-                   and dispatch_channel = 'direct_assign') then
-    v_fail := v_fail+1; raise warning 'a manually assigned job is not assigned'; end if;
-  if exists (select 1 from offers where job_id = v_job and status = 'sent') then
-    v_fail := v_fail+1; raise warning 'a live offer survived a manual assignment'; end if;
-  if not exists (select 1 from dispatch_decisions where job_id = v_job
-                   and kind = 'manual_assign' and cleaner_id = v_con) then
+    raise warning 'an employee could not be assigned manually: %', v_result; end if;
+  if not exists (select 1 from dispatch_decisions where job_id = v_job2
+                   and kind = 'manual_assign' and cleaner_id = v_w2) then
     v_fail := v_fail+1; raise warning 'a manual assignment left no decision behind'; end if;
 
-  v_result := assign_job_manually(v_job, v_con, 7000, null);
+  v_result := assign_job_manually(v_job2, v_w2, 7000, null);
   if v_result <> 'already_assigned' then v_fail := v_fail+1;
     raise warning 'a filled job was assigned again: %', v_result; end if;
-  select count(*) into v_count from job_assignments where job_id = v_job;
+  select count(*) into v_count from job_assignments where job_id = v_job2;
   if v_count <> 1 then v_fail := v_fail+1;
     raise warning 'a manually assigned job has % assignments, want 1', v_count; end if;
 
   insert into jobs (customer_id, property_id, status, service, freq,
                     scheduled_start, price_cents, estimated_clean_minutes)
     values (v_cust, v_prop, 'canceled', 'standard', 'one_time',
-            now() + interval '6 days', 21900, 150)
+            now() + interval '7 days', 21900, 150)
     returning id into v_done;
-  v_result := assign_job_manually(v_done, v_con, 7000, null);
-  if v_result <> 'closed' then v_fail := v_fail+1;
-    raise warning 'a canceled job was assigned: %', v_result; end if;
+  if assign_job_manually(v_done, v_w2, 7000, null) <> 'closed' then v_fail := v_fail+1;
+    raise warning 'a canceled job was assigned'; end if;
 
   if v_fail > 0 then raise exception '% manual assignment assertions failed', v_fail; end if;
   raise notice 'manual assignment passed';

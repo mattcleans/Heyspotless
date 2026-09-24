@@ -416,3 +416,37 @@ export async function offeredUpToFor(
   }
   return byJob;
 }
+
+/** A live offer a manager made from the dispatch board. */
+export interface ManagerOffer {
+  cleanerId: string;
+  expiresAt: Date;
+}
+
+/**
+ * Jobs a manager has offered to a contractor, while that offer is live.
+ *
+ * The sweep leaves these alone: re-deciding one would offer it to other
+ * people, or assign it to an employee, while the contractor the manager chose
+ * is still deciding. Once she declines or the countdown runs out the offer is
+ * no longer live and the job is the sweep's again.
+ */
+export async function managerOffersFor(db: SupabaseClient): Promise<Map<string, ManagerOffer>> {
+  const { data, error } = await db
+    .from("offers")
+    .select("job_id, cleaner_id, expires_at, dispatch_decisions!inner ( decided_by )")
+    .eq("status", "sent")
+    .gt("expires_at", new Date().toISOString())
+    .not("dispatch_decisions.decided_by", "is", null);
+  if (error) throw new Error(`managerOffersFor: ${error.message}`);
+
+  const byJob = new Map<string, ManagerOffer>();
+  for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
+    const jobId = row["job_id"];
+    const cleanerId = row["cleaner_id"];
+    const expiresAt = toDate(row["expires_at"]);
+    if (typeof jobId !== "string" || typeof cleanerId !== "string" || !expiresAt) continue;
+    byJob.set(jobId, { cleanerId, expiresAt });
+  }
+  return byJob;
+}
