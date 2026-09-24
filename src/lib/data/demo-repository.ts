@@ -5,7 +5,7 @@
  * reviewable and demoable, and it is what the 148 engine tests exercise.
  */
 
-import { demoCustomers, demoJobs, demoProperties } from "../demo/added";
+import { demoAssignedCleaner, demoCustomers, demoJobs, demoProperties } from "../demo/added";
 import {
   DEMO_CLEANERS,
   DEMO_INVOICES,
@@ -15,6 +15,8 @@ import {
 import { CLEANER_SHARE_OF_TICKET, payoutForTicket } from "../pricing/payout";
 import type { ContinuityContext } from "../dispatch/continuity";
 import type { Repository } from "./repository";
+import type { ScheduledWork } from "../dispatch/manual";
+import type { WeeklyAvailability } from "../dispatch/store";
 import type {
   Cleaner,
   Customer,
@@ -113,7 +115,9 @@ export class DemoRepository implements Repository {
     if (filter.customerId) jobs = jobs.filter((j) => j.customerId === filter.customerId);
     // Demo mode has no assignments table; every job is visible to the one
     // cleaner the demo signs in as.
-    if (filter.needingCleaner) jobs = jobs.filter((j) => j.status !== "assigned");
+    if (filter.needingCleaner) {
+      jobs = jobs.filter((j) => j.status !== "assigned" && !demoAssignedCleaner(j.id));
+    }
     if (filter.limit !== undefined) jobs = jobs.slice(0, filter.limit);
     return jobs;
   }
@@ -125,6 +129,15 @@ export class DemoRepository implements Repository {
 
   async listCleaners(): Promise<Cleaner[]> {
     return [...DEMO_CLEANERS];
+  }
+
+  /** Demo mode has no assignments table; weekly hours come from the fixtures. */
+  async listScheduledWork(): Promise<ScheduledWork[]> {
+    return [];
+  }
+
+  async listAvailability(): Promise<WeeklyAvailability> {
+    return new Map();
   }
 
   async getCleaner(id: string): Promise<Cleaner | null> {

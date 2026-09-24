@@ -26,7 +26,14 @@ import {
   toProfile,
   toProperty,
 } from "./mappers";
-import { continuityFor, offeredUpToFor, passedOverFor } from "../dispatch/store";
+import {
+  availabilityFor,
+  continuityFor,
+  offeredUpToFor,
+  passedOverFor,
+  type WeeklyAvailability,
+} from "../dispatch/store";
+import type { ScheduledWork } from "../dispatch/manual";
 
 /** Jobs in these states still need a cleaner — the dispatch board's working set. */
 const NEEDS_CLEANER = ["unscheduled", "scheduled", "dispatching"];
@@ -230,6 +237,36 @@ export class SupabaseRepository implements Repository {
     if (error) throw new Error(`getCleanerByProfile: ${error.message}`);
     const id = (data as Row | null)?.["id"];
     return typeof id === "string" ? this.getCleaner(id) : null;
+  }
+
+  async listScheduledWork(from: Date, to: Date): Promise<ScheduledWork[]> {
+    const { data, error } = await this.db
+      .from("job_assignments")
+      .select("cleaner_id, jobs!inner ( scheduled_start, scheduled_end, estimated_clean_minutes, status )")
+      .gte("jobs.scheduled_start", from.toISOString())
+      .lt("jobs.scheduled_start", to.toISOString())
+      // The same statuses cleaner_week_load counts (0005).
+      .in("jobs.status", ["scheduled", "assigned", "in_progress", "complete"]);
+    if (error) throw new Error(`listScheduledWork: ${error.message}`);
+
+    const work: ScheduledWork[] = [];
+    for (const row of rows(data)) {
+      const cleanerId = row["cleaner_id"];
+      const job = (row["jobs"] ?? {}) as Row;
+      const start = typeof job["scheduled_start"] === "string" ? new Date(job["scheduled_start"]) : null;
+      if (typeof cleanerId !== "string" || !start || Number.isNaN(start.getTime())) continue;
+      const minutes = Number(job["estimated_clean_minutes"] ?? 0);
+      const end =
+        typeof job["scheduled_end"] === "string"
+          ? new Date(job["scheduled_end"])
+          : new Date(start.getTime() + minutes * 60_000);
+      work.push({ cleanerId, start, end, minutes, status: String(job["status"]) });
+    }
+    return work;
+  }
+
+  async listAvailability(): Promise<WeeklyAvailability> {
+    return availabilityFor(this.db);
   }
 
   async listCustomers(limit = 100): Promise<Customer[]> {

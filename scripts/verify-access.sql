@@ -80,7 +80,11 @@ begin
     $q$select save_push_subscription('20000000-0000-0000-0000-000000000003','https://x/1')$q$,
     $q$select delete_push_subscription('https://x/1')$q$,
     $q$select settle_push('https://x/1', true)$q$,
-    $q$select push_targets(array['60000000-0000-0000-0000-000000000001'::uuid])$q$
+    $q$select push_targets(array['60000000-0000-0000-0000-000000000001'::uuid])$q$,
+    -- 0029. A browser session that could call this could put any cleaner on
+    -- any job, at any payout.
+    $q$select assign_job_manually('50000000-0000-0000-0000-000000000001',
+                                  '60000000-0000-0000-0000-000000000001', 0, null)$q$
   ] loop
     begin
       execute statement;
@@ -327,7 +331,8 @@ begin
     'save_push_subscription(uuid,text,text,text,text)',
     'delete_push_subscription(text)',
     'settle_push(text,boolean)',
-    'push_targets(uuid[],integer)'
+    'push_targets(uuid[],integer)',
+    'assign_job_manually(uuid,uuid,integer,uuid)'
   ] loop
     if not has_function_privilege(current_user, signature, 'execute') then
       raise exception 'server lost execution privilege on %', signature;

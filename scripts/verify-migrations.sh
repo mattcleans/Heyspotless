@@ -1592,6 +1592,72 @@ end $$;
 SQL
 echo "  continuity inputs verified"
 
+# --- manual assignment (0029) --------------------------------------------------
+# A manager can put any cleaner on a job, contractors included, but not one who
+# fails the gate, not onto a job somebody already has, and never silently: the
+# decision is recorded as an intervention.
+echo "  checking manual assignment"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_prop uuid; v_con uuid; v_other uuid; v_job uuid; v_done uuid;
+  v_result text; v_count integer; v_fail integer := 0;
+begin
+  insert into customers (first_name, last_name) values ('Manual','Assign')
+    returning id into v_cust;
+  insert into properties (customer_id, street, city, zip, bedrooms, bathrooms)
+    values (v_cust, '3 Pick Ln', 'Plano', '75024', 3, 2) returning id into v_prop;
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Cora', 'contractor_1099', 'active', 4.6, true) returning id into v_con;
+  insert into cleaners (full_name, type, status, rating, background_check_cleared)
+    values ('Dee', 'contractor_1099', 'active', 4.6, false) returning id into v_other;
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'dispatching', 'standard', 'one_time',
+            now() + interval '5 days', 21900, 150)
+    returning id into v_job;
+  insert into offers (job_id, cleaner_id, channel, tier, hourly_rate_cents, payout_cents,
+                      payout_pct, estimated_minutes, expires_at)
+    values (v_job, v_con, 'open_board', 1, 2800, 7000, 0.32, 150, now() + interval '1 day');
+
+  v_result := assign_job_manually(v_job, v_other, 7000, null);
+  if v_result <> 'ineligible' then v_fail := v_fail+1;
+    raise warning 'an uncleared cleaner was assigned manually: %', v_result; end if;
+
+  v_result := assign_job_manually(v_job, v_con, 7000, null);
+  if v_result <> 'assigned' then v_fail := v_fail+1;
+    raise warning 'a contractor could not be assigned manually: %', v_result; end if;
+  if not exists (select 1 from jobs where id = v_job and status = 'assigned'
+                   and dispatch_channel = 'direct_assign') then
+    v_fail := v_fail+1; raise warning 'a manually assigned job is not assigned'; end if;
+  if exists (select 1 from offers where job_id = v_job and status = 'sent') then
+    v_fail := v_fail+1; raise warning 'a live offer survived a manual assignment'; end if;
+  if not exists (select 1 from dispatch_decisions where job_id = v_job
+                   and kind = 'manual_assign' and cleaner_id = v_con) then
+    v_fail := v_fail+1; raise warning 'a manual assignment left no decision behind'; end if;
+
+  v_result := assign_job_manually(v_job, v_con, 7000, null);
+  if v_result <> 'already_assigned' then v_fail := v_fail+1;
+    raise warning 'a filled job was assigned again: %', v_result; end if;
+  select count(*) into v_count from job_assignments where job_id = v_job;
+  if v_count <> 1 then v_fail := v_fail+1;
+    raise warning 'a manually assigned job has % assignments, want 1', v_count; end if;
+
+  insert into jobs (customer_id, property_id, status, service, freq,
+                    scheduled_start, price_cents, estimated_clean_minutes)
+    values (v_cust, v_prop, 'canceled', 'standard', 'one_time',
+            now() + interval '6 days', 21900, 150)
+    returning id into v_done;
+  v_result := assign_job_manually(v_done, v_con, 7000, null);
+  if v_result <> 'closed' then v_fail := v_fail+1;
+    raise warning 'a canceled job was assigned: %', v_result; end if;
+
+  if v_fail > 0 then raise exception '% manual assignment assertions failed', v_fail; end if;
+  raise notice 'manual assignment passed';
+end $$;
+SQL
+echo "  manual assignment verified"
+
 # --- two cleaners accepting at once (0015) ------------------------------------
 # The race the whole function exists for. respond_to_offer locks the JOB, not
 # the offer: locking each cleaner's own row would let both through and book two

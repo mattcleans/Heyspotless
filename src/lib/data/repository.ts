@@ -20,6 +20,8 @@ import type {
   Profile,
   Property,
 } from "./types";
+import type { ScheduledWork } from "../dispatch/manual";
+import type { WeeklyAvailability } from "../dispatch/store";
 
 export interface Repository {
   /** Jobs, optionally filtered. Ordered soonest-first; unscheduled last. */
@@ -37,6 +39,13 @@ export interface Repository {
   listCleaners(): Promise<Cleaner[]>;
   getCleaner(id: string): Promise<Cleaner | null>;
   getCleanerByProfile(profileId: string): Promise<Cleaner | null>;
+  /**
+   * Every assigned job starting in [from, to), for the manual-assignment
+   * picker's double-booking and weekly-hours checks.
+   */
+  listScheduledWork(from: Date, to: Date): Promise<ScheduledWork[]>;
+  /** Declared working hours, by cleaner. Absent means nothing declared. */
+  listAvailability(): Promise<WeeklyAvailability>;
 
   listCustomers(limit?: number): Promise<Customer[]>;
   getCustomer(id: string): Promise<Customer | null>;

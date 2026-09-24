@@ -105,6 +105,23 @@ export function addDemoJob(priced: PricedJob): Job {
   return job;
 }
 
+/**
+ * Jobs assigned from the dispatch board in demo mode, by job id.
+ *
+ * On globalThis because the assign API route and the dispatch page are bundled
+ * separately, and a module-level Map would give each its own copy.
+ */
+const globalDemo = globalThis as { __demoAssigned?: Map<string, string> };
+const assigned = (globalDemo.__demoAssigned ??= new Map<string, string>());
+
+export function assignDemoJob(jobId: string, cleanerId: string): void {
+  assigned.set(jobId, cleanerId);
+}
+
+export function demoAssignedCleaner(jobId: string): string | undefined {
+  return assigned.get(jobId);
+}
+
 export function demoCustomers(): readonly Customer[] {
   return customers;
 }

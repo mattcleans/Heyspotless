@@ -15,8 +15,18 @@ import type { Cleaner } from "@/lib/dispatch/types";
 import { formatCents, formatHours, formatPct } from "@/lib/money";
 import { formatDateTimeInZone } from "@/lib/time/zone";
 import { SERVICE_LABELS, FREQUENCY_LABELS } from "@/lib/pricing/price-book";
+import { windowsOn } from "@/lib/dispatch/availability";
+import {
+  businessWeekOf,
+  hoursInWeek,
+  planManualAssignment,
+  type ManualAssignmentPlan,
+} from "@/lib/dispatch/manual";
+import { AssignPicker, type PickerOption } from "./assign-picker";
 
 export const metadata = { title: "Dispatch — Spotless Ops" };
+// Always live: the board changes as soon as somebody assigns a job.
+export const dynamic = "force-dynamic";
 
 const estimate = zipCentroidEstimator(ZIP_CENTROIDS);
 
@@ -187,7 +197,28 @@ function ContinuityNote({ decision }: { decision: DispatchDecision }) {
   return null;
 }
 
-function JobCard({ job, decision, now }: { job: Job; decision: DispatchDecision; now: Date }) {
+function pickerOptions(plan: ManualAssignmentPlan): PickerOption[] {
+  return plan.options.map((o) => ({
+    id: o.cleaner.id,
+    label:
+      o.cleaner.type === "w2_core"
+        ? `${o.cleaner.name} · W-2 · ${o.weekHours.toFixed(1)}h that week`
+        : `${o.cleaner.name} · 1099`,
+    blockedBy: o.eligible ? undefined : REASON_LABELS[o.reasons[0]!],
+  }));
+}
+
+function JobCard({
+  job,
+  decision,
+  now,
+  plan,
+}: {
+  job: Job;
+  decision: DispatchDecision;
+  now: Date;
+  plan: ManualAssignmentPlan;
+}) {
   const hours = hoursUntil(job, now);
 
   return (
@@ -213,6 +244,11 @@ function JobCard({ job, decision, now }: { job: Job; decision: DispatchDecision;
         <SpreadNote job={job} decision={decision} />
         <ContinuityNote decision={decision} />
       </div>
+      <AssignPicker
+        jobId={job.id}
+        options={pickerOptions(plan)}
+        defaultCleanerId={plan.defaultCleanerId}
+      />
     </li>
   );
 }
@@ -271,6 +307,33 @@ export default async function DispatchPage() {
   const now = new Date();
   const context = buildContext(cleaners, now);
 
+  // What each cleaner already has on, across every week the board touches, so
+  // the Assign picker can check clashes and the 40-hour default rule.
+  const latest = jobs.reduce(
+    (max, j) => (j.scheduledStart && j.scheduledStart > max ? j.scheduledStart : max),
+    now,
+  );
+  const [work, availability] = await Promise.all([
+    repo.listScheduledWork(businessWeekOf(now).start, businessWeekOf(latest).end),
+    repo.listAvailability(),
+  ]);
+  const planFor = (job: Job) =>
+    planManualAssignment(job, cleaners, {
+      eligibilityFor: (c) => ({
+        busyWindows: work
+          .filter((w) => w.cleanerId === c.id && w.status !== "complete")
+          .map((w) => ({ start: w.start, end: w.end })),
+        workingWindows: job.scheduledStart
+          ? windowsOn(job.scheduledStart, availability.get(c.id))
+          : undefined,
+      }),
+      // Demo mode has no assignments table; its fixtures carry the week's load.
+      weekHoursFor: (c) =>
+        repo.isDemo
+          ? c.hoursScheduledThisWeek
+          : hoursInWeek(work, c.id, businessWeekOf(job.scheduledStart ?? now)),
+    });
+
   // Plan the whole board at once. Deciding each job independently would tell
   // every job the same guaranteed hours are free, and six jobs would each claim
   // the same unspent hours. Capacity is consumed as it is allocated.
@@ -317,7 +380,8 @@ export default async function DispatchPage() {
     <>
       <PageHeader eyebrow="Admin" title="Dispatch board">
         Every job runs the same path: spend guaranteed hours first, then the eligibility gate, then
-        the board or the waterfall. Each card shows what the engine decided and why.
+        the board or the waterfall. Each card shows what the engine decided and why, and lets you
+        assign a cleaner yourself.
       </PageHeader>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -372,7 +436,7 @@ export default async function DispatchPage() {
       </h2>
       <ul className="grid gap-3 md:grid-cols-2">
         {board.map(({ job, decision }) => (
-          <JobCard key={job.id} job={job} decision={decision} now={now} />
+          <JobCard key={job.id} job={job} decision={decision} now={now} plan={planFor(job)} />
         ))}
       </ul>
 
