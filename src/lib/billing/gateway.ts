@@ -108,6 +108,9 @@ export async function createSetupSession(args: {
 
   const session = await stripe.checkout.sessions.create({
     mode: "setup",
+    // Newer Stripe accounts reject setup-mode Checkout without a currency,
+    // even though no money is taken.
+    currency: "usd",
     customer: args.stripeCustomerId,
     success_url: `${args.origin}/customer?card=saved`,
     cancel_url: `${args.origin}/customer?card=canceled`,
