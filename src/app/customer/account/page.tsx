@@ -215,6 +215,24 @@ export default async function CustomerPage() {
           ))}
         </ul>
       </section>
+
+      {/* ------------------------------------------------------ sign out --- */}
+      <section className="mt-8">
+        <h2 className="eyebrow">Signed in</h2>
+        <div className="card mt-2 flex items-center justify-between gap-4 p-4">
+          <p className="text-sm text-ink-2">
+            {profile?.email ?? (repo.isDemo ? "Preview account" : "Your account")}
+          </p>
+          <form action="/auth/sign-out" method="post">
+            <button
+              type="submit"
+              className="rounded-lg border border-line bg-surface-2 px-3.5 py-2 text-sm font-semibold text-navy transition-colors hover:bg-sunk"
+            >
+              Sign out
+            </button>
+          </form>
+        </div>
+      </section>
     </>
   );
 }
