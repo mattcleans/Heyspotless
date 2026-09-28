@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normaliseHeader, parseCsv, pick, toRecords } from "./csv";
+import { cleanCell, normaliseHeader, parseCsv, pick, toRecords } from "./csv";
 
 describe("parseCsv", () => {
   it("reads a plain file", () => {
@@ -88,5 +88,52 @@ describe("pick", () => {
 
   it("is null when none of them are there", () => {
     expect(pick({}, "customer_id")).toBeNull();
+  });
+});
+
+/**
+ * Housecall Pro writes `Job #` as `="52"` so a spreadsheet keeps it as text.
+ * Read literally, no job id ever matches anything.
+ */
+describe("cleanCell", () => {
+  it("strips the Excel =\"…\" wrapper", () => {
+    expect(cleanCell('="52"')).toBe("52");
+    expect(cleanCell(' ="0052" ')).toBe("0052");
+  });
+
+  it("leaves an ordinary value alone, trimmed", () => {
+    expect(cleanCell("  52 ")).toBe("52");
+    expect(cleanCell("=SUM(A1)")).toBe("=SUM(A1)");
+    expect(cleanCell('"quoted"')).toBe('"quoted"');
+    expect(cleanCell("")).toBe("");
+  });
+
+  it("unescapes a doubled quote inside the wrapper", () => {
+    expect(cleanCell('="6"" baseboards"')).toBe('6" baseboards');
+  });
+
+  it("is applied to every column by toRecords, in both ways a CSV can write it", () => {
+    const records = toRecords(parseCsv('Job #,Zipcode\n="52",="07601"\n"=""53""",75024'));
+    expect(records).toEqual([
+      { job: "52", zipcode: "07601" },
+      { job: "53", zipcode: "75024" },
+    ]);
+  });
+});
+
+describe("normaliseHeader on the 2026 export", () => {
+  it.each([
+    ["Job #", "job"],
+    ["ID", "id"],
+    ["Customer created at", "customer_created_at"],
+    ["Do Not Service", "do_not_service"],
+    ["Address_1 Street Line 1", "address_1_street_line_1"],
+    ["Address_1 Postal Code", "address_1_postal_code"],
+    ["Address_3 Billing?", "address_3_billing"],
+    ["Job scheduled start date", "job_scheduled_start_date"],
+    ["Customer mobile number", "customer_mobile_number"],
+    ["Street 2", "street_2"],
+  ])("reads %s as %s", (heading, key) => {
+    expect(normaliseHeader(heading)).toBe(key);
   });
 });

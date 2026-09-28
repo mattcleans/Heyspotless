@@ -4,7 +4,7 @@
   "private": true,
   "description": "Hey Spotless field-service operations platform \u2014 booking, dispatch, billing, communications.",
   "engines": {
-    "node": ">=20.9.0"
+    "node": ">=22.6.0"
   },
   "scripts": {
     "dev": "next dev",
@@ -15,8 +15,8 @@
     "test": "vitest run",
     "test:zones": "TZ=UTC vitest run && TZ=America/Chicago vitest run",
     "test:watch": "vitest",
-    "import:hcp": "node --experimental-strip-types scripts/import-hcp.ts",
-    "push:keys": "node --experimental-strip-types scripts/generate-vapid-keys.ts"
+    "import:hcp": "node scripts/check-node.mjs && node --experimental-strip-types scripts/import-hcp.ts",
+    "push:keys": "node scripts/check-node.mjs && node --experimental-strip-types scripts/generate-vapid-keys.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.5",
