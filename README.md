@@ -10,15 +10,16 @@ specific job** — something no off-the-shelf field-service tool does.
 
 ## Running it
 
-**Node 20.9 or newer** — Next 16 requires it, and on an older Node the failure does
-not name the version as the cause. `package.json` declares the floor, so `npm install`
-will warn you.
+**Node 22.6 or newer.** Next 16 needs 20.9, but the scripts (`import:hcp`,
+`push:keys`) run TypeScript with `--experimental-strip-types`, which arrived in
+22.6 — and on an older Node the failure does not name the version as the cause.
+`package.json` declares the floor, so `npm install` will warn you.
 
 No credentials are needed. In demo mode the whole admin UI runs off in-memory
 fixtures with no Supabase, Stripe, or Twilio connection.
 
 ```bash
-node -v              # expect v20.9+
+node -v              # expect v22.6+
 npm install
 npm run dev          # http://localhost:3000/admin/customers
 ```

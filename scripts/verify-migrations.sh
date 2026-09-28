@@ -2787,6 +2787,58 @@ end $$;
 SQL
 echo "  Housecall Pro import verified"
 
+# --- 0029: every room the export states --------------------------------------
+echo "  checking imported room counts"
+as_super $PSQL -d "$DB" <<'SQL'
+do $$
+declare
+  v_cust uuid; v_prop uuid; v_fail integer := 0; r record;
+begin
+  v_cust := import_customer('HCP-ROOMS','Room','Counts');
+
+  -- A house with no utility room. Before 0029 it was audited as having one.
+  v_prop := import_property('HCP-ROOMS:1 a st', v_cust, '1 A St', 'Plano', '75024', 'TX',
+                            3, 2, 0, null, null, 1, 1, 0);
+  select * into r from properties where id = v_prop;
+  if r.utility_rooms <> 0 or r.kitchens <> 1 or r.living_rooms <> 1 or r.bedrooms <> 3 then
+    v_fail := v_fail+1;
+    raise warning 'room counts not stored as given: % kitchens, % living, % utility, % beds',
+      r.kitchens, r.living_rooms, r.utility_rooms, r.bedrooms; end if;
+
+  -- Not stated is not zero: a re-run without room data keeps what is there.
+  perform import_property('HCP-ROOMS:1 a st', v_cust, '1 A St', 'Plano', '75024');
+  select * into r from properties where id = v_prop;
+  if r.bedrooms <> 3 or r.bathrooms <> 2 or r.utility_rooms <> 0 then v_fail := v_fail+1;
+    raise warning 'a re-run with no room counts reset them: % beds, % baths, % utility',
+      r.bedrooms, r.bathrooms, r.utility_rooms; end if;
+
+  -- A newer export's counts still apply to an unverified property...
+  perform import_property('HCP-ROOMS:1 a st', v_cust, '1 A St', 'Plano', '75024', 'TX',
+                          4, 2, 1, null, null, 1, 2, 1);
+  select * into r from properties where id = v_prop;
+  if r.bedrooms <> 4 or r.living_rooms <> 2 or r.utility_rooms <> 1 then v_fail := v_fail+1;
+    raise warning 'a re-run did not update unverified room counts'; end if;
+
+  -- ...and never to one somebody counted on site.
+  update properties set kitchens = 2, size_verified_source = 'onsite' where id = v_prop;
+  perform import_property('HCP-ROOMS:1 a st', v_cust, '1 A St', 'Plano', '75024', 'TX',
+                          1, 1, 0, null, null, 1, 1, 0);
+  select * into r from properties where id = v_prop;
+  if r.kitchens <> 2 or r.bedrooms <> 4 then v_fail := v_fail+1;
+    raise warning 'a re-run overwrote room counts verified on site'; end if;
+
+  -- Defaults for a brand-new property with nothing stated are 0001's.
+  v_prop := import_property('HCP-ROOMS:2 b st', v_cust, '2 B St', 'Plano', '75024');
+  select * into r from properties where id = v_prop;
+  if r.bedrooms <> 0 or r.kitchens <> 1 or r.living_rooms <> 1 or r.utility_rooms <> 1 then
+    v_fail := v_fail+1; raise warning 'a property with no counts did not get the column defaults'; end if;
+
+  if v_fail > 0 then raise exception '% room count assertions failed', v_fail; end if;
+  raise notice 'imported room counts passed';
+end $$;
+SQL
+echo "  imported room counts verified"
+
 echo "  checking push subscriptions"
 as_super $PSQL -d "$DB" <<'SQL'
 do $$

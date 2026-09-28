@@ -108,10 +108,26 @@ export function toRecords(rows: readonly string[][]): Record<string, string>[] {
     .map((row) => {
       const record: Record<string, string> = {};
       keys.forEach((key, i) => {
-        if (key) record[key] = (row[i] ?? "").trim();
+        if (key) record[key] = cleanCell(row[i] ?? "");
       });
       return record;
     });
+}
+
+/**
+ * One cell, as the export meant it.
+ *
+ * Housecall Pro writes some columns Excel-style — `Job #` arrives as `="52"` —
+ * so a spreadsheet keeps the leading zeros and does not turn the number into a
+ * date. Read literally, every job id is the four characters `="52"`, which is
+ * not wrong enough to fail and is exactly wrong enough to never match. Applied
+ * to every column in `toRecords`, because the next export will wrap a
+ * different one.
+ */
+export function cleanCell(value: string): string {
+  const trimmed = value.trim();
+  const excel = /^="(.*)"$/s.exec(trimmed);
+  return excel ? excel[1]!.replace(/""/g, '"').trim() : trimmed;
 }
 
 export function normaliseHeader(name: string): string {

@@ -319,7 +319,8 @@ begin
     'activate_cleaner(uuid,cleaner_type,uuid,integer,numeric)',
     'recompute_cleaner_rating(uuid)',
     'import_customer(text,text,text,text,text,text,date)',
-    'import_property(text,uuid,text,text,text,text,integer,integer,integer,text,text)',
+    'import_property(text,uuid,text,text,text,text,integer,integer,integer,text,text,integer,'
+      'integer,integer)',
     'import_job(text,uuid,uuid,text,frequency,integer,integer,job_status,timestamptz,'
       'timestamptz,timestamptz,text)',
     'import_assignment(uuid,uuid)',

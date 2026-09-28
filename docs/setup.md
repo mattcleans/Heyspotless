@@ -170,31 +170,70 @@ migration was lossless.
 
 ### Running the import
 
+Node 22.6 or newer (`node -v`); the script runs TypeScript directly.
+
 **Set `MESSAGING_ENABLED=0` in Vercel first.** The automation planner already
 refuses to confirm old bookings and refuses to ask for a review of a clean that
 was imported after it happened — both are tested — but the cost of being wrong
 is texting several hundred people at once, and a flag costs nothing.
 
-Then, from a laptop, with the service-role key in the environment and never in
-CI:
+**Apply migrations first** (`supabase db push`), including `0029`, which lets
+the import carry kitchens, living rooms and utility rooms. Without it the import
+still runs, with bedrooms and baths only, and says so.
+
+The dry run needs no keys and writes nothing. Run it until its report is clean
+enough to act on:
+
+```bash
+npm run import:hcp -- --customers customers.csv --jobs jobs.csv --dry-run
+```
+
+Both files in one run. The 2026 jobs export has no customer id, so each job is
+linked to a customer by email, then mobile number, then exact name — and the
+report says how many rested on each, so you can see how many are a name match
+alone. A rule that matches two customers skips the job rather than picking one.
+
+What the report lists, and what to do about it:
+
+| Section | Meaning | Action |
+|---|---|---|
+| `not imported, by reason` | Jobs that could not be linked (ambiguous or unknown customer, no address) | Fix the customer in HCP and re-export, or accept the loss — HCP stays the archive |
+| `imported, worth a look` | $0 jobs, past-dated Scheduled/In progress, Do Not Service, phone-number names | Look, then tidy in the app after the import |
+| `needs frequency` | Recurring customers whose visit spacing is not clearly weekly, fortnightly or monthly | Add a row to the plans file |
+| the plan list | Every plan that will be written, with its price and anchor date | Check it — these prices are what the audit compares |
+
+Recurring plans are rebuilt from the jobs HCP marked `Recurring`: at least three
+visits whose median spacing is 5–9 days (weekly), 12–16 (fortnightly) or 26–35
+(monthly), at the latest non-zero price. Anything else goes to a person, through
+an optional plans file that always wins:
+
+```csv
+customer_email_or_phone,street,freq,service,agreed_price,anchor_date,active
+kim@example.com,1100 Aspen Way,biweekly,,$150.00,,
+(214) 555-0101,,monthly,standard,$140.00,2026-10-05,true
+```
+
+Only the customer and `freq` are required; a blank column is filled from the
+jobs. `street` is needed when the customer has more than one address. Then:
 
 ```bash
 export NEXT_PUBLIC_SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=...
-
-# Always first. Reads everything, writes nothing, and prints every row it
-# could not understand — which is the interesting output of a migration.
-npm run import:hcp -- --customers customers.csv --jobs jobs.csv --dry-run
-
-npm run import:hcp -- --customers customers.csv --jobs jobs.csv
+npm run import:hcp -- --customers customers.csv --jobs jobs.csv --plans plans.csv --dry-run
+npm run import:hcp -- --customers customers.csv --jobs jobs.csv --plans plans.csv
 ```
 
-Both files in one run: jobs reference customers by their Housecall Pro id, and
-the dry run's most useful output is the list of jobs whose customer is not in
-the customer export.
+The service-role key only on a laptop, never in CI. It is safe to run again:
+every import keys on the Housecall Pro id (a job's `Job #`, a customer's `ID`,
+a property's customer and street), so a second run updates what the first
+wrote — and a room count somebody has since verified on site, or a note typed
+in this app, survives a re-run.
 
-It is safe to run again. Every import keys on the Housecall Pro id, so a second
-run updates what the first wrote — and a room count somebody has since verified
-on site, or a note typed in this app, survives a re-run.
+**Active plans and the generator.** An imported plan with a future HCP visit is
+active, and the daily recurring generator will start materialising its visits.
+The import links HCP's upcoming visits to the plan, so a visit on the plan's own
+cadence is not booked twice — but one HCP moved off-cadence, or anything past
+HCP's last scheduled date, will be. While HCP is still the system of record,
+decide deliberately: `active=false` in the plans file, or pause generation.
 
 ### Then check the price audit — this is item 7
 
