@@ -1,6 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 /**
  * Accept or decline, from the cleaner's phone.
@@ -20,9 +22,11 @@ import { useState } from "react";
 type State =
   | { status: "idle" }
   | { status: "working"; accepting: boolean }
+  | { status: "error"; message: string; signIn?: boolean }
   | { status: "settled"; tone: "good" | "plain"; message: string };
 
 export function OfferActions({ offerId }: { offerId: string }) {
+  const router = useRouter();
   const [state, setState] = useState<State>({ status: "idle" });
 
   async function respond(accept: boolean) {
@@ -38,6 +42,13 @@ export function OfferActions({ offerId }: { offerId: string }) {
       const payload: unknown = await response.json().catch(() => ({}));
       const data = (payload ?? {}) as { outcome?: unknown; message?: unknown; error?: unknown };
 
+      if (typeof data.outcome !== "string" || !["accepted", "declined", "taken", "expired", "superseded", "not_found"].includes(data.outcome)) {
+        setState({ status: "error", signIn: response.status === 401, message: response.status === 401
+          ? "Your session has ended. Sign in again to answer this offer."
+          : "We couldn’t confirm your answer. Try again, or call the office for help." });
+        return;
+      }
+
       const message =
         typeof data.message === "string"
           ? data.message
@@ -50,14 +61,14 @@ export function OfferActions({ offerId }: { offerId: string }) {
         tone: data.outcome === "accepted" ? "good" : "plain",
         message,
       });
+      router.refresh();
     } catch {
       // A cleaner is often standing in someone's kitchen with one bar of
       // signal. "Try again" is the truth and is actionable; a stack trace is
       // neither.
       setState({
-        status: "settled",
-        tone: "plain",
-        message: "No connection. Nothing was sent — try again.",
+        status: "error",
+        message: "We couldn’t confirm your answer. Check your connection and try again.",
       });
     }
   }
@@ -76,7 +87,10 @@ export function OfferActions({ offerId }: { offerId: string }) {
   const working = state.status === "working";
 
   return (
-    <div className="mt-3 flex gap-2">
+    <div className="mt-3">
+      {state.status === "error" && <p role="alert" className="mb-3 text-sm text-ink-2">{state.message}</p>}
+      {state.status === "error" && state.signIn && <Link href="/login?next=%2Fcleaner" className="secondary-action mb-3">Sign in again</Link>}
+      <div className="flex gap-2">
       <button
         type="button"
         onClick={() => void respond(true)}
@@ -93,6 +107,7 @@ export function OfferActions({ offerId }: { offerId: string }) {
       >
         {working && !state.accepting ? "…" : "Pass"}
       </button>
+      </div>
     </div>
   );
 }

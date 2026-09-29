@@ -1,6 +1,8 @@
+import Link from "next/link";
+import { upcomingVisits } from "@/lib/experience/schedule";
 import { Callout, PageHeader, Pill, Stat } from "@/components/ui";
 import { getRepository } from "@/lib/data";
-import type { Invoice, PaymentMethod } from "@/lib/data/types";
+import type { PaymentMethod } from "@/lib/data/types";
 import { FREQUENCY_LABELS, SERVICE_LABELS } from "@/lib/pricing/price-book";
 import { formatCents } from "@/lib/money";
 import { formatCalendarDate, formatDateInZone } from "@/lib/time/zone";
@@ -23,14 +25,16 @@ export default async function CustomerPage() {
 
   // RLS already restricts these to the signed-in customer; the filter is for
   // demo mode, where there is no session to scope by.
-  const scope = customer ? { customerId: customer.id } : {};
+  const scope = customer ? { customerId: customer.id } : null;
 
-  const [upcoming, invoices, cards] = await Promise.all([
-    repo.listJobs({ ...scope, limit: 3 }),
-    repo.listInvoices({ ...scope, limit: 20 }),
+  const [jobs, invoices, cards] = await Promise.all([
+    scope ? repo.listJobs(scope) : Promise.resolve([]),
+    scope ? repo.listInvoices({ ...scope, limit: 20 }) : Promise.resolve([]),
     customer ? repo.listPaymentMethods(customer.id) : Promise.resolve([]),
   ]);
 
+  const now = new Date();
+  const upcoming = upcomingVisits(jobs, now).slice(0, 3);
   const outstanding = invoices.filter((i) => i.balanceCents > 0 && !i.voidedAt);
   const settled = invoices.filter((i) => i.balanceCents <= 0 || i.voidedAt);
   const owedCents = outstanding.reduce((sum, i) => sum + i.balanceCents, 0);
@@ -46,9 +50,8 @@ export default async function CustomerPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Customer" title="Your cleans">
-        Your upcoming visits, what you owe, and the card we keep on file. Rating a clean feeds
-        straight back into who is eligible for future jobs.
+      <PageHeader eyebrow="Customer" title="Your account">
+        Manage your payments and find your next visit.
       </PageHeader>
 
       {autopayEndedByUs ? (
@@ -64,9 +67,10 @@ export default async function CustomerPage() {
 
       {!billingLive ? (
         <Callout tone="warn" label="Payments are not live yet">
-          The Stripe account is still in underwriting, so nothing on this page can take a card
-          today. Balances shown are real; the buttons will start working the moment billing is
-          switched on, with no change to this screen.
+          Online payments are currently unavailable. Call Hey Spotless at{" "}
+          <a href="tel:+14692800397" className="underline">469-280-0397</a>{" "}
+          for help with a balance or payment.
+          {repo.isDemo && " This preview uses sample balances and payment details."}
         </Callout>
       ) : null}
 
@@ -173,7 +177,7 @@ export default async function CustomerPage() {
       {/* ------------------------------------------------------- history --- */}
       {settled.length > 0 ? (
         <section className="mt-8">
-          <h2 className="eyebrow">Paid</h2>
+          <h2 className="eyebrow">Payment history</h2>
           <ul className="mt-2 space-y-2">
             {settled.map((invoice) => (
               <li
@@ -197,7 +201,8 @@ export default async function CustomerPage() {
 
       {/* ------------------------------------------------------ upcoming --- */}
       <section className="mt-8">
-        <h2 className="eyebrow">Upcoming</h2>
+        <div className="flex items-center justify-between gap-3"><h2 className="eyebrow">Upcoming visits</h2><Link href="/customer/visits" className="text-sm underline">View all visits</Link></div>
+        {upcoming.length === 0 && <p className="mt-3 text-sm text-ink-2">No upcoming visits. <Link href="/book" className="underline">Request a clean</Link>.</p>}
         <ul className="mt-2 space-y-3">
           {upcoming.map((job) => (
             <li key={job.id} className="card flex items-center justify-between gap-4 p-4">
@@ -210,7 +215,7 @@ export default async function CustomerPage() {
                   {job.scheduledStart ? ` · ${formatDateInZone(job.scheduledStart)}` : ""}
                 </p>
               </div>
-              <span className="nums font-semibold text-navy">{formatCents(job.priceCents)}</span>
+              <Link href={`/customer/visits/${job.id}`} className="secondary-action">View visit</Link>
             </li>
           ))}
         </ul>
@@ -241,5 +246,4 @@ function cardNote(card: PaymentMethod): string {
   if (!card.expMonth || !card.expYear) return "Saved";
   return `expires ${String(card.expMonth).padStart(2, "0")}/${String(card.expYear).slice(-2)}`;
 }
-
 

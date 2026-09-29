@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AppIcon, type AppIconName } from "./app-navigation";
 const groups: {
   label: string;
@@ -35,9 +35,22 @@ const groups: {
 export function ManagementNavigation() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const toggle = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        toggle.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", dismiss);
+    return () => document.removeEventListener("keydown", dismiss);
+  }, [open]);
   return (
     <>
       <button
+        ref={toggle}
         className="management-menu-toggle"
         type="button"
         aria-expanded={open}
