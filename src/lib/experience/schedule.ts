@@ -2,9 +2,16 @@ import type { Job } from "@/lib/data/types";
 import { BUSINESS_TIME_ZONE, todayIn } from "@/lib/time/zone";
 
 const CLOSED = new Set(["complete", "canceled"]);
+/**
+ * Open visits still ahead of the customer. A clean under way counts: its start
+ * time has passed, but the cleaner is in the house and the visit is not over.
+ */
 export function upcomingVisits(jobs: readonly Job[], now: Date): Job[] {
   return activeVisits(jobs).filter(
-    (job) => !job.scheduledStart || job.scheduledStart >= now,
+    (job) =>
+      job.status === "in_progress" ||
+      !job.scheduledStart ||
+      job.scheduledStart >= now,
   );
 }
 export function activeVisits(jobs: readonly Job[]): Job[] {
