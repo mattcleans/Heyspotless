@@ -2,6 +2,11 @@ import type { Job } from "@/lib/data/types";
 import { BUSINESS_TIME_ZONE, todayIn } from "@/lib/time/zone";
 
 const CLOSED = new Set(["complete", "canceled"]);
+export function upcomingVisits(jobs: readonly Job[], now: Date): Job[] {
+  return activeVisits(jobs).filter(
+    (job) => !job.scheduledStart || job.scheduledStart >= now,
+  );
+}
 export function activeVisits(jobs: readonly Job[]): Job[] {
   return jobs
     .filter((job) => !CLOSED.has(job.status))

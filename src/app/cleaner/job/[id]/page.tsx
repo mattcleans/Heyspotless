@@ -7,11 +7,11 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { ServiceStore } from "@/lib/service/store";
 import { roomsFor } from "@/lib/service/rooms";
 import { isDemoMode } from "@/lib/supabase/env";
-import { CLEANER_SHARE_OF_TICKET, payoutForTicket } from "@/lib/pricing/payout";
+import { createClient } from "@/lib/supabase/server";
 import { formatCents, formatHours } from "@/lib/money";
 import { formatDateTimeInZone } from "@/lib/time/zone";
 
-export const metadata = { title: "Job — Spotless Ops" };
+export const metadata = { title: "Visit | Hey Spotless" };
 export const dynamic = "force-dynamic";
 
 /**
@@ -58,7 +58,15 @@ export default async function CleanerJobPage({
       );
 
   const status = toFlowStatus(job.status);
-  const payout = payoutForTicket(job.priceCents, CLEANER_SHARE_OF_TICKET);
+  let payout: number | null = null;
+  if (cleaner && !repo.isDemo && cleaner.type !== "w2_core") {
+    const db = await createClient();
+    const { data, error } = await db.from("job_assignments")
+      .select("payout_cents").eq("job_id", id).eq("cleaner_id", cleaner.id).maybeSingle();
+    if (error) throw new Error("Unable to load your agreed pay. Please try again.");
+    payout = data?.payout_cents == null ? null : Number(data.payout_cents);
+  }
+  const directions = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${job.street}, ${job.city}`)}`;
 
   return (
     <>
@@ -70,12 +78,19 @@ export default async function CleanerJobPage({
         <Pill tone={status === "complete" ? "good" : "sky"}>
           {status === "assigned" ? "Not started" : status === "in_progress" ? "In progress" : "Done"}
         </Pill>
-        <span className="nums text-sm text-navy">{formatCents(payout)}</span>
+        <span className="nums text-sm text-navy">{cleaner?.type === "w2_core"
+          ? "Paid under your hourly terms"
+          : payout !== null ? `${formatCents(payout)} agreed pay` : "Pay details with the office"}</span>
         <span className="text-xs text-ink-3">
           {job.scheduledStart ? formatDateTimeInZone(job.scheduledStart) : "Unscheduled"} ·{" "}
           about {formatHours(job.estimatedCleanMinutes)}
         </span>
       </p>
+
+      <div className="mt-4 flex flex-wrap gap-3">
+        <a href={directions} target="_blank" rel="noopener noreferrer" className="secondary-action">Open directions</a>
+        <a href="tel:+14692800397" className="secondary-action">Call the office</a>
+      </div>
 
       {/* Everything nobody remembers to ask on the doorstep. */}
       {property && (property.gateCode || property.accessNotes || property.parkingNotes || property.pets) && (

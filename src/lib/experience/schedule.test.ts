@@ -1,10 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { activeVisits, visitsOnDay, attentionVisits } from "./schedule";
+import { activeVisits, upcomingVisits, visitsOnDay, attentionVisits } from "./schedule";
 import type { Job } from "@/lib/data/types";
 const visit = (id: string, date: string | null, status = "assigned") =>
   ({ id, scheduledStart: date ? new Date(date) : null, status }) as Job;
 
 describe("daily experience", () => {
+  it("shows upcoming appointments before times needing confirmation and excludes past or closed visits", () => {
+    const now = new Date("2026-09-29T15:00:00Z");
+    const jobs = [
+      visit("unknown", null),
+      visit("past", "2026-09-29T14:59:59Z"),
+      visit("later", "2026-09-30T15:00:00Z"),
+      visit("now", "2026-09-29T15:00:00Z"),
+      visit("canceled", "2026-09-30T15:00:00Z", "canceled"),
+      visit("complete", "2026-09-30T15:00:00Z", "complete"),
+    ];
+    expect(upcomingVisits(jobs, now).map((job) => job.id)).toEqual(["now", "later", "unknown"]);
+    expect(jobs[0]?.id).toBe("unknown");
+  });
   it("keeps the whole local day, without a four-visit limit or geographic reordering", () => {
     const jobs = Array.from({ length: 6 }, (_, i) =>
       visit(String(i), `2026-09-21T${String(13 + i).padStart(2, "0")}:00:00Z`),
