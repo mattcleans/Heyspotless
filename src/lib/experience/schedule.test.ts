@@ -18,6 +18,15 @@ describe("daily experience", () => {
     expect(upcomingVisits(jobs, now).map((job) => job.id)).toEqual(["now", "later", "unknown"]);
     expect(jobs[0]?.id).toBe("unknown");
   });
+  it("keeps a clean that is under way, even though its start time has passed", () => {
+    const now = new Date("2026-09-29T15:30:00Z");
+    const jobs = [
+      visit("later", "2026-09-30T15:00:00Z"),
+      visit("cleaning", "2026-09-29T15:00:00Z", "in_progress"),
+      visit("missed", "2026-09-29T14:00:00Z"),
+    ];
+    expect(upcomingVisits(jobs, now).map((job) => job.id)).toEqual(["cleaning", "later"]);
+  });
   it("keeps the whole local day, without a four-visit limit or geographic reordering", () => {
     const jobs = Array.from({ length: 6 }, (_, i) =>
       visit(String(i), `2026-09-21T${String(13 + i).padStart(2, "0")}:00:00Z`),
@@ -57,6 +66,15 @@ describe("daily experience", () => {
       "unknown",
     ]);
     expect(jobs[0]?.id).toBe("unknown");
+  });
+  it("keeps a clean that is under way, even though its start time has passed", () => {
+    const now = new Date("2026-09-29T15:30:00Z");
+    const jobs = [
+      visit("later", "2026-09-30T15:00:00Z"),
+      visit("cleaning", "2026-09-29T15:00:00Z", "in_progress"),
+      visit("missed", "2026-09-29T14:00:00Z"),
+    ];
+    expect(upcomingVisits(jobs, now).map((job) => job.id)).toEqual(["cleaning", "later"]);
   });
   it("flags missing times, late starts, and near-term unassigned work, not finished or ongoing work", () => {
     const jobs = [
