@@ -4,6 +4,9 @@ grant usage on schema public, auth to anon, authenticated, service_role;
 grant execute on function auth.uid() to anon, authenticated, service_role;
 -- Broad client privileges stress the trigger as well as the ownership policy.
 grant all on profiles, customers, properties to anon, authenticated, service_role;
+-- The existing property SELECT policy consults these tables for assigned
+-- cleaners, even when this fixture's caller is a customer. Keep RLS enabled.
+grant select on jobs, job_assignments to authenticated;
 insert into auth.users(id,email) values
  ('93000000-0000-0000-0000-000000000001','home-a@example.test'),
  ('93000000-0000-0000-0000-000000000002','home-b@example.test'),
