@@ -9,7 +9,7 @@ import { Pill } from "@/components/ui";
 import { SERVICE_LABELS, SERVICE_TYPES } from "@/lib/pricing/price-book";
 import { formatDateTimeInZone } from "@/lib/time/zone";
 import { activeVisits } from "@/lib/experience/schedule";
-import { STAGES, STAGE_LABELS, type VisitStage } from "@/lib/visits/progress";
+import { STAGE_LABELS, visitStage } from "@/lib/visits/progress";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Your home | Hey Spotless" };
@@ -147,7 +147,7 @@ async function nextVisit(jobId: string) {
   const db = await createClient();
   const { data, error } = await db
     .from("visit_progress")
-    .select("cleaner_id, stage")
+    .select("cleaner_id, status, started_at")
     .eq("job_id", jobId)
     .maybeSingle();
   if (error) throw new Error("Unable to load your visit. Please try again.");
@@ -156,8 +156,8 @@ async function nextVisit(jobId: string) {
     typeof data.cleaner_id === "string"
       ? await new CleanerDirectory(db).get(data.cleaner_id)
       : null;
-  const stage = STAGES.includes(data.stage as VisitStage)
-    ? (data.stage as VisitStage)
-    : "scheduled";
+  const started = data.started_at ? new Date(data.started_at) : null;
+  if (started && !Number.isFinite(started.getTime())) throw new Error("Unable to verify your visit timing. Please refresh.");
+  const stage = visitStage(data.status, started, typeof data.cleaner_id === "string");
   return { cleaner, stage };
 }
