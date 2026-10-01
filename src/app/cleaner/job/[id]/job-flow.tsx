@@ -18,7 +18,7 @@ import type { Room } from "@/lib/service/rooms";
  *
  * DONE IS NEVER BLOCKED. If photos are outstanding she is told, but the button
  * works: she has left, the house is clean, and the queue will keep uploading
- * whether or not this screen is open.
+ * when this visit is open. Reopening the visit resumes queued uploads.
  */
 
 type Status = "assigned" | "in_progress" | "complete";

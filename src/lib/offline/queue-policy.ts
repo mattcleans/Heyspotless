@@ -28,6 +28,8 @@ export interface QueueItem {
   roomKey: string;
   kind: "before" | "after" | "issue";
   takenAt: number;
+  /** Identifies this capture independently of the room's stable queue key. */
+  revision?: string;
   state: QueueItemState;
   attempts: number;
   /** When it may next be tried. Epoch ms. */
@@ -141,9 +143,12 @@ export interface QueueSummary {
   struggling: number;
   /** True while anything is still waiting to reach the server. */
   busy: boolean;
+  /** Recording requires a renewed app session, rather than a stronger signal. */
+  authRequired?: boolean;
 }
 
-export function summarise(items: readonly QueueItem[]): QueueSummary {
+export function summarise(allItems: readonly QueueItem[], jobId?: string): QueueSummary {
+  const items = jobId === undefined ? allItems : allItems.filter((item) => item.jobId === jobId);
   const outstanding = items.filter((i) => i.state !== "done").length;
   return {
     outstanding,
@@ -151,6 +156,8 @@ export function summarise(items: readonly QueueItem[]): QueueSummary {
       (i) => i.state !== "done" && i.attempts >= ATTEMPTS_BEFORE_WARNING,
     ).length,
     busy: outstanding > 0,
+    authRequired: items.some((i) => i.state !== "done"
+      && (i.lastError === "record: 401" || i.lastError === "storage: 401")),
   };
 }
 
