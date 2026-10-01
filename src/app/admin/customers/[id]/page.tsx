@@ -98,9 +98,9 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
             {jobs.map((job) => (
               <li key={job.id} className="card flex items-center justify-between gap-4 p-4">
                 <div>
-                  <p className="font-medium text-ink">
+                  <Link href={`/admin/visits/${job.id}`} className="font-medium text-ink underline">
                     {SERVICE_LABELS[job.service]} · {FREQUENCY_LABELS[job.frequency]}
-                  </p>
+                  </Link>
                   <p className="mt-0.5 text-sm text-ink-3">
                     {job.street}
                     {job.scheduledStart

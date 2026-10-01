@@ -40,7 +40,7 @@ export default async function OverviewPage() {
           ["Visits today", today.length],
           ["Cleaning now", cleaning],
           ["Completed", complete],
-          ["Need attention", attention.length],
+          ["Scheduling follow-up", attention.length],
         ].map(([label, value]) => (
           <div key={label} className="card p-5">
             <p className="text-sm text-ink-2">{label}</p>
@@ -52,7 +52,7 @@ export default async function OverviewPage() {
         <section>
           <div className="section-heading !mt-0">
             <h2>Needs your attention</h2>
-            <Link href="/admin/dispatch">Open dispatch</Link>
+            <Link href="/admin/review">Review completed visits</Link>
           </div>
           {attention.length ? (
             <ul className="space-y-3">
@@ -77,9 +77,9 @@ export default async function OverviewPage() {
                     </Link>
                     <Link
                       className="text-navy underline"
-                      href="/admin/dispatch"
+                      href={`/admin/visits/${job.id}`}
                     >
-                      Review assignment
+                      Review visit
                     </Link>
                   </div>
                 </li>
@@ -109,7 +109,7 @@ export default async function OverviewPage() {
                   <div className="flex items-start justify-between gap-3">
                     <Link
                       className="font-semibold text-navy underline decoration-line underline-offset-4"
-                      href={`/admin/customers/${job.customerId}`}
+                      href={`/admin/visits/${job.id}`}
                     >
                       {job.customerName}
                     </Link>
