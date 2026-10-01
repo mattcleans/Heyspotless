@@ -51,8 +51,9 @@ export default async function CustomerPage() {
   return (
     <>
       <PageHeader eyebrow="Customer" title="Your account">
-        Manage your payments and find your next visit.
+        Manage your payments, home instructions, and upcoming visits.
       </PageHeader>
+      {customer && <Link href="/customer/account/homes" className="secondary-action mt-4 inline-flex">Manage home instructions</Link>}
 
       {autopayEndedByUs ? (
         <Callout tone="warn" label="Autopay was switched off">
@@ -246,4 +247,3 @@ function cardNote(card: PaymentMethod): string {
   if (!card.expMonth || !card.expYear) return "Saved";
   return `expires ${String(card.expMonth).padStart(2, "0")}/${String(card.expYear).slice(-2)}`;
 }
-

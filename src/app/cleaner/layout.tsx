@@ -34,7 +34,8 @@ export default function CleanerLayout({ children }: { children: ReactNode }) {
         { href: "/cleaner", label: "My day", icon: "home" },
         { href: "/cleaner/schedule", label: "Schedule", icon: "calendar" },
         { href: "/cleaner#offers", label: "Job offers", icon: "sparkle" },
-        { href: "tel:+14692800397", label: "Get help", icon: "message" },
+        { href: "/cleaner/earnings", label: "Pay", icon: "account" },
+        { href: "/cleaner/availability", label: "Hours", icon: "account" },
       ]} />
     </div>
   );

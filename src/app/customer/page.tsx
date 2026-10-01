@@ -104,6 +104,11 @@ export default async function ClientHome() {
           </p>
         </Link>
       )}
+      {(customer || repo.isDemo) && <section className="visit-feature mt-5">
+        <h2 className="font-semibold text-navy">Ready for your cleaner</h2>
+        <p className="mt-2 text-sm text-ink-2">Keep entry, parking, and pet instructions up to date for your home.</p>
+        <Link href="/customer/account/homes" className="secondary-action mt-3 inline-flex">Manage home instructions</Link>
+      </section>}
       <section aria-labelledby="services">
         <div className="section-heading">
           <h2 id="services">A clean for every occasion</h2>

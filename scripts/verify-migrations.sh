@@ -3136,3 +3136,9 @@ echo "  client app verified"
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql
 echo "  access controls verified"
+echo "  checking cleaner availability saves"
+as_super $PSQL -d "$DB" -f scripts/verify-cleaner-availability.sql
+echo "  cleaner availability verified"
+echo "  checking customer home instruction saves"
+as_super $PSQL -d "$DB" -f scripts/verify-home-instructions.sql
+echo "  customer home instructions verified"
