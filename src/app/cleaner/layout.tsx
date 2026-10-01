@@ -1,7 +1,7 @@
 import { WorkspaceIdentity } from "@/components/workspace-identity";
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { AppIcon } from "@/components/app-navigation";
+import { AppNavigation, AppIcon } from "@/components/app-navigation";
 import { isDemoMode } from "@/lib/supabase/env";
 
 export default function CleanerLayout({ children }: { children: ReactNode }) {
@@ -30,28 +30,12 @@ export default function CleanerLayout({ children }: { children: ReactNode }) {
       <main id="cleaner-content" className="service-content">
         {children}
       </main>
-      <nav className="app-tabs" aria-label="Cleaner navigation">
-        <ul>
-          <li>
-            <Link href="/cleaner">
-              <AppIcon name="calendar" />
-              My day
-            </Link>
-          </li>
-          <li>
-            <a href="/cleaner#offers">
-              <AppIcon name="sparkle" />
-              Job offers
-            </a>
-          </li>
-          <li>
-            <a href="tel:+14692800397">
-              <AppIcon name="message" />
-              Get help
-            </a>
-          </li>
-        </ul>
-      </nav>
+      <AppNavigation label="Cleaner navigation" tabs={[
+        { href: "/cleaner", label: "My day", icon: "home" },
+        { href: "/cleaner/schedule", label: "Schedule", icon: "calendar" },
+        { href: "/cleaner#offers", label: "Job offers", icon: "sparkle" },
+        { href: "tel:+14692800397", label: "Get help", icon: "message" },
+      ]} />
     </div>
   );
 }

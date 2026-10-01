@@ -187,6 +187,7 @@ export default async function CleanerPage() {
         <section>
           <div className="section-heading">
             <h2>Coming up next</h2>
+            <Link href="/cleaner/schedule">View full schedule</Link>
           </div>
           <ul className="divide-y divide-line">
             {upcoming.slice(0, 5).map((job) => (

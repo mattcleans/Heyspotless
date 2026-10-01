@@ -11,6 +11,7 @@ const groups: {
     label: "Run the day",
     items: [
       { href: "/admin", label: "Overview", icon: "home" },
+      { href: "/admin/schedule", label: "Schedule", icon: "calendar" },
       { href: "/admin/automation", label: "Automation", icon: "sparkle" },
       { href: "/admin/dispatch", label: "Matching", icon: "people" },
       { href: "/admin/inbox", label: "Inbox", icon: "message" },

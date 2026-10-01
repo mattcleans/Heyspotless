@@ -34,7 +34,7 @@ export function JobFlow({ jobId, initialStatus, rooms, alreadyDone }: JobFlowPro
   const [status, setStatus] = useState<Status>(initialStatus);
   const [working, setWorking] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const [outstanding, setOutstanding] = useState<{ label: string; missing: string[] }[]>([]);
+  const [outstanding, setOutstanding] = useState<{ label: string; missing: string[] }[] | null>(null);
   const [onMyWay, setOnMyWay] = useState<"idle" | "sending" | "sent">("idle");
 
   /**
@@ -127,7 +127,7 @@ export function JobFlow({ jobId, initialStatus, rooms, alreadyDone }: JobFlowPro
               label: typeof gap.label === "string" ? gap.label : "Room",
               missing: Array.isArray(gap.missing) ? gap.missing.map(String) : [],
             }))
-          : [],
+          : null,
       );
     } catch {
       setNote("Could not mark this done. Check your signal and try again.");
@@ -186,15 +186,15 @@ export function JobFlow({ jobId, initialStatus, rooms, alreadyDone }: JobFlowPro
       {status === "complete" && (
         <div className="mt-6">
           <Pill tone="good">Done</Pill>
-          {outstanding.length > 0 ? (
+          {outstanding && outstanding.length > 0 ? (
             <p className="mt-3 text-sm text-ink-2">
-              Still to photograph:{" "}
+              Photo requirements recorded when you finished:{" "}
               {outstanding.map((gap) => `${gap.label} (${gap.missing.join(" + ")})`).join(", ")}.
-              The job is finished either way — these are needed before it can be invoiced.
+              The visit is finished. Check the checklist below for what is saved and still uploading.
             </p>
           ) : (
             <p className="mt-3 text-sm text-ink-2">
-              Everything is in. Nothing else needed from you.
+              {outstanding ? "The server confirmed all required photos when you finished." : "This visit is finished. Check the photo checklist below for saved photos and any remaining uploads."}
             </p>
           )}
           <JobCapture jobId={jobId} rooms={rooms} alreadyDone={alreadyDone} />

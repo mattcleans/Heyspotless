@@ -10,6 +10,7 @@ import { isDemoMode } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
 import { formatCents, formatHours } from "@/lib/money";
 import { formatDateTimeInZone } from "@/lib/time/zone";
+import { JOB_LABELS } from "@/lib/experience/schedule";
 
 export const metadata = { title: "Visit | Hey Spotless" };
 export const dynamic = "force-dynamic";
@@ -76,7 +77,7 @@ export default async function CleanerJobPage({
 
       <p className="mt-3 flex flex-wrap items-center gap-2">
         <Pill tone={status === "complete" ? "good" : "sky"}>
-          {status === "assigned" ? "Not started" : status === "in_progress" ? "In progress" : "Done"}
+          {JOB_LABELS[job.status] ?? "Check visit details"}
         </Pill>
         <span className="nums text-sm text-navy">{cleaner?.type === "w2_core"
           ? "Paid under your hourly terms"
@@ -102,7 +103,9 @@ export default async function CleanerJobPage({
         </dl>
       )}
 
-      {cleaner ? (
+      {job.status === "canceled" ? (
+        <p className="visit-feature mt-5">This visit was canceled. You do not need to start it. Call the office if you have questions.</p>
+      ) : cleaner ? (
         <>
           {repo.isDemo && (
             <p className="mt-4 rounded-lg border border-line bg-surface-2 p-3 text-xs text-ink-2">

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { DemoVisit } from "@/components/demo-visit";
 import { VisitRefresh } from "@/components/visit-refresh";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
@@ -31,11 +32,12 @@ import { formatDateTimeInZone } from "@/lib/time/zone";
  * policies decide whose visit this is, and a guessed id returns nothing.
  */
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Visit details | Hey Spotless" };
 
 export default async function VisitPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
 
-  if (isDemoMode()) notFound();
+  if (isDemoMode()) return <DemoVisit id={id} />;
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
 
   const db = await createClient();
@@ -88,6 +90,7 @@ export default async function VisitPage({ params }: { params: Promise<{ id: stri
 
   return (
     <>
+      <Link href="/customer/visits" className="mb-5 inline-block text-sm text-navy underline">Back to visits</Link>
       <p className="eyebrow">
         {visit.stage === "cleaning" ? "In progress" : STAGE_LABELS[visit.stage]}
       </p>
