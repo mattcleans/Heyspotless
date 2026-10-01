@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { VisitRefresh } from "@/components/visit-refresh";
 import { useState } from "react";
 import { JobCapture } from "../../job-capture";
 import { Pill } from "@/components/ui";
@@ -28,10 +30,13 @@ export interface JobFlowProps {
   initialStatus: Status;
   rooms: Room[];
   alreadyDone: { roomKey: string; kind: string }[];
+  backupBlocked?: boolean;
 }
 
-export function JobFlow({ jobId, initialStatus, rooms, alreadyDone }: JobFlowProps) {
+export function JobFlow({ jobId, initialStatus, rooms, alreadyDone, backupBlocked = false }: JobFlowProps) {
   const [status, setStatus] = useState<Status>(initialStatus);
+  const [blocked, setBlocked] = useState(backupBlocked);
+  const [needsSignIn, setNeedsSignIn] = useState(false);
   const [working, setWorking] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [outstanding, setOutstanding] = useState<{ label: string; missing: string[] }[] | null>(null);
@@ -88,7 +93,13 @@ export function JobFlow({ jobId, initialStatus, rooms, alreadyDone }: JobFlowPro
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ jobId }),
       });
-      if (!response.ok) throw new Error("start failed");
+      const data = await response.json().catch(() => ({})) as {started?:unknown;error?:unknown;code?:unknown};
+      if (response.status === 401) setNeedsSignIn(true);
+      if (data.code === "backup_approval_required") setBlocked(true);
+      if (!response.ok || data.started !== true) {
+        setNote(typeof data.error === "string" ? data.error : "Could not confirm the visit started. Refresh or try again.");
+        return;
+      }
       setStatus("in_progress");
     } catch {
       setNote("Could not start the job. Check your signal and try again.");
@@ -114,11 +125,18 @@ export function JobFlow({ jobId, initialStatus, rooms, alreadyDone }: JobFlowPro
       });
       const payload: unknown = await response.json().catch(() => ({}));
       const data = (payload ?? {}) as {
+        completed?: unknown;
+        error?: unknown;
+        code?: unknown;
         billable?: unknown;
         outstanding?: { label?: unknown; missing?: unknown }[];
       };
 
-      if (!response.ok) throw new Error("complete failed");
+      if (response.status === 401) setNeedsSignIn(true);
+      if (!response.ok || data.completed !== true) {
+        setNote(typeof data.error === "string" ? data.error : "Could not confirm this visit finished. Refresh or try again.");
+        return;
+      }
 
       setStatus("complete");
       setOutstanding(
@@ -144,7 +162,7 @@ export function JobFlow({ jobId, initialStatus, rooms, alreadyDone }: JobFlowPro
         </p>
       )}
 
-      {status === "assigned" && (
+      {status === "assigned" && !blocked && !needsSignIn && (
         <button
           type="button"
           onClick={() => void tellThem()}
@@ -155,7 +173,7 @@ export function JobFlow({ jobId, initialStatus, rooms, alreadyDone }: JobFlowPro
         </button>
       )}
 
-      {status === "assigned" && (
+      {status === "assigned" && !blocked && !needsSignIn && (
         <button
           type="button"
           onClick={() => void start()}
@@ -166,13 +184,15 @@ export function JobFlow({ jobId, initialStatus, rooms, alreadyDone }: JobFlowPro
         </button>
       )}
 
+      {needsSignIn && <Link className="secondary-action mt-4 inline-flex" href={`/login?next=${encodeURIComponent(`/cleaner/job/${jobId}`)}`}>Sign in to continue</Link>}
+      {status === "assigned" && blocked && <section className="visit-feature mt-5" role="status"><h2 className="font-semibold text-navy">Waiting for client approval</h2><p className="mt-2 text-sm">This visit has a backup cleaner. Do not start work until the client approves the current backup. Refresh for their decision or call the office.</p><VisitRefresh label="Check approval" /></section>}
       {status === "in_progress" && (
         <>
           <JobCapture jobId={jobId} rooms={rooms} alreadyDone={alreadyDone} />
           <button
             type="button"
             onClick={() => void finish()}
-            disabled={working}
+            disabled={working || needsSignIn}
             className="mt-6 w-full rounded-lg bg-navy px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
           >
             {working ? "Finishing…" : "Done"}

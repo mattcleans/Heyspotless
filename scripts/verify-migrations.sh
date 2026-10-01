@@ -3142,3 +3142,7 @@ echo "  cleaner availability verified"
 echo "  checking customer home instruction saves"
 as_super $PSQL -d "$DB" -f scripts/verify-home-instructions.sql
 echo "  customer home instructions verified"
+
+echo "  checking client cleaner requests and backup approval"
+as_super $PSQL -d "$DB" -f scripts/verify-client-cleaner-choice.sql
+echo "  client cleaner choice verified"

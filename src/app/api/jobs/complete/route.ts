@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getRepository } from "@/lib/data";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { ServiceStore } from "@/lib/service/store";
+import { BackupApprovalRequired, ServiceStore } from "@/lib/service/store";
 import { invoiceReadiness } from "@/lib/service/completion";
 
 /**
@@ -30,13 +30,20 @@ export async function POST(request: NextRequest) {
   const profile = await repo.getCurrentProfile();
   if (!profile) return NextResponse.json({ error: "not signed in" }, { status: 401 });
 
+  if (profile.role !== "cleaner") return NextResponse.json({ error: "Cleaner access required" }, { status: 403 });
   const cleaner = await repo.getCleanerByProfile(profile.id);
   if (!cleaner) return NextResponse.json({ error: "no cleaner record" }, { status: 403 });
 
   const at = readCoordinate(body["location"]);
   const store = new ServiceStore(createAdminClient());
 
-  if (!(await store.complete(jobId, cleaner.id, at))) {
+  let saved;
+  try { saved = await store.complete(jobId, cleaner.id, at); }
+  catch (error) {
+    if (error instanceof BackupApprovalRequired) return NextResponse.json({ error:error.message, code:"backup_approval_required" },{status:409});
+    throw error;
+  }
+  if (!saved) {
     // Not hers, or not in a state that can finish. Deliberately the same
     // answer for both: an id someone is guessing at should not learn which.
     return NextResponse.json(

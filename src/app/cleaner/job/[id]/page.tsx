@@ -6,7 +6,6 @@ import { getRepository } from "@/lib/data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ServiceStore } from "@/lib/service/store";
 import { roomsFor } from "@/lib/service/rooms";
-import { isDemoMode } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
 import { formatCents, formatHours } from "@/lib/money";
 import { formatDateTimeInZone } from "@/lib/time/zone";
@@ -42,6 +41,20 @@ export default async function CleanerJobPage({
       ? await repo.getCleanerByProfile("demo")
       : null;
 
+  if (!repo.isDemo && (profile?.role !== "cleaner" || !cleaner)) return <section className="visit-feature"><h1 className="welcome-title">Sign in as your assigned cleaner</h1><Link className="secondary-action mt-4 inline-flex" href={`/login?next=${encodeURIComponent(`/cleaner/job/${id}`)}`}>Sign in</Link></section>;
+  let payout: number | null = null;
+  let backupBlocked = false;
+  if (!repo.isDemo && cleaner) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) notFound();
+    const db = await createClient();
+    const assignment = await db.from("job_assignments").select("id,payout_cents").eq("job_id",id).eq("cleaner_id",cleaner.id).maybeSingle();
+    if (assignment.error) throw new Error("Unable to verify your assignment. Refresh or contact the office.");
+    if (!assignment.data) notFound();
+    if (cleaner.type !== "w2_core") payout = assignment.data.payout_cents == null ? null : Number(assignment.data.payout_cents);
+    const approval = await db.from("visit_backup_status").select("approved,unambiguous").eq("job_id",id).limit(2);
+    if (approval.error || !Array.isArray(approval.data)) throw new Error("Unable to check client approval. Refresh or contact the office.");
+    backupBlocked = approval.data.length > 1 || approval.data.some(a => a.approved !== true || a.unambiguous !== true);
+  }
   const job = await repo.getJob(id);
   if (!job) notFound();
 
@@ -52,21 +65,13 @@ export default async function CleanerJobPage({
   // not ask her to reshoot rooms that are already in.
   // A photo with no room attached satisfies no room, so it is not "already
   // done" for anything and is dropped here rather than confusing the screen.
-  const alreadyDone = isDemoMode()
+  const alreadyDone = repo.isDemo
     ? []
     : (await new ServiceStore(createAdminClient()).photosFor(id)).flatMap((photo) =>
         photo.roomKey ? [{ roomKey: photo.roomKey, kind: photo.kind }] : [],
       );
 
   const status = toFlowStatus(job.status);
-  let payout: number | null = null;
-  if (cleaner && !repo.isDemo && cleaner.type !== "w2_core") {
-    const db = await createClient();
-    const { data, error } = await db.from("job_assignments")
-      .select("payout_cents").eq("job_id", id).eq("cleaner_id", cleaner.id).maybeSingle();
-    if (error) throw new Error("Unable to load your agreed pay. Please try again.");
-    payout = data?.payout_cents == null ? null : Number(data.payout_cents);
-  }
   const directions = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${job.street}, ${job.city}`)}`;
 
   return (
@@ -115,8 +120,10 @@ export default async function CleanerJobPage({
             </p>
           )}
           <JobFlow
+            key={`${id}-${status}-${backupBlocked}`}
             jobId={id}
             initialStatus={status}
+            backupBlocked={backupBlocked}
             rooms={rooms}
             alreadyDone={alreadyDone}
           />

@@ -15,6 +15,7 @@ import type { Cleaner, DispatchJob } from "./types";
 export const MINIMUM_RATING = 3.9;
 
 export type IneligibilityReason =
+  | "client_declined"
   | "not_active"
   | "below_rating_floor"
   | "unrated"
@@ -58,6 +59,7 @@ export function checkEligibility(
   context: EligibilityContext = {},
 ): EligibilityResult {
   const reasons: IneligibilityReason[] = [];
+  if (job.clientDeclinedCleanerIds?.includes(cleaner.id)) reasons.push("client_declined");
 
   if (cleaner.status !== "active") reasons.push("not_active");
 
@@ -109,6 +111,7 @@ export function eligibleCleaners(
 }
 
 export const REASON_LABELS: Record<IneligibilityReason, string> = {
+  client_declined: "Client requested a different cleaner for this visit",
   not_active: "Not an active cleaner",
   below_rating_floor: `Rating below the ${MINIMUM_RATING} floor`,
   unrated: "No rating on file",

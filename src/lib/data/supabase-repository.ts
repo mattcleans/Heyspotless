@@ -137,17 +137,20 @@ export class SupabaseRepository implements Repository {
     if (jobs.length === 0) return jobs;
 
     const ids = jobs.map((j) => j.id);
-    const [continuity, passedOver, offeredUpTo] = await Promise.all([
+    const [continuity, passedOver, offeredUpTo, exclusions] = await Promise.all([
       continuityFor(this.db, ids),
       passedOverFor(this.db, ids),
       offeredUpToFor(this.db, ids),
+      this.db.from("visit_cleaner_exclusions").select("job_id,cleaner_id").in("job_id",ids),
     ]);
 
+    if (exclusions.error && !["42P01","PGRST205"].includes(exclusions.error.code)) throw new Error("Unable to load client matching preferences.");
     return jobs.map((job) => ({
       ...job,
       continuity: continuity.get(job.id),
       passedOver: passedOver.get(job.id),
       offeredUpToShare: offeredUpTo.get(job.id),
+      clientDeclinedCleanerIds: (exclusions.data ?? []).filter(x=>x.job_id===job.id).map(x=>String(x.cleaner_id)),
     }));
   }
 

@@ -96,6 +96,8 @@ export interface DispatchJob {
    * who watches a stranger take her own customer at a price she was never
    * offered learns to stop answering honestly.
    */
+  /** Backups the client declined for this specific visit. */
+  clientDeclinedCleanerIds?: readonly string[];
   passedOver?: readonly { cleanerId: string; share: number }[];
   /**
    * The highest share of the ticket this job has already been offered at.

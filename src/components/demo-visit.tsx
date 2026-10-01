@@ -25,6 +25,7 @@ export async function DemoVisit({ id }: { id: string }) {
       <div><dt className="text-ink-2">Rooms</dt><dd className="mt-1">{job.bedrooms} bedrooms, {job.bathrooms} bathrooms</dd></div>
       <div><dt className="text-ink-2">Sample visit price</dt><dd className="mt-1">{formatCents(job.priceCents)}</dd></div>
     </dl>
+    {!["in_progress","complete","canceled"].includes(job.status) && <Link className="secondary-action mt-4 inline-flex" href={`/customer/visits/${id}/cleaner`}>Preview cleaner preferences</Link>}
     <p className="preview-note mt-5 rounded-lg">This is a sample visit. Live progress, ratings, and payments are available only for real visits.</p>
     <p className="mt-5 text-sm text-ink-2">Need help with a visit? <a href="tel:+14692800397" className="underline">Call Hey Spotless</a>.</p>
   </>;

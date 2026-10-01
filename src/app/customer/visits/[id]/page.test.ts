@@ -38,6 +38,7 @@ describe("client visit detail",()=>{
     expect(html).toContain("This visit was canceled");expect(html).toContain("Original appointment");expect(html).toContain("Request a clean");expect(html).toContain("needs confirmation");
     expect(html).not.toContain('aria-label="Visit progress"');expect(html).not.toContain("Rate this clean");expect(html).not.toContain("Estimated finish");expect(m.cleaner).not.toHaveBeenCalled();
   });
+  it("surfaces required backup approval on the visit itself",()=>{const html=renderToStaticMarkup(createElement(CustomerVisitDetails,{id,cleaner:null,details:{...details,summary:{...summary,stage:"accepted",startedAt:null},backup:{name:"Backup",preferredName:"Preferred",approved:false,declined:false}}}));expect(html).toContain("Your backup needs your approval");expect(html).toContain("Review cleaner choice");expect(html).toContain("Work cannot start");});
   it("labels elapsed estimates without reporting completion",()=>{const html=render();expect(html).toContain("estimated finish time has passed");expect(html).toContain("still marked in progress");});
   it("labels future finish estimates as changeable",()=>{expect(render({expectedFinishAt:new Date("2026-10-01T17:00:00Z")})).toContain("It can change as work continues");});
   it("does not invent an estimate when no start was recorded",()=>{expect(render({startedAt:null,expectedFinishAt:null})).not.toContain("Estimated finish");});
