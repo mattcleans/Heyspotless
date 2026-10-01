@@ -194,9 +194,7 @@ begin
   if v_offer.id is null then return 'not_found'; end if;
 
   if v_offer.status <> 'sent' then
-    -- Already answered, withdrawn, or expired by the sweep. Re-tapping a
-    -- button on a stale screen must not change anything.
-    return case when v_offer.status = 'expired' then 'expired' else 'superseded' end;
+    return case when v_offer.status='expired' then 'expired' else 'superseded' end;
   end if;
 
   -- Lock the JOB, not the offer. The race worth arbitrating is two cleaners
@@ -205,9 +203,21 @@ begin
   select * into v_job from jobs where id = v_offer.job_id for update;
   if v_job.id is null then return 'not_found'; end if;
 
-  -- Re-read after the job lock: cancellation may have withdrawn this offer.
+  -- Re-read after the job lock: a winner or cancellation may have withdrawn
+  -- this offer while this caller waited. Preserve 'taken' for a competing
+  -- acceptance. An offer already withdrawn at the initial read remains stale.
   select * into v_offer from offers where id=p_offer_id and cleaner_id=p_cleaner_id;
-  if v_offer.status <> 'sent' or v_job.status not in ('unscheduled','scheduled','dispatching') or v_job.started_at is not null then
+  if p_accept and v_offer.status in ('sent','withdrawn') and v_job.status='assigned'
+     and exists(select 1 from job_assignments where job_id=v_job.id) then
+    if v_offer.status='sent' then
+      update offers set status='withdrawn',responded_at=now() where id=p_offer_id;
+    end if;
+    return 'taken';
+  end if;
+  if v_offer.status <> 'sent' then
+    return case when v_offer.status='expired' then 'expired' else 'superseded' end;
+  end if;
+  if v_job.status not in ('unscheduled','scheduled','dispatching') or v_job.started_at is not null then
     return 'superseded';
   end if;
 
