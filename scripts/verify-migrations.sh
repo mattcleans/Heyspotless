@@ -3146,3 +3146,6 @@ echo "  customer home instructions verified"
 echo "  checking client cleaner requests and backup approval"
 as_super $PSQL -d "$DB" -f scripts/verify-client-cleaner-choice.sql
 echo "  client cleaner choice verified"
+echo "  checking client cancellations and fee consent"
+as_super $PSQL -d "$DB" -f scripts/verify-visit-cancellations.sql
+echo "  visit cancellations verified"

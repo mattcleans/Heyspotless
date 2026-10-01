@@ -233,6 +233,11 @@ export function CustomerVisitDetails({
         </section>
       )}
       {!canceled && <VisitRefresh />}
+      {!visit.startedAt && visit.stage !== "done" && (
+        <Link href={`/customer/visits/${id}/cancel`} className="mt-4 flex min-h-11 items-center text-sm text-navy underline">
+          {canceled ? "View cancellation and fee" : "Cancel or skip this visit"}
+        </Link>
+      )}
       {!canceled && visit.stage !== "done" && (
         <Link
           href={`/customer/visits/${id}/cleaner`}

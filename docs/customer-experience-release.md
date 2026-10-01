@@ -17,7 +17,7 @@ The customer-flow PDF establishes ocean blue (#075e7b), sunshine (#fae47a), whit
 
 ## Release boundaries
 
-This is a working experience increment, not certification that the entire platform is ready to replace Housecall Pro. Existing booking is lead intake. Instant availability, reservation locking, payment confirmation and rescheduling/skipping still need end-to-end implementation and acceptance.
+This is a working experience increment, not certification that the entire platform is ready to replace Housecall Pro. Existing booking is lead intake. Instant availability, reservation locking, payment confirmation, individual rescheduling and recurring-plan editing still need end-to-end implementation and acceptance. Client-confirmed cancellation and single-visit skips are implemented but require authenticated acceptance.
 
 Clients can request a preferred cleaner for an own, unstarted visit from the visit details or a published profile. The office reviews the request and applies an eligible preference to normal matching without directly assigning a contractor or promising acceptance. Any assigned lead different from the visit's preferred cleaner requires that client's approval for that specific assignment before starting work. Requests and approvals are visit-specific; they do not rewrite a recurring plan. A new backup needs fresh consent. The office can release a client-declined, unstarted single assignment for matching; that backup stays excluded from the visit unless the client explicitly requests them again and the office applies that new preference. A crew needs manual office review.
 
@@ -29,9 +29,20 @@ Before a live pilot, verify customer and cleaner account permissions, a real vis
 
 ## Validation
 
-- 1,280 tests pass in both UTC and America/Chicago; five existing live-service tests remain skipped. TypeScript, ESLint and the production webpack build pass.
-- The full migration chain and availability, home-instruction and cleaner-choice SQL regressions pass in an isolated PGlite PostgreSQL engine. CI runs those exact scripts against PostgreSQL 16.
+- 1,351 tests pass in both UTC and America/Chicago; five existing live-service tests remain skipped. TypeScript, ESLint and the production webpack build pass.
+- The full migration chain and availability, home-instruction, cleaner-choice and cancellation SQL regressions pass in an isolated PGlite PostgreSQL engine. CI runs those exact scripts against PostgreSQL 16.
 - Cleaner-choice checks cover ownership/role gates, strict saved receipts, bounded reads, stale decisions, immutable assignment/cleaner/client consent, request replacement, review retries, release retries, retained audit history, declined-cleaner exclusion and blocked starts/completion without an approval.
 - Local browser checks use explicitly labeled fixtures without provider credentials. Backup review is prioritized above request history; approved, declined and started states have distinct copy. Notes survive rejected saves and session expiration. Client and cleaner refresh controls work. The 390px layouts have no horizontal overflow and new choice/review controls are at least 44px high. Preview saves remain disabled. Temporary review routes were removed before the final suite/build.
 - Existing photo durability, home editing, pay filtering and executive photo/invoice review evidence is recorded in `docs/ux-review/completion-audit.md`.
 - Authenticated preview access, representative three-role test visits, concurrent database connections, physical-phone offline recovery and provider/payment acceptance remain unverified. These local checks are not proof of those release gates.
+
+
+## Cancellation policy and release gate
+
+The confirmed policy is $60 only for cancellations on the appointment day or door turnaways, using Dallas time. Prior-day cancellations are free even within 24 hours. Clients review the exact fee before confirming their own cancellation or one-occurrence skip. A skip does not alter the recurring schedule. Office-only turnaway recording uses the same quote/confirmation flow.
+
+Apply `20261001210000_visit_cancellations.sql` after the cleaner-choice migration through the normal deployment process. New cancellation pages fail with recovery before deployment. Existing account balances remain accessible when the cancellation table is absent. Do not treat a preview fixture as a live saved cancellation.
+
+Cancellation keeps audit and assignment history, suppresses recurring regeneration and withdraws outstanding offers. Unpaid service invoices are voided, while a $60 fee becomes a distinct invoice with the existing collection lock and consent rules. Captured or in-flight payments pause additional collection and require office reconciliation. An office recheck can finalize billing only after existing payments are fully refunded and pending provider attempts/refunds are resolved. It records a fee invoice once without sending a refund or initiating payment.
+
+Verify an owned free cancellation and skip, a same-day fee, an office turnaway, stale review/retry, refused old offer/start, and a fully reconciled payment exception in a confirmed non-production environment before release. These source changes do not apply a live migration, activate providers, send a message or charge a card.

@@ -3,11 +3,19 @@ import { getRepository } from "@/lib/data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { BillingStore } from "@/lib/billing/store";
 import { chargeableCents } from "@/lib/billing/amounts";
-import { checkoutKeyFor, reconcileInvoiceCollection } from "@/lib/billing/collection";
-import { createCheckoutSession, ensureStripeCustomer } from "@/lib/billing/gateway";
+import {
+  checkoutKeyFor,
+  reconcileInvoiceCollection,
+} from "@/lib/billing/collection";
+import {
+  createCheckoutSession,
+  ensureStripeCustomer,
+} from "@/lib/billing/gateway";
 import { BillingError } from "@/lib/billing/types";
 import { isBillingEnabled } from "@/lib/stripe/env";
 import { invoiceChargeDescription } from "@/lib/brand";
+import { createClient } from "@/lib/supabase/server";
+import { loadCancellation } from "@/lib/customer/cancellation/store";
 
 /**
  * Start a Checkout session for one invoice.
@@ -33,27 +41,73 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   if (!isBillingEnabled()) {
-    return NextResponse.json({ error: "billing is not enabled" }, { status: 503 });
+    return NextResponse.json(
+      { error: "billing is not enabled" },
+      { status: 503 },
+    );
   }
 
   const body = await readJson(request);
-  const invoiceId = typeof body["invoiceId"] === "string" ? body["invoiceId"] : null;
+  const invoiceId =
+    typeof body["invoiceId"] === "string" ? body["invoiceId"] : null;
   const tipCents = Math.max(0, Math.trunc(Number(body["tipCents"] ?? 0)) || 0);
   const saveCard = body["saveCard"] === true;
 
   if (!invoiceId) {
-    return NextResponse.json({ error: "invoiceId is required" }, { status: 400 });
+    return NextResponse.json(
+      { error: "invoiceId is required" },
+      { status: 400 },
+    );
   }
 
   const repo = await getRepository();
   const profile = await repo.getCurrentProfile();
-  if (!profile) return NextResponse.json({ error: "not signed in" }, { status: 401 });
+  if (!profile)
+    return NextResponse.json({ error: "not signed in" }, { status: 401 });
 
   const invoice = await repo.getInvoice(invoiceId);
-  if (!invoice) return NextResponse.json({ error: "invoice not found" }, { status: 404 });
+  if (!invoice)
+    return NextResponse.json({ error: "invoice not found" }, { status: 404 });
 
   const customer = await repo.getCustomer(invoice.customerId);
-  if (!customer) return NextResponse.json({ error: "invoice not found" }, { status: 404 });
+  if (!customer)
+    return NextResponse.json({ error: "invoice not found" }, { status: 404 });
+
+  const job = invoice.jobId ? await repo.getJob(invoice.jobId) : null;
+  let cancellationFee = false;
+  if (job?.status === "canceled") {
+    let cancellation;
+    try {
+      cancellation = await loadCancellation(await createClient(), job.id);
+    } catch {
+      return NextResponse.json(
+        {
+          error:
+            "Cancellation billing details are unavailable. Call the office before paying.",
+        },
+        { status: 503 },
+      );
+    }
+    if (
+      !cancellation ||
+      cancellation.billingReview ||
+      cancellation.invoiceId !== invoice.id
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "This visit is canceled. The office needs to reconcile existing payments before collecting anything further.",
+        },
+        { status: 409 },
+      );
+    }
+    cancellationFee = true;
+    if (tipCents > 0)
+      return NextResponse.json(
+        { error: "A cancellation fee does not include a cleaner tip." },
+        { status: 400 },
+      );
+  }
 
   const store = new BillingStore(createAdminClient());
 
@@ -79,14 +133,18 @@ export async function POST(request: NextRequest) {
     // to THAT page — two tabs then finish the same session rather than
     // opening two. If it is an off-session charge, refuse: we cannot know
     // yet whether it will land.
-    if (reconciled.operation?.channel === "checkout" && reconciled.redirectUrl) {
+    if (
+      reconciled.operation?.channel === "checkout" &&
+      reconciled.redirectUrl
+    ) {
       return NextResponse.json({ url: reconciled.redirectUrl, reused: true });
     }
     return NextResponse.json(
       {
         status: "collection_in_flight",
         channel: reconciled.operation?.channel ?? "unknown",
-        message: "A payment for this invoice is already being processed. Please wait for it.",
+        message:
+          "A payment for this invoice is already being processed. Please wait for it.",
       },
       { status: 409 },
     );
@@ -107,7 +165,11 @@ export async function POST(request: NextRequest) {
 
   // Deterministic in (invoice, balance, tip): two tabs asking to settle the
   // same balance produce the same key and collapse into one attempt.
-  const idempotencyKey = checkoutKeyFor(invoice.id, current.balanceCents, tipCents);
+  const idempotencyKey = checkoutKeyFor(
+    invoice.id,
+    current.balanceCents,
+    tipCents,
+  );
 
   const operation = await store.beginPaymentOperation({
     invoiceId: invoice.id,
@@ -129,7 +191,8 @@ export async function POST(request: NextRequest) {
       {
         status: "collection_in_flight",
         channel: operation.channel,
-        message: "A payment for this invoice is already being processed. Please wait for it.",
+        message:
+          "A payment for this invoice is already being processed. Please wait for it.",
       },
       { status: 409 },
     );
@@ -147,7 +210,9 @@ export async function POST(request: NextRequest) {
       stripeCustomerId,
       amountCents,
       tipCents,
-      description: invoiceChargeDescription(invoice.id),
+      description: cancellationFee
+        ? "Hey Spotless · cancellation fee"
+        : invoiceChargeDescription(invoice.id),
       origin: request.nextUrl.origin,
       saveCard,
       idempotencyKey,
@@ -155,7 +220,11 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     // Stripe refused outright, so no session exists and nothing can be paid
     // against it. Release the invoice rather than leaving it blocked.
-    await store.resolvePaymentOperation(idempotencyKey, "failed", messageOf(error));
+    await store.resolvePaymentOperation(
+      idempotencyKey,
+      "failed",
+      messageOf(error),
+    );
     throw error;
   }
 
@@ -176,15 +245,21 @@ export async function POST(request: NextRequest) {
   return NextResponse.json({ url: session.url });
 }
 
-async function readJson(request: NextRequest): Promise<Record<string, unknown>> {
+async function readJson(
+  request: NextRequest,
+): Promise<Record<string, unknown>> {
   try {
     const parsed: unknown = await request.json();
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+    return parsed && typeof parsed === "object"
+      ? (parsed as Record<string, unknown>)
+      : {};
   } catch {
     return {};
   }
 }
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message.slice(0, 500) : "checkout failed";
+  return error instanceof Error
+    ? error.message.slice(0, 500)
+    : "checkout failed";
 }

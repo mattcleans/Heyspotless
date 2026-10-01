@@ -48,5 +48,6 @@ export default async function VisitReviewPage({ params, searchParams }: { params
       {facts.issues.length > 0 && <div className="card mt-4 p-4"><h3 className="font-semibold">Additional issue photos</h3><p className="mt-1 text-xs text-ink-2">Latest 20 records. These do not replace required before and after photos.</p><ul>{facts.issues.map(photo => <li key={photo.id} className="mt-2">{photoLink(photo)}<span className="ml-2 text-xs">{formatDateTimeInZone(photo.takenAt)}</span></li>)}</ul></div>}
     </section>
     <VisitRefresh />
+    {facts.startedAt === null && job.status !== "complete" && <Link href={`/admin/visits/${id}/cancel`} className="secondary-action mt-5 inline-flex">{job.status === "canceled" ? "View cancellation record" : "Cancel visit or record turnaway"}</Link>}
   </>;
 }

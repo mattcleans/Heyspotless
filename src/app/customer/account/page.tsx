@@ -8,6 +8,8 @@ import { formatCents } from "@/lib/money";
 import { formatCalendarDate, formatDateInZone } from "@/lib/time/zone";
 import { isBillingEnabled } from "@/lib/stripe/env";
 import { PayInvoiceButton, SaveCardButton } from "./billing-actions";
+import { createClient } from "@/lib/supabase/server";
+import { cancellationsForInvoices } from "@/lib/customer/cancellation/store";
 
 export const metadata = { title: "Account" };
 
@@ -36,6 +38,9 @@ export default async function CustomerPage() {
   const now = new Date();
   const upcoming = upcomingVisits(jobs, now).slice(0, 3);
   const outstanding = invoices.filter((i) => i.balanceCents > 0 && !i.voidedAt);
+  const cancellations = repo.isDemo ? [] : await cancellationsForInvoices(await createClient(), invoices.flatMap(i=>i.jobId?[i.jobId]:[]));
+  const feeInvoices = new Set((cancellations??[]).flatMap(c=>c.invoiceId?[c.invoiceId]:[]));
+  const reviewJobs = new Set((cancellations??[]).filter(c=>c.billingReview).map(c=>c.jobId));
   const settled = invoices.filter((i) => i.balanceCents <= 0 || i.voidedAt);
   const owedCents = outstanding.reduce((sum, i) => sum + i.balanceCents, 0);
 
@@ -106,6 +111,7 @@ export default async function CustomerPage() {
       </div>
 
       {/* ---------------------------------------------------------- owed --- */}
+      {(cancellations??[]).some(c=>c.billingReview) && <section className="visit-feature mt-6"><h2 className="font-semibold text-navy">Cancellation payments under review</h2><ul className="mt-3 space-y-3">{(cancellations??[]).filter(c=>c.billingReview).map(c=><li key={c.id}><p className="text-sm">{formatCents(c.feeCents)} cancellation fee recorded. The office is reconciling existing payments; this fee is not included in the invoice balance above.</p><Link href={`/customer/visits/${c.jobId}/cancel`} className="inline-flex min-h-11 items-center text-sm underline">View cancellation details</Link></li>)}</ul></section>}
       <section className="mt-8">
         <h2 className="eyebrow">Outstanding</h2>
         {outstanding.length === 0 ? (
@@ -116,6 +122,7 @@ export default async function CustomerPage() {
               <li key={invoice.id} className="card flex items-center justify-between gap-4 p-4">
                 <div>
                   <p className="font-medium text-ink">
+                    {feeInvoices.has(invoice.id) ? "Cancellation fee · " : ""}
                     {formatCents(invoice.balanceCents)} due
                     {invoice.dueOn ? ` · ${formatCalendarDate(invoice.dueOn)}` : ""}
                   </p>
@@ -139,7 +146,7 @@ export default async function CustomerPage() {
                     </p>
                   ) : null}
                 </div>
-                {billingLive ? (
+                {invoice.jobId && reviewJobs.has(invoice.jobId) ? <div className="text-sm text-ink-2"><p>Office payment review needed</p><Link href={`/customer/visits/${invoice.jobId}/cancel`} className="inline-flex min-h-11 items-center underline">View cancellation</Link></div> : billingLive ? (
                   <PayInvoiceButton
                     invoiceId={invoice.id}
                     balanceCents={invoice.balanceCents}
@@ -187,12 +194,13 @@ export default async function CustomerPage() {
               >
                 <span className="text-sm text-ink-2">
                   {formatDateInZone(invoice.issuedAt ?? invoice.createdAt)}
+                  {invoice.voidedAt ? " · invoice voided" : ""}
                   {invoice.amounts.refundedCents > 0
                     ? ` · ${formatCents(invoice.amounts.refundedCents)} refunded`
                     : ""}
                 </span>
                 <span className="nums text-sm font-semibold text-navy">
-                  {formatCents(invoice.amounts.totalCents)}
+                  {invoice.voidedAt ? "$0.00 due" : formatCents(invoice.amounts.totalCents)}
                 </span>
               </li>
             ))}
