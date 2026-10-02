@@ -61,7 +61,7 @@ export async function rescheduleVisit(
   const db = await createClient();
   const { data, error } =
     b.action === "review"
-      ? await db.rpc("quote_my_visit_reschedule", {
+      ? await db.rpc("quote_my_visit_reschedule_with_fee", {
           p_job_id: id,
           p_new_start: b.newStart,
         })

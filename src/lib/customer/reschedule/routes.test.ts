@@ -123,7 +123,7 @@ describe("client rescheduling authorization and truthful confirmation", () => {
       releasedCount: 0,
     });
     expect(r.status).toBe(200);
-    expect(m.rpc).toHaveBeenCalledWith("quote_my_visit_reschedule", {
+    expect(m.rpc).toHaveBeenCalledWith("quote_my_visit_reschedule_with_fee", {
       p_job_id: jobId,
       p_new_start: "2026-10-03T15:00:00.000Z",
     });

@@ -91,6 +91,15 @@ end $$;
 revoke all on function quote_my_visit_reschedule(uuid,timestamptz),confirm_my_visit_reschedule(uuid,uuid) from public,anon;
 grant execute on function quote_my_visit_reschedule(uuid,timestamptz),confirm_my_visit_reschedule(uuid,uuid) to authenticated;
 
+-- The updated app requires this new entry point, so an older database using
+-- the superseded all-free policy cannot silently issue a free review.
+create function public.quote_my_visit_reschedule_with_fee(p_job_id uuid,p_new_start timestamptz)
+ returns jsonb language sql security invoker set search_path=public,pg_temp as $$
+ select public.quote_my_visit_reschedule(p_job_id,p_new_start)
+$$;
+revoke all on function public.quote_my_visit_reschedule_with_fee(uuid,timestamptz) from public,anon;
+grant execute on function public.quote_my_visit_reschedule_with_fee(uuid,timestamptz) to authenticated;
+
 
 -- Stored-card consent is currently phrased for clean invoices. This new fee
 -- uses explicit account checkout; even an accidentally unpaused fee cannot

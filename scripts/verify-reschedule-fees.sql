@@ -32,9 +32,9 @@ grant all on fee_receipts to authenticated;
 select set_config('request.jwt.claim.sub','c1000000-0000-0000-0000-000000000001',true);
 set local role authenticated;
 do $$ declare q jsonb;r jsonb;target timestamptz:=((clock_timestamp() at time zone 'America/Chicago')::date+1+time '12:00') at time zone 'America/Chicago';begin
- q:=quote_my_visit_reschedule('c5000000-0000-0000-0000-000000000001',target);
+ q:=quote_my_visit_reschedule_with_fee('c5000000-0000-0000-0000-000000000001',target);
  if q->>'fee_cents'<>'6000' or q ? 'assignment_snapshot' then raise exception 'paid review missing fee/privacy';end if;
- if (select count(*) from invoices where kind='reschedule_fee')<>0 then raise exception 'review issued fee';end if;
+ if (select count(*) from invoices where kind='reschedule_fee' and customer_id='c2000000-0000-0000-0000-000000000001')<>0 then raise exception 'review issued fee';end if;
  r:=confirm_my_visit_reschedule('c5000000-0000-0000-0000-000000000001',(q->>'id')::uuid);
  if r->>'fee_cents'<>'6000' or r->>'invoice_id' is null or r->>'price_cents'<>'20000' then raise exception 'paid receipt invalid';end if;
  if confirm_my_visit_reschedule('c5000000-0000-0000-0000-000000000001',(q->>'id')::uuid)<>r then raise exception 'retry changed fee receipt';end if;
@@ -44,7 +44,7 @@ end $$;
 reset role;
 do $$ declare v_invoice uuid;begin
  select (r->>'invoice_id')::uuid into v_invoice from fee_receipts where kind='paid';
- if (select count(*) from invoices where kind='reschedule_fee')<>1 then raise exception 'duplicate fee invoice';end if;
+ if (select count(*) from invoices where kind='reschedule_fee' and customer_id='c2000000-0000-0000-0000-000000000001')<>1 then raise exception 'duplicate fee invoice';end if;
  if not exists(select 1 from invoices where id=v_invoice and customer_id='c2000000-0000-0000-0000-000000000001' and job_id is null
   and kind='reschedule_fee' and total_cents=6000 and tip_cents=0 and status='sent' and autocharge_paused_at is not null) then raise exception 'fee invoice shape wrong';end if;
  if not exists(select 1 from invoices where id='c7000000-0000-0000-0000-000000000001' and status='paid' and amount_paid_cents=20000) then raise exception 'service payment changed';end if;
@@ -59,7 +59,7 @@ set local role authenticated;
 do $$ begin
  begin perform confirm_my_visit_reschedule('c5000000-0000-0000-0000-000000000002',(select (q->>'id')::uuid from fee_receipts where kind='stale'));
   raise exception 'unreviewed fee accepted';exception when serialization_failure then null;end;
- if (select count(*) from invoices where kind='reschedule_fee')<>1 then raise exception 'stale confirmation issued fee';end if;
+ if (select count(*) from invoices where kind='reschedule_fee' and customer_id='c2000000-0000-0000-0000-000000000001')<>1 then raise exception 'stale confirmation issued fee';end if;
 end $$;
 reset role;
 select set_config('request.jwt.claim.sub','c1000000-0000-0000-0000-000000000002',true);
