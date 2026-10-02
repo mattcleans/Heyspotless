@@ -3149,3 +3149,8 @@ echo "  client cleaner choice verified"
 echo "  checking client cancellations and fee consent"
 as_super $PSQL -d "$DB" -f scripts/verify-visit-cancellations.sql
 echo "  visit cancellations verified"
+echo "  checking client rescheduling and assignment releases"
+as_super $PSQL -d "$DB" -f scripts/verify-visit-rescheduling.sql
+echo "  visit rescheduling verified"
+echo "  checking concurrent rescheduling, starts and stale dispatch"
+as_super bash scripts/verify-reschedule-races.sh "$DB"

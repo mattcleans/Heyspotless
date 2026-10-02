@@ -46,3 +46,12 @@ Apply `20261001210000_visit_cancellations.sql` after the cleaner-choice migratio
 Cancellation keeps audit and assignment history, suppresses recurring regeneration and withdraws outstanding offers. Unpaid service invoices are voided, while a $60 fee becomes a distinct invoice with the existing collection lock and consent rules. Captured or in-flight payments pause additional collection and require office reconciliation. An office recheck can finalize billing only after existing payments are fully refunded and pending provider attempts/refunds are resolved. It records a fee invoice once without sending a refund or initiating payment.
 
 Verify an owned free cancellation and skip, a same-day fee, an office turnaway, stale review/retry, refused old offer/start, and a fully reconciled payment exception in a confirmed non-production environment before release. These source changes do not apply a live migration, activate providers, send a message or charge a card.
+
+
+## Free rescheduling release gate
+
+Rescheduling is free even on the appointment day. Apply `20261001220000_visit_rescheduling.sql` after cancellations before deploying the updated app: job reads and dispatch now require its revision column/RPCs. Client and office visit pages offer a review-and-confirm flow for one future appointment. Dallas time and the unchanged service price are explicit. Invalid spring clock-gap times are refused; the repeated autumn hour resolves to the first occurrence.
+
+A saved move keeps the visit and recurring occurrence, releases the prior assignments with private agreed-pay history, withdraws old offers and opens matching for the new time. The contractor must accept a new offer; a different backup still needs client approval. No rescheduling fee, invoice mutation, provider message, refund or payment is initiated by this action. Client/office change history and cleaner release history explain the move.
+
+Verify a free same-day move, retained captured invoice, recurring regeneration, cleaner release/new acceptance, fresh backup approval, lost-response retry, stale review, and both start/reschedule lock orders in a confirmed non-production environment. The recurring schedule editor remains implementation work. Local validation: 1,414 passing tests in each time zone, five skipped live-service tests, full isolated SQL regressions, and mobile review/recovery at 390px and 320px. Final PostgreSQL race CI and authenticated browser acceptance must be checked separately.

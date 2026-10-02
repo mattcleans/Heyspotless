@@ -61,6 +61,8 @@ export interface Cleaner {
 }
 
 export interface DispatchJob {
+  /** Database revision used to reject dispatch from a moved appointment. */
+  scheduleRevision?: number;
   id: string;
   /** Ticket price in cents. */
   priceCents: number;

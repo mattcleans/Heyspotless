@@ -228,7 +228,7 @@ async function tryOffer(
 ): Promise<string | null> {
   try {
     const offerId = await store.recordOffer(offer);
-    result.offered += 1;
+    if (offerId) result.offered += 1;
     return offerId;
   } catch (error) {
     result.refused += 1;
@@ -255,7 +255,7 @@ async function act(
       // An employee is scheduled, not asked — and scheduled work needs no
       // countdown, so nothing here waits on being able to text her.
       const payout = payoutForTicket(job.priceCents, CLEANER_SHARE_OF_TICKET);
-      if (await store.assignDirectly(job.id, decision.cleaner.id, payout)) result.assigned += 1;
+      if (await store.assignDirectly(job.id, decision.cleaner.id, payout, job.scheduleRevision ?? 1)) result.assigned += 1;
       return;
     }
 
@@ -394,6 +394,7 @@ async function offerAndNotify(
     deps.store,
     {
       jobId: job.id,
+      scheduleRevision: job.scheduleRevision ?? 1,
       cleanerId: plan.cleanerId,
       decisionId: plan.decisionId,
       channel: plan.channel,
