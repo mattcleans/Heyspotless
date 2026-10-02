@@ -66,6 +66,11 @@ for f in supabase/migrations/*.sql; do
 done
 echo "  all migrations applied"
 
+# Run the actual generated preview fixture against the still-empty verifier.
+# It checks prerequisites, role records and backup consent, then rolls back.
+node scripts/check-node.mjs
+node --experimental-strip-types scripts/verify-preview-setup.ts | as_super $PSQL -d "$DB"
+
 # --- golden check: quote_price() must reproduce the published pricelist ------
 echo "  checking quote_price() against the 9 Aug 2026 pricelist"
 as_super $PSQL -d "$DB" <<'SQL'
