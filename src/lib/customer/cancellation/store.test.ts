@@ -25,6 +25,10 @@ function db() {
   }
   q.then = (resolve: (v: unknown) => void) => resolve(result);
   return {
+    rpc: (name: string, args: unknown) => {
+      calls.push({ method: "rpc", args: [name, args] });
+      return q;
+    },
     from: (table: string) => {
       calls.push({ method: "from", args: [table] });
       return q;
@@ -132,10 +136,29 @@ describe("scoped cancellation reads", () => {
       closed: true,
     },
   ])("checks started work and actual plan linkage %j", async (row) => {
-    result = { data: row, error: null };
+    result = {
+      data: { ...row, recurring: row.recurring_plan_id !== null },
+      error: null,
+    };
     expect(await loadCancellationVisit(db(), "job")).toMatchObject({
       closed: row.closed,
       recurring: row.recurring_plan_id !== null,
     });
   });
+});
+
+it("does not offer skipping the new pattern for an unmatched old-generation exception", async () => {
+  result = {
+    data: {
+      status: "scheduled",
+      started_at: null,
+      recurring_plan_id: "plan",
+      occurrence_date: "2026-10-04",
+      generation_epoch: 1,
+      recurring: false,
+      recurring_plans: { generation_epoch: 2 },
+    },
+    error: null,
+  };
+  expect((await loadCancellationVisit(db(), "job")).recurring).toBe(false);
 });

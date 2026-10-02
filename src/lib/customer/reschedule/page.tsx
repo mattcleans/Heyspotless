@@ -1,3 +1,5 @@
+import { recurringVisitChanges } from "../recurring/store";
+import { RecurringVisitChanges } from "@/components/recurring-visit-changes";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getRepository } from "@/lib/data";
@@ -57,6 +59,7 @@ export async function ReschedulePage({
         recurring: job.frequency !== "one_time",
       };
   const history = db ? await rescheduleHistory(db, id) : [];
+  const seriesChanges = db ? await recurringVisitChanges(db, id) : [];
   return (
     <>
       <Link
@@ -114,6 +117,7 @@ export async function ReschedulePage({
           View fee invoices in your account
         </Link>
       )}
+      <RecurringVisitChanges changes={seriesChanges} office={office} />
       <p className="mt-5 text-sm">
         Need help?{" "}
         <a

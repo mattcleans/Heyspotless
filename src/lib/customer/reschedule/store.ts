@@ -37,45 +37,57 @@ export async function rescheduleHistory(db: SupabaseClient, id: string) {
 export interface ReleasedVisit {
   id: string;
   previousStart: string | null;
-  newStart: string;
+  newStart: string | null;
   releasedAt: string;
 }
 export async function releasedVisits(
   db: SupabaseClient,
   cleanerId: string,
 ): Promise<ReleasedVisit[]> {
-  const { data, error } = await db
-    .from("visit_reschedule_releases")
-    .select("id,previous_start,new_start,released_at")
-    .eq("cleaner_id", cleanerId)
-    .gte(
-      "released_at",
-      new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-    )
-    .order("released_at", { ascending: false })
-    .limit(10);
-  if (error && ["42P01", "PGRST205"].includes(error.code)) return [];
-  if (error || !Array.isArray(data))
-    throw new Error(
-      "Schedule changes are unavailable. Refresh before heading to a visit.",
-    );
-  return data.map((row) => {
-    if (
-      typeof row.id !== "string" ||
-      typeof row.new_start !== "string" ||
-      !Number.isFinite(Date.parse(row.new_start)) ||
-      (row.previous_start !== null &&
-        (typeof row.previous_start !== "string" ||
-          !Number.isFinite(Date.parse(row.previous_start))))
-    )
+  const fetchReleases = async (table: string) => {
+    const { data, error } = await db
+      .from(table)
+      .select("id,previous_start,new_start,released_at")
+      .eq("cleaner_id", cleanerId)
+      .gte(
+        "released_at",
+        new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+      )
+      .order("released_at", { ascending: false })
+      .limit(10);
+    if (error && ["42P01", "PGRST205"].includes(error.code)) return [];
+    if (error || !Array.isArray(data))
       throw new Error(
         "Schedule changes are unavailable. Refresh before heading to a visit.",
       );
-    return {
-      id: row.id,
-      previousStart: row.previous_start,
-      newStart: row.new_start,
-      releasedAt: row.released_at,
-    };
-  });
+    return data.map((row) => {
+      if (
+        typeof row.id !== "string" ||
+        (row.new_start !== null &&
+          (typeof row.new_start !== "string" ||
+            !Number.isFinite(Date.parse(row.new_start)))) ||
+        (row.previous_start !== null &&
+          (typeof row.previous_start !== "string" ||
+            !Number.isFinite(Date.parse(row.previous_start)))) ||
+        typeof row.released_at !== "string" ||
+        !Number.isFinite(Date.parse(row.released_at))
+      )
+        throw new Error(
+          "Schedule changes are unavailable. Refresh before heading to a visit.",
+        );
+      return {
+        id: row.id,
+        previousStart: row.previous_start,
+        newStart: row.new_start,
+        releasedAt: row.released_at,
+      };
+    });
+  };
+  const [individual, series] = await Promise.all([
+    fetchReleases("visit_reschedule_releases"),
+    fetchReleases("recurring_schedule_releases"),
+  ]);
+  return [...individual, ...series]
+    .sort((a, b) => Date.parse(b.releasedAt) - Date.parse(a.releasedAt))
+    .slice(0, 10);
 }

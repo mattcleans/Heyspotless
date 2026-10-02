@@ -1,3 +1,5 @@
+import { recurringVisitChanges } from "../recurring/store";
+import { RecurringVisitChanges } from "@/components/recurring-visit-changes";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getRepository } from "@/lib/data";
@@ -56,6 +58,7 @@ export async function CancellationPage({
       : choice === "door_turnaway" && office
         ? "door_turnaway"
         : "cancel";
+  const seriesChanges = db ? await recurringVisitChanges(db, id) : [];
   return (
     <>
       <Link
@@ -75,15 +78,24 @@ export async function CancellationPage({
           ? formatDateTimeInZone(job.scheduledStart)
           : "Time to be confirmed"}
       </p>
-      <VisitCancellationForm
-        key={id}
-        jobId={id}
-        {...visit}
-        initialReason={initialReason}
-        receipt={receipt}
-        office={office}
-        preview={repo.isDemo}
-      />
+      {job.status === "canceled" &&
+      !receipt &&
+      seriesChanges.some((c) => c.action === "removed") ? (
+        <RecurringVisitChanges changes={seriesChanges} office={office} />
+      ) : (
+        <>
+          <VisitCancellationForm
+            key={id}
+            jobId={id}
+            {...visit}
+            initialReason={initialReason}
+            receipt={receipt}
+            office={office}
+            preview={repo.isDemo}
+          />
+          <RecurringVisitChanges changes={seriesChanges} office={office} />
+        </>
+      )}
       <p className="mt-5 text-sm">
         Need help?{" "}
         <a

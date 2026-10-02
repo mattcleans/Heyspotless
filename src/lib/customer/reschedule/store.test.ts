@@ -108,3 +108,22 @@ describe("request-scoped reschedule reads", () => {
     );
   });
 });
+it("shows removed recurring assignments with no replacement time", async () => {
+  result = {
+    data: [
+      {
+        id: "released",
+        previous_start: "2026-10-05T14:30Z",
+        new_start: null,
+        released_at: "2026-10-02T14:00Z",
+      },
+    ],
+    error: null,
+  };
+  const changes = await releasedVisits(db(), "cleaner");
+  expect(changes[0]!.newStart).toBeNull();
+  expect(calls).toContainEqual({
+    method: "from",
+    args: ["recurring_schedule_releases"],
+  });
+});

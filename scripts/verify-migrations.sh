@@ -3158,3 +3158,6 @@ as_super bash scripts/verify-reschedule-races.sh "$DB"
 # Appointment-day fees and current-plan generation guards, isolated fixtures.
 as_super $PSQL -d "$DB" -f scripts/verify-reschedule-fees.sql
 as_super $PSQL -d "$DB" -f scripts/verify-recurring-generation.sql
+
+as_super $PSQL -d "$DB" -f scripts/verify-recurring-editor.sql
+as_super bash scripts/verify-recurring-races.sh "$DB"

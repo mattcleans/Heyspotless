@@ -16,12 +16,15 @@ export async function loadCancellation(db: SupabaseClient, jobId: string) {
   return data ? toCancellationReceipt(data) : null;
 }
 export async function loadCancellationVisit(db: SupabaseClient, id: string) {
-  const { data, error } = await db
-    .from("jobs")
-    .select("status,started_at,recurring_plan_id,occurrence_date")
-    .eq("id", id)
-    .maybeSingle();
-  if (error || !data || typeof data.status !== "string")
+  const { data, error } = await db.rpc("read_my_visit_schedule_identity", {
+    p_job: id,
+  });
+  if (
+    error ||
+    !data ||
+    typeof data.status !== "string" ||
+    typeof data.recurring !== "boolean"
+  )
     throw new Error(
       "Visit details are unavailable. Refresh or call the office.",
     );
@@ -30,7 +33,7 @@ export async function loadCancellationVisit(db: SupabaseClient, id: string) {
       !["unscheduled", "scheduled", "dispatching", "assigned"].includes(
         data.status,
       ) || data.started_at !== null,
-    recurring: data.recurring_plan_id !== null && data.occurrence_date !== null,
+    recurring: data.recurring,
   };
 }
 export async function listCancellations(db: SupabaseClient) {

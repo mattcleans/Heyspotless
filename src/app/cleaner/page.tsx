@@ -23,7 +23,10 @@ export default async function CleanerPage() {
   // Never request the unfiltered job list when a live cleaner has no profile.
   const jobs = cleaner ? await repo.listJobs({ cleanerId: cleaner.id }) : [];
   const offers = cleaner ? await repo.listLiveOffers(cleaner.id) : [];
-  const changes = cleaner && !repo.isDemo ? await releasedVisits(await createClient(),cleaner.id) : [];
+  const changes =
+    cleaner && !repo.isDemo
+      ? await releasedVisits(await createClient(), cleaner.id)
+      : [];
   const now = new Date();
   const today = visitsOnDay(jobs, now);
   const upcoming = jobs
@@ -75,7 +78,41 @@ export default async function CleanerPage() {
         </div>
       )}
       <PushPrompt />
-      {changes.length>0 && <section className="visit-feature mt-5" aria-labelledby="schedule-changes"><h2 id="schedule-changes" className="font-semibold text-navy">Appointments that moved</h2><p className="mt-2 text-sm text-ink-2">Your previous assignment was released. Do not attend the old appointment. A new contractor offer requires your acceptance.</p><ul className="mt-3 space-y-3">{changes.map(change=><li key={change.id} className="border-t border-line pt-3 text-sm"><p>Previous time: {change.previousStart ? formatDateTimeInZone(new Date(change.previousStart)) : "Time was not set"}</p><p className="mt-1 text-ink-2">Client moved it to {formatDateTimeInZone(new Date(change.newStart))}. Check your current schedule and offers.</p></li>)}</ul><p className="mt-3 text-xs text-ink-2">Latest 10 releases from the past week. These records do not confirm an assignment at the new time.</p></section>}
+      {changes.length > 0 && (
+        <section
+          className="visit-feature mt-5"
+          aria-labelledby="schedule-changes"
+        >
+          <h2 id="schedule-changes" className="font-semibold text-navy">
+            Appointments that changed
+          </h2>
+          <p className="mt-2 text-sm text-ink-2">
+            Your previous assignment was released. Do not attend the old
+            appointment. A new contractor offer requires your acceptance.
+          </p>
+          <ul className="mt-3 space-y-3">
+            {changes.map((change) => (
+              <li key={change.id} className="border-t border-line pt-3 text-sm">
+                <p>
+                  Previous time:{" "}
+                  {change.previousStart
+                    ? formatDateTimeInZone(new Date(change.previousStart))
+                    : "Time was not set"}
+                </p>
+                <p className="mt-1 text-ink-2">
+                  {change.newStart
+                    ? `Client moved it to ${formatDateTimeInZone(new Date(change.newStart))}. Check your current schedule and offers.`
+                    : "This future recurring appointment was removed. It is no longer an assignment."}
+                </p>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 text-xs text-ink-2">
+            Latest 10 releases from the past week. These records do not confirm
+            an assignment at the new time.
+          </p>
+        </section>
+      )}
       <section aria-labelledby="schedule">
         <div className="section-heading">
           <h2 id="schedule">Today’s visits</h2>

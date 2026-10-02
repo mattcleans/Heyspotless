@@ -1,3 +1,6 @@
+vi.mock("@/lib/customer/recurring/store", () => ({
+  recurringVisitChanges: async () => [],
+}));
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 const m = vi.hoisted(() => ({
