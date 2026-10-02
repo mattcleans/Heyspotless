@@ -149,7 +149,9 @@ describe("client-confirmed visit cancellations", () => {
     ).toMatchObject({ billingReview: true, invoiceId: null });
   });
   it.each([
+    ["PT409", 409],
     ["40001", 409],
+    ["40P01", 409],
     ["42501", 403],
     ["23514", 409],
     ["22023", 400],

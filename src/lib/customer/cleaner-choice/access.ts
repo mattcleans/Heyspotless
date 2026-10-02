@@ -59,7 +59,7 @@ export function choiceFailure(error: { code?: string } | null) {
   const status =
     code === "42501"
       ? 403
-      : code === "40001" || code === "23514"
+      : ["PT409", "40001", "40P01", "23514"].includes(code ?? "")
         ? 409
         : code === "22023"
           ? 400
@@ -67,7 +67,7 @@ export function choiceFailure(error: { code?: string } | null) {
   const message =
     code === "42501"
       ? "This visit is no longer available in your account."
-      : code === "40001"
+      : ["PT409", "40001", "40P01"].includes(code ?? "")
         ? "The visit or choice changed. Refresh and review the latest details before trying again."
         : code === "23514"
           ? "The requested cleaner is not currently eligible. Review matching before applying this preference."

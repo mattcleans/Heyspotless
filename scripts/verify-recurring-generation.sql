@@ -24,7 +24,7 @@ do $$ declare p uuid:='b9000000-0000-0000-0000-000000000001';r record;v_job uuid
  update recurring_plans set start_time='10:30' where id=p;
  if (select schedule_revision from recurring_plans where id=p)<>2 then raise exception 'edit did not advance revision';end if;
  begin perform materialise_recurring_job_for_revision(p,'2026-09-22','2026-09-22T14:30Z',1);
-  raise exception 'stale sweep generated';exception when serialization_failure then null;end;
+  raise exception 'stale sweep generated';exception when sqlstate 'PT409' then null;end;
  begin perform materialise_recurring_job_for_revision(p,'2026-09-22','2026-09-22T14:30Z',2);
   raise exception 'wrong clock generated';exception when invalid_parameter_value then null;end;
  -- An old deployed caller also gets the locked plan's authoritative time.

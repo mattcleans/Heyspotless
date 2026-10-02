@@ -45,7 +45,7 @@ do $$ begin
   begin
     perform request_my_visit_cleaner('95000000-0000-0000-0000-000000000001','94000000-0000-0000-0000-000000000001','96000000-0000-0000-0000-000000000003','Stale request',null);
     raise exception 'stale request overwrote current request';
-  exception when serialization_failure then null; end;
+  exception when sqlstate 'PT409' then null; end;
 end $$;
 -- A newer replacement must stay latest even with same-transaction timestamps
 -- and a UUID that sorts BEFORE the first request.
@@ -107,7 +107,7 @@ do $$ begin
  begin
   perform respond_my_visit_backup('95000000-0000-0000-0000-000000000001','97000000-0000-0000-0000-000000000001','94000000-0000-0000-0000-000000000001','94000000-0000-0000-0000-000000000002','98000000-0000-0000-0000-000000000003',false,'Stale decline', '98000000-0000-0000-0000-000000000001');
   raise exception 'stale backup response overwrote approval';
- exception when serialization_failure then null; end;
+ exception when sqlstate 'PT409' then null; end;
 end $$;
 reset role;
 -- A changed visit owner must not inherit the former client's consent.
@@ -133,7 +133,7 @@ do $$ begin
  begin
   perform respond_my_visit_backup('95000000-0000-0000-0000-000000000001','97000000-0000-0000-0000-000000000001','94000000-0000-0000-0000-000000000001','94000000-0000-0000-0000-000000000002','98000000-0000-0000-0000-000000000005',true,'',null);
   raise exception 'stale screen approved a different cleaner on the same assignment';
- exception when serialization_failure then null; end;
+ exception when sqlstate 'PT409' then null; end;
 end $$;
 reset role;
 update job_assignments set cleaner_id='94000000-0000-0000-0000-000000000002' where id='97000000-0000-0000-0000-000000000001';
@@ -183,7 +183,7 @@ do $$ begin
  begin
   perform release_declined_visit_backup('95000000-0000-0000-0000-000000000002','97000000-0000-0000-0000-000000000002','94000000-0000-0000-0000-000000000001','94000000-0000-0000-0000-000000000002','98000000-0000-0000-0000-000000000006');
   raise exception 'office released a backup without a client decline';
- exception when serialization_failure then null; end;
+ exception when sqlstate 'PT409' then null; end;
 end $$;
 reset role;
 select set_config('request.jwt.claim.sub','91000000-0000-0000-0000-000000000002',true);

@@ -40,7 +40,7 @@ begin
   begin
     perform set_my_home_instructions('95000000-0000-0000-0000-000000000001','1234','Stale change','Driveway','Cat',original);
     raise exception 'stale edits overwrote current instructions';
-  exception when serialization_failure then null;
+  exception when sqlstate 'PT409' then null;
   end;
   if (select access_notes from properties where id='95000000-0000-0000-0000-000000000001') <> 'Side door' then raise exception 'conflict changed instructions'; end if;
   begin
@@ -72,7 +72,7 @@ begin
   begin
     perform set_my_home_instructions('95000000-0000-0000-0000-000000000001','1234','Stale draft','Driveway','Cat',saved);
     raise exception 'later direct edit was overwritten';
-  exception when serialization_failure then null;
+  exception when sqlstate 'PT409' then null;
   end;
   saved := jsonb_build_object('gateCode','1234','accessNotes','Latest office change','parkingNotes','Driveway','pets','Cat');
   perform set_my_home_instructions('95000000-0000-0000-0000-000000000001',null,null,null,null,saved);

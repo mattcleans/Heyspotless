@@ -39,7 +39,7 @@ series_barrier series_start_first
 series_sql <<'SQL'
 set request.jwt.claim.sub='e1000000-0000-0000-0000-000000000001';
 do $$ begin
- begin perform confirm_my_recurring_schedule('e9000000-0000-0000-0000-000000000001',(select id from recurring_schedule_quotes where plan_id='e9000000-0000-0000-0000-000000000001'));raise exception 'edit followed started work';exception when serialization_failure then null;end;
+ begin perform confirm_my_recurring_schedule('e9000000-0000-0000-0000-000000000001',(select id from recurring_schedule_quotes where plan_id='e9000000-0000-0000-0000-000000000001'));raise exception 'edit followed started work';exception when sqlstate 'PT409' then null;end;
  if (select generation_epoch from recurring_plans where id='e9000000-0000-0000-0000-000000000001')<>1 or exists(select 1 from recurring_schedule_changes where plan_id='e9000000-0000-0000-0000-000000000001') then raise exception 'rejected start-first edit left writes';end if;
 end $$;
 SQL
@@ -58,7 +58,7 @@ do $$ declare p uuid:='e9000000-0000-0000-0000-000000000002';j uuid;begin
  select id into j from jobs where recurring_plan_id=p order by scheduled_start limit 1;
  if start_job(j,'e4000000-0000-0000-0000-000000000001') then raise exception 'old cleaner started after recurring edit';end if;
  if assign_job_for_schedule(j,'e4000000-0000-0000-0000-000000000001',5000,1) then raise exception 'stale dispatch filled moved recurring visit';end if;
- begin perform materialise_recurring_job_for_revision(p,(select anchor_date+7 from recurring_plans where id=p),recurring_start_at((select anchor_date+7 from recurring_plans where id=p),'09:30'),1);raise exception 'stale generator followed recurring edit';exception when serialization_failure then null;end;
+ begin perform materialise_recurring_job_for_revision(p,(select anchor_date+7 from recurring_plans where id=p),recurring_start_at((select anchor_date+7 from recurring_plans where id=p),'09:30'),1);raise exception 'stale generator followed recurring edit';exception when sqlstate 'PT409' then null;end;
  if (select count(*) from recurring_schedule_releases where job_id=j)<>1 or exists(select 1 from time_entries where job_id=j) then raise exception 'release/start race broken';end if;
 end $$;
 SQL
@@ -91,7 +91,7 @@ series_barrier series_generation_first
 series_sql <<'SQL'
 set request.jwt.claim.sub='e1000000-0000-0000-0000-000000000001';
 do $$ declare p uuid:='e9000000-0000-0000-0000-000000000004';begin
- begin perform confirm_my_recurring_schedule(p,(select id from recurring_schedule_quotes where plan_id=p));raise exception 'new generated visit absent from accepted review';exception when serialization_failure then null;end;
+ begin perform confirm_my_recurring_schedule(p,(select id from recurring_schedule_quotes where plan_id=p));raise exception 'new generated visit absent from accepted review';exception when sqlstate 'PT409' then null;end;
  if (select generation_epoch from recurring_plans where id=p)<>1 or exists(select 1 from recurring_schedule_changes where plan_id=p) then raise exception 'rejected generation-first edit left changes';end if;
 end $$;
 SQL

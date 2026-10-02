@@ -58,7 +58,7 @@ update visit_reschedule_quotes set fee_cents=0 where id=(select (q->>'id')::uuid
 set local role authenticated;
 do $$ begin
  begin perform confirm_my_visit_reschedule('c5000000-0000-0000-0000-000000000002',(select (q->>'id')::uuid from fee_receipts where kind='stale'));
-  raise exception 'unreviewed fee accepted';exception when serialization_failure then null;end;
+  raise exception 'unreviewed fee accepted';exception when sqlstate 'PT409' then null;end;
  if (select count(*) from invoices where kind='reschedule_fee' and customer_id='c2000000-0000-0000-0000-000000000001')<>1 then raise exception 'stale confirmation issued fee';end if;
 end $$;
 reset role;

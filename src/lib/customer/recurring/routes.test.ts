@@ -133,7 +133,9 @@ describe("recurring editor authorization and receipts", () => {
     expect(m.rpc).not.toHaveBeenCalled();
   });
   it.each([
+    ["PT409", 409],
     ["40001", 409],
+    ["40P01", 409],
     ["42501", 403],
     ["22023", 400],
     ["08006", 500],

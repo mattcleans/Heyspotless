@@ -78,14 +78,16 @@ export async function POST(
     if (error)
       return NextResponse.json(
         {
-          error:
-            error.code === "40001"
-              ? "Existing payments must be fully refunded and pending attempts or refunds resolved before the cancellation fee can be invoiced."
-              : "Cancellation billing could not be confirmed. Refresh and check the payment records.",
+          error: ["PT409", "40001", "40P01"].includes(error.code ?? "")
+            ? "Existing payments must be fully refunded and pending attempts or refunds resolved before the cancellation fee can be invoiced."
+            : "Cancellation billing could not be confirmed. Refresh and check the payment records.",
         },
         {
-          status:
-            error.code === "40001" ? 409 : error.code === "42501" ? 403 : 500,
+          status: ["PT409", "40001", "40P01"].includes(error.code ?? "")
+            ? 409
+            : error.code === "42501"
+              ? 403
+              : 500,
         },
       );
     const receipt = toCancellationReceipt(data);

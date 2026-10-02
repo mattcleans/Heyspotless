@@ -74,9 +74,9 @@ do $$ declare q jsonb;r jsonb;r2 jsonb;begin
  if r is distinct from r2 then raise exception 'retry changed receipt';end if;
  insert into series_test_state values('receipt',r);
  begin perform confirm_my_visit_reschedule((select v#>>'{}' from series_test_state where k='job1')::uuid,(select (v->>'id')::uuid from series_test_state where k='individual'));
-  raise exception 'stale individual epoch accepted';exception when serialization_failure then null;end;
+  raise exception 'stale individual epoch accepted';exception when sqlstate 'PT409' then null;end;
  begin perform confirm_my_visit_cancellation((select v#>>'{}' from series_test_state where k='job1')::uuid,(select (v->>'id')::uuid from series_test_state where k='cancel'));
-  raise exception 'stale cancellation epoch accepted';exception when serialization_failure then null;end;
+  raise exception 'stale cancellation epoch accepted';exception when sqlstate 'PT409' then null;end;
 end $$;
 reset role;
 do $$ declare p uuid:='d9000000-0000-0000-0000-000000000001';d date:=(clock_timestamp() at time zone 'America/Chicago')::date+1;r record;begin
@@ -126,7 +126,7 @@ do $$ declare p uuid:='d9000000-0000-0000-0000-000000000001';d date:=(clock_time
  select job_id into v_job from recurring_schedule_job_changes where change_id=(select (v->>'id')::uuid from series_test_state where k='second') and action='removed' limit 1;
  begin update jobs set status='scheduled' where id=v_job;raise exception 'removed visit reopened';exception when check_violation then null;end;
  begin insert into invoices(job_id,customer_id,status,subtotal_cents,total_cents) values(v_job,'d2000000-0000-0000-0000-000000000001','sent',20000,20000);raise exception 'removed visit invoiced';exception when check_violation then null;end;
- begin perform materialise_recurring_job_for_revision(p,d,recurring_start_at(d,'10:30'),2);raise exception 'stale sweep wrote';exception when serialization_failure then null;end;
+ begin perform materialise_recurring_job_for_revision(p,d,recurring_start_at(d,'10:30'),2);raise exception 'stale sweep wrote';exception when sqlstate 'PT409' then null;end;
  if has_function_privilege('authenticated','preview_recurring_edit(uuid,date,frequency,time,date,date,date)','EXECUTE')
   or has_function_privilege('anon','quote_my_recurring_schedule(uuid,date,frequency,time,date,date)','EXECUTE') then raise exception 'private helper/anonymous write callable';end if;
 end $$;
@@ -139,7 +139,7 @@ reset role;
 update jobs set started_at=clock_timestamp() where id=(select v#>>'{}' from series_test_state where k='job2')::uuid;
 set local role authenticated;
 do $$ begin
- begin perform confirm_my_recurring_schedule('d9000000-0000-0000-0000-000000000001',(select (v->>'id')::uuid from series_test_state where k='stale'));raise exception 'started change not detected';exception when serialization_failure then null;end;
+ begin perform confirm_my_recurring_schedule('d9000000-0000-0000-0000-000000000001',(select (v->>'id')::uuid from series_test_state where k='stale'));raise exception 'started change not detected';exception when sqlstate 'PT409' then null;end;
  begin perform quote_my_recurring_schedule('d9000000-0000-0000-0000-000000000001',(clock_timestamp() at time zone 'America/Chicago')::date,'weekly','12:00',null,null);raise exception 'today anchor accepted';exception when invalid_parameter_value then null;end;
  begin perform quote_my_recurring_schedule('d9000000-0000-0000-0000-000000000001',(clock_timestamp() at time zone 'America/Chicago')::date+1,'weekly','24:00',null,null);raise exception '24:00 accepted';exception when invalid_parameter_value then null;end;
 end $$;
@@ -203,7 +203,7 @@ reset role;
 update recurring_schedule_quotes set expires_at=clock_timestamp()-interval '1 second' where id=(select (v->>'id')::uuid from series_test_state where k='expired');
 set local role authenticated;
 do $$ begin
- begin perform confirm_my_recurring_schedule('d9000000-0000-0000-0000-000000000001',(select (v->>'id')::uuid from series_test_state where k='expired'));raise exception 'expired review applied';exception when serialization_failure then null;end;
+ begin perform confirm_my_recurring_schedule('d9000000-0000-0000-0000-000000000001',(select (v->>'id')::uuid from series_test_state where k='expired'));raise exception 'expired review applied';exception when sqlstate 'PT409' then null;end;
 end $$;
 reset role;
 

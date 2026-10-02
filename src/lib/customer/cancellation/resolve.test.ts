@@ -101,16 +101,21 @@ describe("office cancellation billing resolution", () => {
     expect((await post()).status).toBe(409);
     expect(m.rpc).not.toHaveBeenCalled();
   });
-  it("requires database-confirmed refund resolution before claiming a fee invoice", async () => {
-    m.rpc.mockResolvedValue({
-      data: null,
-      error: { code: "40001", message: "PRIVATE DETAILS" },
-    });
-    const r = await post();
-    expect(r.status).toBe(409);
-    expect(JSON.stringify(await r.json())).toContain("fully refunded");
-    expect(JSON.stringify(await (await post()).json())).not.toContain("PRIVATE DETAILS");
-  });
+  it.each(["PT409", "40001", "40P01"])(
+    "requires database-confirmed refund resolution for %s before claiming a fee invoice",
+    async (code) => {
+      m.rpc.mockResolvedValue({
+        data: null,
+        error: { code, message: "PRIVATE DETAILS" },
+      });
+      const r = await post();
+      expect(r.status).toBe(409);
+      expect(JSON.stringify(await r.json())).toContain("fully refunded");
+      expect(JSON.stringify(await (await post()).json())).not.toContain(
+        "PRIVATE DETAILS",
+      );
+    },
+  );
   it("reconciles only the visit's invoices then calls the role-checked billing RPC", async () => {
     const r = await post();
     expect(r.status).toBe(200);

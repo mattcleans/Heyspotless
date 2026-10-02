@@ -66,6 +66,9 @@ for f in supabase/migrations/*.sql; do
 done
 echo "  all migrations applied"
 
+# Explicit workflow conflicts must never masquerade as transaction retries.
+as_super $PSQL -d "$DB" -f scripts/verify-stale-review-conflicts.sql
+
 # Run the actual generated preview fixture against the still-empty verifier.
 # It checks prerequisites, role records and backup consent, then rolls back.
 node scripts/check-node.mjs

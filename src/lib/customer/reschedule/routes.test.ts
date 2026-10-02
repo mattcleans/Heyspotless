@@ -152,7 +152,9 @@ describe("client rescheduling authorization and truthful confirmation", () => {
     expect(r.headers.get("cache-control")).toBe("no-store");
   });
   it.each([
+    ["PT409", 409],
     ["40001", 409],
+    ["40P01", 409],
     ["23514", 409],
     ["42501", 403],
     ["22023", 400],

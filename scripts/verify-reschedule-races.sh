@@ -42,7 +42,7 @@ do $$ begin
  begin
   perform confirm_my_visit_reschedule('a5000000-0000-0000-0000-000000000001',(select id from visit_reschedule_quotes where job_id='a5000000-0000-0000-0000-000000000001'));
   raise exception 'reschedule won after start held lock';
- exception when serialization_failure then null; end;
+ exception when sqlstate 'PT409' then null; end;
  if (select status from jobs where id='a5000000-0000-0000-0000-000000000001')<>'in_progress' then raise exception 'started visit moved';end if;
  if exists(select 1 from visit_reschedules where job_id='a5000000-0000-0000-0000-000000000001') then raise exception 'rejected reschedule wrote history';end if;
 end $$;
@@ -130,7 +130,7 @@ move_barrier recurring_race_edit
 move_sql <<'SQL'
 do $$ declare r record;begin
  begin perform materialise_recurring_job_for_revision('a9000000-0000-0000-0000-000000000001','2026-10-03','2026-10-03T14:30Z',1);
-  raise exception 'waiting stale generation created visit';exception when serialization_failure then null;end;
+  raise exception 'waiting stale generation created visit';exception when sqlstate 'PT409' then null;end;
  if exists(select 1 from jobs where recurring_plan_id='a9000000-0000-0000-0000-000000000001') then raise exception 'stale generation wrote a visit';end if;
  select * into r from materialise_recurring_job_for_revision('a9000000-0000-0000-0000-000000000001','2026-10-03','2026-10-03T15:30Z',2);
  if not r.created or (select scheduled_start from jobs where id=r.job_id)<>'2026-10-03T15:30Z'::timestamptz then raise exception 'new plan did not generate';end if;

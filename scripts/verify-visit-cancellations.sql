@@ -124,7 +124,7 @@ do $$ begin
  begin
   perform confirm_my_visit_cancellation((select job_id from cancel_quote_fixture),(select id from cancel_quote_fixture));
   raise exception 'stale appointment canceled';
- exception when serialization_failure then null; end;
+ exception when sqlstate 'PT409' then null; end;
 end $$;
 reset role;
 update visit_cancellation_quotes set scheduled_start=(select scheduled_start from jobs where id=job_id),expires_at=now()-interval '1 minute' where id=(select id from cancel_quote_fixture);
@@ -133,7 +133,7 @@ do $$ begin
  begin
   perform confirm_my_visit_cancellation((select job_id from cancel_quote_fixture),(select id from cancel_quote_fixture));
   raise exception 'expired quote canceled';
- exception when serialization_failure then null; end;
+ exception when sqlstate 'PT409' then null; end;
 end $$;
 reset role;
 update visit_cancellation_quotes set expires_at=clock_timestamp()+interval '5 minutes',fee_cents=6000 where id=(select id from cancel_quote_fixture);
@@ -142,7 +142,7 @@ do $$ begin
  begin
   perform confirm_my_visit_cancellation((select job_id from cancel_quote_fixture),(select id from cancel_quote_fixture));
   raise exception 'changed day fee bypassed';
- exception when serialization_failure then null; end;
+ exception when sqlstate 'PT409' then null; end;
 end $$;
 reset role;
 update visit_cancellation_quotes set fee_cents=0 where id=(select id from cancel_quote_fixture);
@@ -152,7 +152,7 @@ do $$ begin
  begin
   perform confirm_my_visit_cancellation((select job_id from cancel_quote_fixture),(select id from cancel_quote_fixture));
   raise exception 'started visit canceled';
- exception when serialization_failure then null; end;
+ exception when sqlstate 'PT409' then null; end;
 end $$;
 reset role;
 select set_config('request.jwt.claim.sub','81000000-0000-0000-0000-000000000002',true);
@@ -182,11 +182,11 @@ do $$ begin
  begin
   perform resolve_visit_cancellation_billing('85000000-0000-0000-0000-000000000003',(select id from visit_cancellations where job_id='85000000-0000-0000-0000-000000000003'));
   raise exception 'office collected fee before refunding existing payment';
- exception when serialization_failure then null; end;
+ exception when sqlstate 'PT409' then null; end;
  begin
   perform resolve_visit_cancellation_billing('85000000-0000-0000-0000-000000000005',(select id from visit_cancellations where job_id='85000000-0000-0000-0000-000000000005'));
   raise exception 'office settled live payment attempt';
- exception when serialization_failure then null; end;
+ exception when sqlstate 'PT409' then null; end;
 end $$;
 reset role;
 -- Provider-confirmed refund, locally recorded using the existing ledger RPC.

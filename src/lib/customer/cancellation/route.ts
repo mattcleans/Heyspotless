@@ -11,7 +11,7 @@ export function cancellationFailure(code?: string) {
   const status =
     code === "42501"
       ? 403
-      : code === "40001" || code === "23514"
+      : ["PT409", "40001", "40P01", "23514"].includes(code ?? "")
         ? 409
         : code === "22023"
           ? 400

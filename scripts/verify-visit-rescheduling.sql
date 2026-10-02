@@ -87,9 +87,9 @@ update jobs set status='canceled' where id='95000000-0000-0000-0000-000000000007
 set local role authenticated;
 do $$ declare r record;begin
  for r in select * from move_test_quotes where kind<>'cancel' loop
-  begin perform confirm_my_visit_reschedule((r.q->>'job_id')::uuid,(r.q->>'id')::uuid);raise exception 'stale % confirmation allowed',r.kind;exception when serialization_failure then null;end;
+  begin perform confirm_my_visit_reschedule((r.q->>'job_id')::uuid,(r.q->>'id')::uuid);raise exception 'stale % confirmation allowed',r.kind;exception when sqlstate 'PT409' then null;end;
  end loop;
- begin perform confirm_my_visit_cancellation('95000000-0000-0000-0000-000000000006',(select (q->>'id')::uuid from move_test_quotes where kind='cancel'));raise exception 'stale cancellation after move-back allowed';exception when serialization_failure then null;end;
+ begin perform confirm_my_visit_cancellation('95000000-0000-0000-0000-000000000006',(select (q->>'id')::uuid from move_test_quotes where kind='cancel'));raise exception 'stale cancellation after move-back allowed';exception when sqlstate 'PT409' then null;end;
  if (select status from jobs where id='95000000-0000-0000-0000-000000000006')='canceled' then raise exception 'failed cancellation did not roll back';end if;
 end $$;
 reset role;
