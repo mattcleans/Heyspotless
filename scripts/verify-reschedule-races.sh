@@ -107,7 +107,8 @@ set request.jwt.claim.sub='a1000000-0000-0000-0000-000000000001';
 do $$ declare r jsonb;begin
  r:=confirm_my_visit_reschedule('a5000000-0000-0000-0000-000000000004',(select id from visit_reschedule_quotes where job_id='a5000000-0000-0000-0000-000000000004'));
  if r->>'fee_cents'<>'6000' or (select count(*) from invoices where id=(r->>'invoice_id')::uuid and total_cents=6000)<>1 or
-  (select count(*) from visit_reschedules where job_id='a5000000-0000-0000-000000000004')<>1 then raise exception 'concurrent fee retry duplicated/lost receipt';end if;
+  (select count(*) from visit_reschedules where job_id='a5000000-0000-0000-0000-000000000004')<>1 or
+  (select count(*) from invoices where customer_id='a2000000-0000-0000-0000-000000000001' and kind='reschedule_fee')<>1 then raise exception 'concurrent fee retry duplicated/lost receipt';end if;
 end $$;
 SQL
 wait "$MOVE_PID"
