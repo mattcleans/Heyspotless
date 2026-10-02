@@ -14,8 +14,10 @@ const time = (v: string | null) =>
   v ? formatDateTimeInZone(new Date(v)) : "Time was not set";
 export function RescheduleReceiptDetails({
   receipt,
+  office = false,
 }: {
   receipt: RescheduleReceipt;
+  office?: boolean;
 }) {
   return (
     <section className="visit-feature mt-5" role="status">
@@ -26,8 +28,25 @@ export function RescheduleReceiptDetails({
       <p className="mt-3 font-semibold text-navy">{time(receipt.newStart)}</p>
       <p className="mt-1 text-xs text-ink-2">Dallas time</p>
       <p className="mt-4 text-sm">
-        No rescheduling fee. Visit price: {formatCents(receipt.priceCents)}.
+        {receipt.feeCents
+          ? `${formatCents(receipt.feeCents)} rescheduling fee recorded.`
+          : "No rescheduling fee."}{" "}
+        Visit price: {formatCents(receipt.priceCents)}.
       </p>
+      {receipt.feeCents > 0 && (
+        <p className="mt-2 text-sm text-ink-2">
+          The fee has its own invoice in your account. Saving this change does
+          not charge your card.
+        </p>
+      )}
+      {receipt.feeCents > 0 && !office && (
+        <Link
+          href="/customer/account"
+          className="secondary-action mt-3 inline-flex"
+        >
+          View fee invoice
+        </Link>
+      )}
       <p className="mt-2 text-sm text-ink-2">
         The new time was saved for cleaner matching. Check the updated visit for
         your current assignment. Any assigned backup needs your approval before
@@ -129,6 +148,7 @@ export function VisitRescheduleForm({
           saved.jobId !== jobId ||
           Date.parse(saved.newStart) !== Date.parse(quote!.newStart) ||
           saved.priceCents !== quote!.priceCents ||
+          saved.feeCents !== quote!.feeCents ||
           Date.parse(saved.newEnd) !== Date.parse(quote!.newEnd) ||
           saved.releasedCount !== quote!.releasedCount
         )
@@ -151,7 +171,7 @@ export function VisitRescheduleForm({
   if (receipt)
     return (
       <>
-        <RescheduleReceiptDetails receipt={receipt} />
+        <RescheduleReceiptDetails receipt={receipt} office={office} />
         <Link href={back} className="primary-action mt-4 w-full">
           View updated visit
         </Link>
@@ -190,7 +210,10 @@ export function VisitRescheduleForm({
             <div>
               <dt className="eyebrow">Cost of this change</dt>
               <dd className="mt-1 font-semibold">
-                $0.00 · Rescheduling is free
+                {formatCents(quote.feeCents)} ·{" "}
+                {quote.feeCents
+                  ? "Appointment-day change to another day"
+                  : "No rescheduling fee"}
               </dd>
               <dd className="mt-1">
                 Visit price stays {formatCents(quote.priceCents)}.
@@ -214,7 +237,9 @@ export function VisitRescheduleForm({
             disabled={busy || preview || stale}
             className="primary-action mt-5 w-full"
           >
-            {busy ? "Saving…" : "Confirm new appointment · Free"}
+            {busy
+              ? "Saving…"
+              : `Confirm new appointment · ${quote.feeCents ? formatCents(quote.feeCents) : "Free"}`}
           </button>
           <button
             type="button"
@@ -241,7 +266,9 @@ export function VisitRescheduleForm({
           }}
         >
           <p className="mt-3 text-sm text-ink-2">
-            Rescheduling is free, including on appointment day.
+            Rescheduling before appointment day is free. On appointment day,
+            moving to another day costs $60. Moving to a different time that
+            same day is free.
           </p>
           <label
             htmlFor="reschedule-start"

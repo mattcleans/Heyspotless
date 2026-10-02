@@ -12,7 +12,7 @@ const props = {
   currentStart: "2026-10-01T15:00:00Z",
   recurring: true,
 };
-describe("free single-visit rescheduling", () => {
+describe("single-visit rescheduling policy", () => {
   it("starts with a review step in Dallas time and retains a submitted time", () => {
     const html = renderToStaticMarkup(
       createElement(VisitRescheduleForm, {
@@ -21,9 +21,7 @@ describe("free single-visit rescheduling", () => {
       }),
     );
     expect(html).toContain('value="2026-10-03T10:00"');
-    expect(html).toContain(
-      "Rescheduling is free, including on appointment day",
-    );
+    expect(html).toContain("moving to another day costs $60");
     expect(html).toContain("Review new appointment");
     expect(html).toContain("recurring schedule stays the same");
     expect(html).not.toContain("Confirm new appointment");
@@ -55,6 +53,7 @@ describe("free single-visit rescheduling", () => {
           feeCents: 0,
           releasedCount: 1,
           confirmedAt: "2026-10-01T12:00:00Z",
+          invoiceId: null,
         },
       }),
     );
@@ -69,6 +68,28 @@ describe("free single-visit rescheduling", () => {
     const parsed = parseRescheduleTime("2026-11-01T01:30");
     expect(parsed.ambiguous).toBe(true);
     expect(parsed.date.toISOString()).toBe("2026-11-01T06:30:00.000Z");
+  });
+  it("a paid receipt records the fee separately without claiming a card charge", () => {
+    const html = renderToStaticMarkup(
+      createElement(RescheduleReceiptDetails, {
+        receipt: {
+          id: "quote",
+          jobId: "job",
+          previousStart: props.currentStart,
+          newStart: "2026-10-03T15:00:00Z",
+          newEnd: "2026-10-03T16:30:00Z",
+          priceCents: 20000,
+          feeCents: 6000,
+          releasedCount: 1,
+          confirmedAt: "2026-10-01T12:00:00Z",
+          invoiceId: "invoice",
+        },
+      }),
+    );
+    expect(html).toContain("$60.00 rescheduling fee recorded");
+    expect(html).toContain("Visit price: $200.00");
+    expect(html).toContain("does not charge your card");
+    expect(html).not.toContain("No rescheduling fee");
   });
   it("refuses nonexistent spring times instead of moving an appointment silently", () => {
     expect(() => parseRescheduleTime("2026-03-08T02:30")).toThrow(

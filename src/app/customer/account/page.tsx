@@ -122,7 +122,7 @@ export default async function CustomerPage() {
               <li key={invoice.id} className="card flex items-center justify-between gap-4 p-4">
                 <div>
                   <p className="font-medium text-ink">
-                    {feeInvoices.has(invoice.id) ? "Cancellation fee · " : ""}
+                    {invoice.kind === "reschedule_fee" ? "Rescheduling fee · " : feeInvoices.has(invoice.id) ? "Cancellation fee · " : ""}
                     {formatCents(invoice.balanceCents)} due
                     {invoice.dueOn ? ` · ${formatCalendarDate(invoice.dueOn)}` : ""}
                   </p>
@@ -194,6 +194,7 @@ export default async function CustomerPage() {
               >
                 <span className="text-sm text-ink-2">
                   {formatDateInZone(invoice.issuedAt ?? invoice.createdAt)}
+                  {invoice.kind === "reschedule_fee" ? " · rescheduling fee" : ""}
                   {invoice.voidedAt ? " · invoice voided" : ""}
                   {invoice.amounts.refundedCents > 0
                     ? ` · ${formatCents(invoice.amounts.refundedCents)} refunded`

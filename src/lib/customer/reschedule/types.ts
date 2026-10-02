@@ -7,7 +7,7 @@ export interface RescheduleDetails {
   newStart: string;
   newEnd: string;
   priceCents: number;
-  feeCents: 0;
+  feeCents: 0 | 6000;
   releasedCount: number;
 }
 export interface RescheduleQuote extends RescheduleDetails {
@@ -15,6 +15,7 @@ export interface RescheduleQuote extends RescheduleDetails {
 }
 export interface RescheduleReceipt extends RescheduleDetails {
   confirmedAt: string;
+  invoiceId: string | null;
 }
 function record(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value))
@@ -35,7 +36,7 @@ function common(value: unknown): RescheduleDetails {
     !date(r.new_end) ||
     Date.parse(r.new_end) <= Date.parse(r.new_start) ||
     !cents(r.price_cents) ||
-    r.fee_cents !== 0 ||
+    (r.fee_cents !== 0 && r.fee_cents !== 6000) ||
     !cents(r.released_count)
   )
     throw new Error("The new appointment could not be confirmed.");
@@ -46,7 +47,7 @@ function common(value: unknown): RescheduleDetails {
     newStart: r.new_start,
     newEnd: r.new_end,
     priceCents: r.price_cents,
-    feeCents: 0,
+    feeCents: r.fee_cents,
     releasedCount: r.released_count,
   };
 }
@@ -61,7 +62,15 @@ export function toRescheduleReceipt(value: unknown): RescheduleReceipt {
     base = common(r);
   if (!date(r.confirmed_at))
     throw new Error("The saved appointment could not be confirmed.");
-  return { ...base, confirmedAt: r.confirmed_at };
+  const invoiceId = r.invoice_id ?? null;
+  if (invoiceId !== null && !isChoiceId(invoiceId))
+    throw new Error("The rescheduling fee invoice could not be confirmed.");
+  if (
+    (base.feeCents === 6000 && !isChoiceId(invoiceId)) ||
+    (base.feeCents === 0 && invoiceId !== null)
+  )
+    throw new Error("The rescheduling fee invoice could not be confirmed.");
+  return { ...base, confirmedAt: r.confirmed_at, invoiceId };
 }
 export function checkedReschedule(
   value: unknown,
@@ -84,6 +93,7 @@ export function checkedReschedule(value: unknown, receipt: boolean) {
       released_count: r.releasedCount,
       expires_at: r.expiresAt,
       confirmed_at: r.confirmedAt,
+      invoice_id: r.invoiceId,
     };
   return receipt ? toRescheduleReceipt(raw) : toRescheduleQuote(raw);
 }

@@ -107,7 +107,7 @@ function failure(code?: string) {
         status === 403
           ? "This visit is no longer available to your account."
           : status === 409
-            ? "The visit or its cleaner assignment changed. Review the current appointment before confirming."
+            ? "The appointment, cleaner assignment or fee changed. Review the current visit before confirming."
             : status === 400
               ? "Choose a different future date and time within the next year."
               : "We could not confirm the new appointment. Retry to check the saved result, or call the office.",

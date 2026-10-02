@@ -526,6 +526,7 @@ export class BillingStore {
          autocharge_paused_at, autocharge_paused_reason, created_at,
          customers!inner ( autopay_enabled, autopay_authorized_at )`,
       )
+      .neq("kind", "reschedule_fee")
       .in("status", ["sent", "overdue"])
       .is("voided_at", null)
       .gt("balance_cents", 0)

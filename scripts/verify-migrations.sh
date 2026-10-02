@@ -3154,3 +3154,7 @@ as_super $PSQL -d "$DB" -f scripts/verify-visit-rescheduling.sql
 echo "  visit rescheduling verified"
 echo "  checking concurrent rescheduling, starts and stale dispatch"
 as_super bash scripts/verify-reschedule-races.sh "$DB"
+
+# Appointment-day fees and current-plan generation guards, isolated fixtures.
+as_super $PSQL -d "$DB" -f scripts/verify-reschedule-fees.sql
+as_super $PSQL -d "$DB" -f scripts/verify-recurring-generation.sql

@@ -51,6 +51,22 @@ beforeEach(() => {
   m.rpc.mockResolvedValue({ data: raw, error: null });
 });
 describe("client rescheduling authorization and truthful confirmation", () => {
+  it("returns the reviewed fee and its exact saved invoice", async () => {
+    const fee = { ...raw, fee_cents: 6000, invoice_id: id };
+    m.rpc.mockResolvedValue({ data: fee, error: null });
+    const reviewed = await post({
+      action: "review",
+      localStart: "2026-10-03T10:00",
+    });
+    expect(reviewed.status).toBe(200);
+    expect((await reviewed.json()).quote.feeCents).toBe(6000);
+    const saved = await post({ action: "confirm", quoteId: id });
+    expect(saved.status).toBe(200);
+    expect((await saved.json()).receipt).toMatchObject({
+      feeCents: 6000,
+      invoiceId: id,
+    });
+  });
   it.each([
     [null, 401],
     ["admin", 403],

@@ -23,7 +23,7 @@ export async function rescheduleHistory(db: SupabaseClient, id: string) {
   const { data, error } = await db
     .from("visit_reschedules")
     .select(
-      "id,job_id,previous_start,new_start,new_end,price_cents,fee_cents,released_count,confirmed_at",
+      "id,job_id,previous_start,new_start,new_end,price_cents,fee_cents,released_count,confirmed_at,invoice_id",
     )
     .eq("job_id", id)
     .order("version", { ascending: false })

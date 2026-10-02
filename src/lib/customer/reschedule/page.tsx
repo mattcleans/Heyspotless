@@ -4,6 +4,7 @@ import { getRepository } from "@/lib/data";
 import { createClient } from "@/lib/supabase/server";
 import { isChoiceId } from "../cleaner-choice/input";
 import { formatDateTimeInZone } from "@/lib/time/zone";
+import { formatCents } from "@/lib/money";
 import { loadRescheduleVisit, rescheduleHistory } from "./store";
 import { parseRescheduleTime } from "./types";
 import { VisitRescheduleForm } from "@/components/visit-reschedule-form";
@@ -95,13 +96,23 @@ export async function ReschedulePage({
               <li key={r.id} className="card p-4 text-sm">
                 <p>Moved to {formatDateTimeInZone(new Date(r.newStart))}</p>
                 <p className="mt-1 text-xs text-ink-2">
-                  Saved {formatDateTimeInZone(new Date(r.confirmedAt))} · No
-                  rescheduling fee
+                  Saved {formatDateTimeInZone(new Date(r.confirmedAt))} ·{" "}
+                  {r.feeCents
+                    ? `${formatCents(r.feeCents)} rescheduling fee`
+                    : "No rescheduling fee"}
                 </p>
               </li>
             ))}
           </ol>
         </section>
+      )}
+      {!office && history.some((r) => r.feeCents > 0) && (
+        <Link
+          href="/customer/account"
+          className="secondary-action mt-4 inline-flex"
+        >
+          View fee invoices in your account
+        </Link>
       )}
       <p className="mt-5 text-sm">
         Need help?{" "}

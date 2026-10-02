@@ -74,6 +74,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "invoice not found" }, { status: 404 });
 
   const job = invoice.jobId ? await repo.getJob(invoice.jobId) : null;
+  const rescheduleFee = invoice.kind === "reschedule_fee";
+  if (rescheduleFee && tipCents > 0)
+    return NextResponse.json({ error: "A rescheduling fee does not include a cleaner tip." }, { status: 400 });
   let cancellationFee = false;
   if (job?.status === "canceled") {
     let cancellation;
@@ -212,7 +215,7 @@ export async function POST(request: NextRequest) {
       tipCents,
       description: cancellationFee
         ? "Hey Spotless · cancellation fee"
-        : invoiceChargeDescription(invoice.id),
+        : rescheduleFee ? "Hey Spotless · rescheduling fee" : invoiceChargeDescription(invoice.id),
       origin: request.nextUrl.origin,
       saveCard,
       idempotencyKey,

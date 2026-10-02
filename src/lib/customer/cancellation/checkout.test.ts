@@ -77,6 +77,40 @@ beforeEach(() => {
   });
 });
 describe("canceled visit checkout", () => {
+  function reschedulingInvoice() {
+    m.repo.mockResolvedValue({
+      getCurrentProfile: async () => ({ id: "profile", role: "customer" }),
+      getInvoice: async () => ({
+        ...invoice,
+        jobId: null,
+        kind: "reschedule_fee",
+      }),
+      getCustomer: async () => ({
+        id: "customer",
+        stripeCustomerId: "cus_existing",
+      }),
+    });
+  }
+  it("collects a separate rescheduling fee with its own label and lock", async () => {
+    reschedulingInvoice();
+    expect((await pay()).status).toBe(200);
+    expect(m.cancel).not.toHaveBeenCalled();
+    expect(m.begin).toHaveBeenCalledWith(
+      expect.objectContaining({ invoiceId: "invoice", amountCents: 6000 }),
+    );
+    expect(m.checkout).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tipCents: 0,
+        description: "Hey Spotless · rescheduling fee",
+      }),
+    );
+  });
+  it("refuses cleaner tips on rescheduling fee checkout", async () => {
+    reschedulingInvoice();
+    expect((await pay(1000)).status).toBe(400);
+    expect(m.reconcile).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
   it.each([
     null,
     { billingReview: true, invoiceId: null },
