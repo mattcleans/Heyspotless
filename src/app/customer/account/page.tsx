@@ -8,6 +8,8 @@ import { formatCents } from "@/lib/money";
 import { formatCalendarDate, formatDateInZone } from "@/lib/time/zone";
 import { isBillingEnabled } from "@/lib/stripe/env";
 import { PayInvoiceButton, SaveCardButton } from "./billing-actions";
+import { createClient } from "@/lib/supabase/server";
+import { cancellationsForInvoices } from "@/lib/customer/cancellation/store";
 
 export const metadata = { title: "Account" };
 
@@ -36,6 +38,18 @@ export default async function CustomerPage() {
   const now = new Date();
   const upcoming = upcomingVisits(jobs, now).slice(0, 3);
   const outstanding = invoices.filter((i) => i.balanceCents > 0 && !i.voidedAt);
+  const cancellations = repo.isDemo
+    ? []
+    : await cancellationsForInvoices(
+        await createClient(),
+        invoices.flatMap((i) => (i.jobId ? [i.jobId] : [])),
+      );
+  const feeInvoices = new Set(
+    (cancellations ?? []).flatMap((c) => (c.invoiceId ? [c.invoiceId] : [])),
+  );
+  const reviewJobs = new Set(
+    (cancellations ?? []).filter((c) => c.billingReview).map((c) => c.jobId),
+  );
   const settled = invoices.filter((i) => i.balanceCents <= 0 || i.voidedAt);
   const owedCents = outstanding.reduce((sum, i) => sum + i.balanceCents, 0);
 
@@ -51,26 +65,53 @@ export default async function CustomerPage() {
   return (
     <>
       <PageHeader eyebrow="Customer" title="Your account">
-        Manage your payments and find your next visit.
+        Manage your payments, home instructions, and upcoming visits.
       </PageHeader>
+      {customer && (
+        <Link
+          href="/customer/account/homes"
+          className="secondary-action mt-4 inline-flex"
+        >
+          Manage home instructions
+        </Link>
+      )}
+
+      {customer && (
+        <Link
+          href="/customer/schedules"
+          className="secondary-action mt-4 ml-2 inline-flex"
+        >
+          Manage recurring schedule
+        </Link>
+      )}
+
+      <Link
+        href="/customer/quotes"
+        className="secondary-action mt-4 ml-2 inline-flex"
+      >
+        Review quotes
+      </Link>
 
       {autopayEndedByUs ? (
         <Callout tone="warn" label="Autopay was switched off">
           {customer?.autopayEndedReason
             ? `We switched autopay off because ${customer.autopayEndedReason}.`
             : "We switched autopay off because there is no card on file."}{" "}
-          Save a card below and you can turn it back on. We will ask you to authorise it
-          again rather than reusing your old permission — it applied to a card you have
-          since removed.
+          Save a card below and you can turn it back on. We will ask you to
+          authorise it again rather than reusing your old permission — it
+          applied to a card you have since removed.
         </Callout>
       ) : null}
 
       {!billingLive ? (
         <Callout tone="warn" label="Payments are not live yet">
           Online payments are currently unavailable. Call Hey Spotless at{" "}
-          <a href="tel:+14692800397" className="underline">469-280-0397</a>{" "}
+          <a href="tel:+14692800397" className="underline">
+            469-280-0397
+          </a>{" "}
           for help with a balance or payment.
-          {repo.isDemo && " This preview uses sample balances and payment details."}
+          {repo.isDemo &&
+            " This preview uses sample balances and payment details."}
         </Callout>
       ) : null}
 
@@ -105,6 +146,32 @@ export default async function CustomerPage() {
       </div>
 
       {/* ---------------------------------------------------------- owed --- */}
+      {(cancellations ?? []).some((c) => c.billingReview) && (
+        <section className="visit-feature mt-6">
+          <h2 className="font-semibold text-navy">
+            Cancellation payments under review
+          </h2>
+          <ul className="mt-3 space-y-3">
+            {(cancellations ?? [])
+              .filter((c) => c.billingReview)
+              .map((c) => (
+                <li key={c.id}>
+                  <p className="text-sm">
+                    {formatCents(c.feeCents)} cancellation fee recorded. The
+                    office is reconciling existing payments; this fee is not
+                    included in the invoice balance above.
+                  </p>
+                  <Link
+                    href={`/customer/visits/${c.jobId}/cancel`}
+                    className="inline-flex min-h-11 items-center text-sm underline"
+                  >
+                    View cancellation details
+                  </Link>
+                </li>
+              ))}
+          </ul>
+        </section>
+      )}
       <section className="mt-8">
         <h2 className="eyebrow">Outstanding</h2>
         {outstanding.length === 0 ? (
@@ -112,14 +179,26 @@ export default async function CustomerPage() {
         ) : (
           <ul className="mt-2 space-y-3">
             {outstanding.map((invoice) => (
-              <li key={invoice.id} className="card flex items-center justify-between gap-4 p-4">
+              <li
+                key={invoice.id}
+                className="card flex items-center justify-between gap-4 p-4"
+              >
                 <div>
                   <p className="font-medium text-ink">
+                    {invoice.kind === "reschedule_fee"
+                      ? "Rescheduling fee · "
+                      : feeInvoices.has(invoice.id)
+                        ? "Cancellation fee · "
+                        : ""}
                     {formatCents(invoice.balanceCents)} due
-                    {invoice.dueOn ? ` · ${formatCalendarDate(invoice.dueOn)}` : ""}
+                    {invoice.dueOn
+                      ? ` · ${formatCalendarDate(invoice.dueOn)}`
+                      : ""}
                   </p>
                   <p className="mt-1 flex items-center gap-2 text-sm text-ink-3">
-                    <Pill tone={invoice.status === "overdue" ? "bad" : "neutral"}>
+                    <Pill
+                      tone={invoice.status === "overdue" ? "bad" : "neutral"}
+                    >
                       {invoice.status}
                     </Pill>
                     {invoice.amounts.tipCents > 0
@@ -134,18 +213,32 @@ export default async function CustomerPage() {
                   {invoice.lastError ? (
                     <p className="mt-1.5 text-xs text-bad">
                       Last attempt failed: {invoice.lastError}
-                      {invoice.nextAttemptAt ? ` We will try again on ${formatDateInZone(invoice.nextAttemptAt)}.` : ""}
+                      {invoice.nextAttemptAt
+                        ? ` We will try again on ${formatDateInZone(invoice.nextAttemptAt)}.`
+                        : ""}
                     </p>
                   ) : null}
                 </div>
-                {billingLive ? (
+                {invoice.jobId && reviewJobs.has(invoice.jobId) ? (
+                  <div className="text-sm text-ink-2">
+                    <p>Office payment review needed</p>
+                    <Link
+                      href={`/customer/visits/${invoice.jobId}/cancel`}
+                      className="inline-flex min-h-11 items-center underline"
+                    >
+                      View cancellation
+                    </Link>
+                  </div>
+                ) : billingLive ? (
                   <PayInvoiceButton
                     invoiceId={invoice.id}
                     balanceCents={invoice.balanceCents}
                     hasCard={Boolean(defaultCard)}
                   />
                 ) : (
-                  <span className="nums text-sm text-ink-3">{formatCents(invoice.balanceCents)}</span>
+                  <span className="nums text-sm text-ink-3">
+                    {formatCents(invoice.balanceCents)}
+                  </span>
                 )}
               </li>
             ))}
@@ -159,17 +252,23 @@ export default async function CustomerPage() {
         <div className="card mt-2 p-4">
           {defaultCard ? (
             <p className="text-sm text-ink">
-              <span className="font-medium capitalize">{defaultCard.brand ?? "Card"}</span> ending{" "}
-              <span className="nums">{defaultCard.last4 ?? "????"}</span>
+              <span className="font-medium capitalize">
+                {defaultCard.brand ?? "Card"}
+              </span>{" "}
+              ending <span className="nums">{defaultCard.last4 ?? "????"}</span>
               <span className="text-ink-3"> · {cardNote(defaultCard)}</span>
             </p>
           ) : (
             <p className="text-sm text-ink-3">
-              No card saved. Adding one lets you pay in a tap, and is required for autopay.
+              No card saved. Adding one lets you pay in a tap, and is required
+              for autopay.
             </p>
           )}
           {billingLive ? (
-            <SaveCardButton hasCard={Boolean(defaultCard)} autopayEnabled={autopayOn} />
+            <SaveCardButton
+              hasCard={Boolean(defaultCard)}
+              autopayEnabled={autopayOn}
+            />
           ) : null}
         </div>
       </section>
@@ -186,12 +285,18 @@ export default async function CustomerPage() {
               >
                 <span className="text-sm text-ink-2">
                   {formatDateInZone(invoice.issuedAt ?? invoice.createdAt)}
+                  {invoice.kind === "reschedule_fee"
+                    ? " · rescheduling fee"
+                    : ""}
+                  {invoice.voidedAt ? " · invoice voided" : ""}
                   {invoice.amounts.refundedCents > 0
                     ? ` · ${formatCents(invoice.amounts.refundedCents)} refunded`
                     : ""}
                 </span>
                 <span className="nums text-sm font-semibold text-navy">
-                  {formatCents(invoice.amounts.totalCents)}
+                  {invoice.voidedAt
+                    ? "$0.00 due"
+                    : formatCents(invoice.amounts.totalCents)}
                 </span>
               </li>
             ))}
@@ -201,21 +306,45 @@ export default async function CustomerPage() {
 
       {/* ------------------------------------------------------ upcoming --- */}
       <section className="mt-8">
-        <div className="flex items-center justify-between gap-3"><h2 className="eyebrow">Upcoming visits</h2><Link href="/customer/visits" className="text-sm underline">View all visits</Link></div>
-        {upcoming.length === 0 && <p className="mt-3 text-sm text-ink-2">No upcoming visits. <Link href="/book" className="underline">Request a clean</Link>.</p>}
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="eyebrow">Upcoming visits</h2>
+          <Link href="/customer/visits" className="text-sm underline">
+            View all visits
+          </Link>
+        </div>
+        {upcoming.length === 0 && (
+          <p className="mt-3 text-sm text-ink-2">
+            No upcoming visits.{" "}
+            <Link href="/book" className="underline">
+              Request a clean
+            </Link>
+            .
+          </p>
+        )}
         <ul className="mt-2 space-y-3">
           {upcoming.map((job) => (
-            <li key={job.id} className="card flex items-center justify-between gap-4 p-4">
+            <li
+              key={job.id}
+              className="card flex items-center justify-between gap-4 p-4"
+            >
               <div>
                 <p className="font-medium text-ink">
-                  {SERVICE_LABELS[job.service]} · {FREQUENCY_LABELS[job.frequency]}
+                  {SERVICE_LABELS[job.service]} ·{" "}
+                  {FREQUENCY_LABELS[job.frequency]}
                 </p>
                 <p className="mt-0.5 text-sm text-ink-3">
                   {job.street}, {job.city}
-                  {job.scheduledStart ? ` · ${formatDateInZone(job.scheduledStart)}` : ""}
+                  {job.scheduledStart
+                    ? ` · ${formatDateInZone(job.scheduledStart)}`
+                    : ""}
                 </p>
               </div>
-              <Link href={`/customer/visits/${job.id}`} className="secondary-action">View visit</Link>
+              <Link
+                href={`/customer/visits/${job.id}`}
+                className="secondary-action"
+              >
+                View visit
+              </Link>
             </li>
           ))}
         </ul>
@@ -226,7 +355,8 @@ export default async function CustomerPage() {
         <h2 className="eyebrow">Signed in</h2>
         <div className="card mt-2 flex items-center justify-between gap-4 p-4">
           <p className="text-sm text-ink-2">
-            {profile?.email ?? (repo.isDemo ? "Preview account" : "Your account")}
+            {profile?.email ??
+              (repo.isDemo ? "Preview account" : "Your account")}
           </p>
           <form action="/auth/sign-out" method="post">
             <button
@@ -246,4 +376,3 @@ function cardNote(card: PaymentMethod): string {
   if (!card.expMonth || !card.expYear) return "Saved";
   return `expires ${String(card.expMonth).padStart(2, "0")}/${String(card.expYear).slice(-2)}`;
 }
-

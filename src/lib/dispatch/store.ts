@@ -24,10 +24,17 @@ import type { DispatchChannel } from "./types";
 export type OfferResponse =
   | "accepted"
   | "declined"
+  | "conflict"
   | "taken"
   | "expired"
   | "superseded"
   | "not_found";
+
+export class OfferWriteConflict extends Error {
+  constructor() {
+    super("The schedule changed while answering the offer.");
+  }
+}
 
 export interface RecordedDecision {
   id: string;
@@ -35,6 +42,7 @@ export interface RecordedDecision {
 }
 
 export interface OfferToRecord {
+  scheduleRevision: number;
   jobId: string;
   cleanerId: string;
   decisionId: string | null;
@@ -74,12 +82,17 @@ export class DispatchStore {
         kind: decision.kind,
         cleaner_id: cleanerOf(decision),
         continuity_status: continuity.status,
-        continuity_basis: continuity.status === "none" ? null : continuity.basis,
-        continuity_reason: continuity.status === "none" ? continuity.reason : null,
+        continuity_basis:
+          continuity.status === "none" ? null : continuity.basis,
+        continuity_reason:
+          continuity.status === "none" ? continuity.reason : null,
         continuity_premium_cents:
-          continuity.status === "none" ? null : (continuity.premiumCents ?? null),
+          continuity.status === "none"
+            ? null
+            : (continuity.premiumCents ?? null),
         marginal_cents: marginalOf(decision),
-        w2_ceiling_cents: decision.kind === "waterfall" ? decision.w2CeilingCents : null,
+        w2_ceiling_cents:
+          decision.kind === "waterfall" ? decision.w2CeilingCents : null,
         rationale: decision.rationale,
         decided_by: decidedBy,
       })
@@ -97,7 +110,7 @@ export class DispatchStore {
    * sweep harmless rather than a second acceptable offer.
    */
   async recordOffer(offer: OfferToRecord): Promise<string | null> {
-    const { data, error } = await this.db.rpc("record_offer", {
+    const { data, error } = await this.db.rpc("record_offer_for_schedule", {
       p_job_id: offer.jobId,
       p_cleaner_id: offer.cleanerId,
       p_decision_id: offer.decisionId,
@@ -108,6 +121,7 @@ export class DispatchStore {
       p_estimated_minutes: offer.estimatedMinutes,
       p_expires_at: offer.expiresAt.toISOString(),
       p_is_exclusive: offer.isExclusive ?? false,
+      p_schedule_revision: offer.scheduleRevision,
     });
     if (error) throw new Error(`recordOffer: ${error.message}`);
     return typeof data === "string" ? data : null;
@@ -123,12 +137,17 @@ export class DispatchStore {
     accept: boolean,
     reason: string | null = null,
   ): Promise<OfferResponse> {
-    const { data, error } = await this.db.rpc("respond_to_offer", {
-      p_offer_id: offerId,
-      p_cleaner_id: cleanerId,
-      p_accept: accept,
-      p_reason: reason,
-    });
+    const { data, error } = await this.db.rpc(
+      "respond_to_offer_with_capacity",
+      {
+        p_offer_id: offerId,
+        p_cleaner_id: cleanerId,
+        p_accept: accept,
+        p_reason: reason,
+      },
+    );
+    if (error && ["40001", "40P01"].includes(error.code))
+      throw new OfferWriteConflict();
     if (error) throw new Error(`respond: ${error.message}`);
     return isOfferResponse(data) ? data : "not_found";
   }
@@ -149,12 +168,18 @@ export class DispatchStore {
     jobId: string,
     cleanerId: string,
     payoutCents: number,
+    scheduleRevision: number,
   ): Promise<boolean> {
-    const { data, error } = await this.db.rpc("assign_job_directly", {
-      p_job_id: jobId,
-      p_cleaner_id: cleanerId,
-      p_payout_cents: payoutCents,
-    });
+    const { data, error } = await this.db.rpc(
+      "assign_job_for_schedule_with_capacity",
+      {
+        p_job_id: jobId,
+        p_cleaner_id: cleanerId,
+        p_payout_cents: payoutCents,
+        p_schedule_revision: scheduleRevision,
+      },
+    );
+    if (error?.code === "PCP01") return false;
     if (error) throw new Error(`assignDirectly: ${error.message}`);
     return data === true;
   }
@@ -191,6 +216,7 @@ function marginalOf(decision: DispatchDecision): number | null {
 const RESPONSES: readonly string[] = [
   "accepted",
   "declined",
+  "conflict",
   "taken",
   "expired",
   "superseded",
@@ -222,7 +248,10 @@ export async function continuityFor(
     .in("job_id", [...jobIds]);
   if (error) throw new Error(`continuityFor: ${error.message}`);
 
-  for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
+  for (const row of (Array.isArray(data) ? data : []) as Record<
+    string,
+    unknown
+  >[]) {
     const jobId = row["job_id"];
     if (typeof jobId !== "string") continue;
 
@@ -232,7 +261,8 @@ export async function continuityFor(
     byJob.set(jobId, {
       preferredCleanerId: typeof preferred === "string" ? preferred : null,
       incumbentCleanerId: typeof incumbent === "string" ? incumbent : null,
-      priorVisits: typeof row["prior_visits"] === "number" ? row["prior_visits"] : 0,
+      priorVisits:
+        typeof row["prior_visits"] === "number" ? row["prior_visits"] : 0,
       agreedPayoutShare: agreedShare == null ? null : Number(agreedShare),
     });
   }
@@ -264,14 +294,19 @@ export async function busyWindowsFor(
 ): Promise<Map<string, TimeWindow[]>> {
   const { data, error } = await db
     .from("job_assignments")
-    .select("cleaner_id, jobs!inner ( scheduled_start, scheduled_end, estimated_clean_minutes, status )")
+    .select(
+      "cleaner_id, jobs!inner ( scheduled_start, scheduled_end, estimated_clean_minutes, status )",
+    )
     .gte("jobs.scheduled_start", from.toISOString())
     .lte("jobs.scheduled_start", to.toISOString())
     .in("jobs.status", ["scheduled", "assigned", "in_progress"]);
   if (error) throw new Error(`busyWindowsFor: ${error.message}`);
 
   const byCleaner = new Map<string, TimeWindow[]>();
-  for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
+  for (const row of (Array.isArray(data) ? data : []) as Record<
+    string,
+    unknown
+  >[]) {
     const cleanerId = row["cleaner_id"];
     const job = (row["jobs"] ?? {}) as Record<string, unknown>;
     if (typeof cleanerId !== "string") continue;
@@ -282,10 +317,13 @@ export async function busyWindowsFor(
     // An end time if the job has one, otherwise the estimate. A job with
     // neither is treated as a point in time rather than skipped: it still
     // means she is somewhere at that moment.
-    const minutes = typeof job["estimated_clean_minutes"] === "number"
-      ? job["estimated_clean_minutes"]
-      : 0;
-    const end = toDate(job["scheduled_end"]) ?? new Date(start.getTime() + minutes * 60_000);
+    const minutes =
+      typeof job["estimated_clean_minutes"] === "number"
+        ? job["estimated_clean_minutes"]
+        : 0;
+    const end =
+      toDate(job["scheduled_end"]) ??
+      new Date(start.getTime() + minutes * 60_000);
 
     const existing = byCleaner.get(cleanerId);
     if (existing) existing.push({ start, end });
@@ -295,7 +333,10 @@ export async function busyWindowsFor(
 }
 
 /** A cleaner's declared working hours, by day of week (0 = Sunday). */
-export type WeeklyAvailability = Map<string, Map<number, { startsAt: string; endsAt: string }[]>>;
+export type WeeklyAvailability = Map<
+  string,
+  Map<number, { startsAt: string; endsAt: string }[]>
+>;
 
 /**
  * Declared availability for the whole roster.
@@ -306,14 +347,19 @@ export type WeeklyAvailability = Map<string, Map<number, { startsAt: string; end
  * check that read silence as refusal would empty the board on the day it
  * shipped.
  */
-export async function availabilityFor(db: SupabaseClient): Promise<WeeklyAvailability> {
+export async function availabilityFor(
+  db: SupabaseClient,
+): Promise<WeeklyAvailability> {
   const { data, error } = await db
     .from("cleaner_availability")
     .select("cleaner_id, day_of_week, starts_at, ends_at");
   if (error) throw new Error(`availabilityFor: ${error.message}`);
 
   const byCleaner: WeeklyAvailability = new Map();
-  for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
+  for (const row of (Array.isArray(data) ? data : []) as Record<
+    string,
+    unknown
+  >[]) {
     const cleanerId = row["cleaner_id"];
     const day = row["day_of_week"];
     const startsAt = row["starts_at"];
@@ -366,15 +412,20 @@ export async function passedOverFor(
   const byJob = new Map<string, PassedOver[]>();
   if (jobIds.length === 0) return byJob;
 
-
   const { data, error } = await db
     .from("offers")
-    .select("job_id, cleaner_id, payout_pct")
+    .select(
+      "job_id, cleaner_id, payout_pct, schedule_revision, jobs!inner(schedule_revision)",
+    )
     .in("job_id", [...jobIds])
     .in("status", ["declined", "expired"]);
   if (error) throw new Error(`passedOverFor: ${error.message}`);
 
-  for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
+  for (const row of (Array.isArray(data) ? data : []) as Record<
+    string,
+    unknown
+  >[]) {
+    if (!currentOfferRevision(row)) continue;
     const jobId = row["job_id"];
     const cleanerId = row["cleaner_id"];
     const share = row["payout_pct"];
@@ -404,15 +455,32 @@ export async function offeredUpToFor(
 
   const { data, error } = await db
     .from("offers")
-    .select("job_id, payout_pct")
+    .select(
+      "job_id, payout_pct, schedule_revision, jobs!inner(schedule_revision)",
+    )
     .in("job_id", [...jobIds]);
   if (error) throw new Error(`offeredUpToFor: ${error.message}`);
 
-  for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
+  for (const row of (Array.isArray(data) ? data : []) as Record<
+    string,
+    unknown
+  >[]) {
+    if (!currentOfferRevision(row)) continue;
     const jobId = row["job_id"];
     const share = Number(row["payout_pct"] ?? NaN);
     if (typeof jobId !== "string" || !Number.isFinite(share)) continue;
     byJob.set(jobId, Math.max(byJob.get(jobId) ?? 0, share));
   }
   return byJob;
+}
+
+function currentOfferRevision(row: Record<string, unknown>) {
+  const job = row.jobs;
+  return (
+    !!job &&
+    typeof job === "object" &&
+    !Array.isArray(job) &&
+    typeof row.schedule_revision === "number" &&
+    row.schedule_revision === (job as Record<string, unknown>).schedule_revision
+  );
 }

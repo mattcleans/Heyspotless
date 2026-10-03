@@ -178,3 +178,7 @@ describe("declared working hours", () => {
     expect(result.reasons).not.toContain("outside_working_hours");
   });
 });
+
+describe("client backup refusal",()=>{
+  it("excludes a declined cleaner only from the specified visit",()=>{const c=contractor(),j=JOB;expect(checkEligibility(c,{...j,clientDeclinedCleanerIds:[c.id]}).reasons).toContain("client_declined");expect(checkEligibility(c,{...j,clientDeclinedCleanerIds:["someone-else"]}).reasons).not.toContain("client_declined");});
+});

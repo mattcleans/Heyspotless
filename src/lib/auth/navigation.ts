@@ -41,9 +41,10 @@ export function destinationFor(role: string, raw: unknown): string {
 }
 
 export const LOGIN_ERRORS: Record<string, string> = {
-  missing_code: "This sign-in link is incomplete. Request a new link below.",
+  missing_code:
+    "This email link is incomplete. Sign in with your password, or request a new email link.",
   invalid_code:
-    "This link has expired, was already used, or opened in a different browser. Request a new link and open it in this browser on this device.",
+    "This email link has expired, was already used, or opened in a different browser. Sign in with your password, or request a new link and open it in this browser on this device.",
   service_unavailable:
     "Sign-in is temporarily unavailable. Try again shortly or call 469-280-0397.",
   sign_out_failed:

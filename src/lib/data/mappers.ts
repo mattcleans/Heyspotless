@@ -161,6 +161,7 @@ export function toJob(row: Row): Job {
     priceCents: num(row, "price_cents", 0),
     estimatedCleanMinutes: num(row, "estimated_clean_minutes", 0),
     scheduledStart: dateOrNull(row, "scheduled_start"),
+    scheduleRevision: num(row, "schedule_revision", 1),
   };
 }
 
@@ -238,6 +239,7 @@ export function toCleaner(row: Row): Cleaner {
 export function toInvoice(row: Row): Invoice {
   return {
     id: str(row, "id"),
+    kind: row.kind === "reschedule_fee" ? "reschedule_fee" : "service",
     customerId: str(row, "customer_id"),
     jobId: strOrNull(row, "job_id"),
     status: str(row, "status") as InvoiceStatus,

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { isDemoMode } from "@/lib/supabase/env";
@@ -14,17 +15,7 @@ import {
 } from "@/lib/cleaners/profile";
 import { formatDateInZone } from "@/lib/time/zone";
 
-/**
- * Screen 3 — the cleaner's profile.
- *
- * The three numbers at the top are the ones a customer actually weighs before
- * letting somebody into their house: how she is rated, how much she has done,
- * and how long she has been here. Everything below is in her own words or her
- * customers'.
- *
- * NO BOOK BUTTON. She is not a product to be selected — see the cleaners list
- * for why. The page ends where it should: with what other people said.
- */
+/** A published profile with a visit-specific preference request. */
 export const dynamic = "force-dynamic";
 
 export default async function CleanerProfilePage({
@@ -74,6 +65,8 @@ export default async function CleanerProfilePage({
           <Figure label="With us" value={tenureLabel(cleaner.hiredOn)} />
         </dl>
       </div>
+
+      <section className="card mt-4 p-5"><h2 className="font-semibold text-navy">Prefer {name} for your next visit?</h2><p className="mt-2 text-sm text-ink-2">Choose your visit and send a preference to the office. Availability and acceptance still need confirmation.</p><Link href={`/customer/cleaners/${id}/request`} className="primary-action mt-4 inline-flex">Request {name}</Link></section>
 
       {cleaner.bio ? (
         <section className="card mt-4 p-5">

@@ -9,7 +9,8 @@ import { Pill } from "@/components/ui";
 import { SERVICE_LABELS, SERVICE_TYPES } from "@/lib/pricing/price-book";
 import { formatDateTimeInZone } from "@/lib/time/zone";
 import { activeVisits } from "@/lib/experience/schedule";
-import { STAGES, STAGE_LABELS, type VisitStage } from "@/lib/visits/progress";
+import { loadCustomerVisit } from "@/lib/visits/customer-visit-store";
+import { STAGE_LABELS } from "@/lib/visits/progress";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Your home | Hey Spotless" };
@@ -43,6 +44,12 @@ export default async function ClientHome() {
           ? `${home.city}, ${home.zip}`
           : "A clean home. A familiar face. One less thing to do."}
       </p>
+      <Link
+        href="/customer/quotes"
+        className="secondary-action mt-4 inline-flex"
+      >
+        Review quotes
+      </Link>
       {next && (
         <section aria-labelledby="next-visit">
           <div className="section-heading">
@@ -52,7 +59,13 @@ export default async function ClientHome() {
           <div className="visit-feature">
             <Pill tone={stage === "cleaning" ? "good" : "sky"}>
               {next.scheduledStart
-                ? STAGE_LABELS[stage]
+                ? details?.backup &&
+                  !details.backup.approved &&
+                  stage !== "cleaning"
+                  ? details.backup.declined
+                    ? "Cleaner change requested"
+                    : "Your approval needed"
+                  : STAGE_LABELS[stage]
                 : "Time to be confirmed"}
             </Pill>
             <h3 className="mt-3 text-xl font-semibold text-navy">
@@ -67,18 +80,24 @@ export default async function ClientHome() {
             <div className="mt-4 flex items-center gap-3">
               {details?.cleaner && <Avatar cleaner={details.cleaner} />}
               <p className="text-sm text-ink-2">
-                {details?.cleaner
-                  ? `${details.cleaner.fullName}, your cleaner`
-                  : "We’ll confirm your cleaner here once matched."}
+                {details?.cleanerName
+                  ? `${details.cleanerName}, ${details.backup && !details.backup.approved && stage !== "cleaning" ? "backup awaiting your approval" : "your cleaner"}`
+                  : details?.assignmentUnavailable
+                    ? "Cleaner assignment details are unavailable. Call the office to confirm."
+                    : "We’ll confirm your cleaner here once matched."}
               </p>
             </div>
             <Link
               className="secondary-action mt-5"
-              href={`/customer/visits/${next.id}`}
+              href={`/customer/visits/${next.id}${details?.backup && !details.backup.approved && stage !== "cleaning" ? "/cleaner" : ""}`}
             >
-              {stage === "cleaning"
-                ? "Follow your clean"
-                : "View visit details"}
+              {details?.backup &&
+              !details.backup.approved &&
+              stage !== "cleaning"
+                ? "Review backup cleaner"
+                : stage === "cleaning"
+                  ? "Follow your clean"
+                  : "View visit details"}
             </Link>
           </div>
         </section>
@@ -103,6 +122,20 @@ export default async function ClientHome() {
             Leave a rating, add a tip, or tell us what could be better.
           </p>
         </Link>
+      )}
+      {(customer || repo.isDemo) && (
+        <section className="visit-feature mt-5">
+          <h2 className="font-semibold text-navy">Ready for your cleaner</h2>
+          <p className="mt-2 text-sm text-ink-2">
+            Keep entry, parking, and pet instructions up to date for your home.
+          </p>
+          <Link
+            href="/customer/account/homes"
+            className="secondary-action mt-3 inline-flex"
+          >
+            Manage home instructions
+          </Link>
+        </section>
       )}
       <section aria-labelledby="services">
         <div className="section-heading">
@@ -140,19 +173,16 @@ export default async function ClientHome() {
 async function nextVisit(jobId: string) {
   if (isDemoMode()) return null;
   const db = await createClient();
-  const { data, error } = await db
-    .from("visit_progress")
-    .select("cleaner_id, stage")
-    .eq("job_id", jobId)
-    .maybeSingle();
-  if (error) throw new Error("Unable to load your visit. Please try again.");
-  if (!data) return null;
-  const cleaner =
-    typeof data.cleaner_id === "string"
-      ? await new CleanerDirectory(db).get(data.cleaner_id)
-      : null;
-  const stage = STAGES.includes(data.stage as VisitStage)
-    ? (data.stage as VisitStage)
-    : "scheduled";
-  return { cleaner, stage };
+  const visit = await loadCustomerVisit(db, jobId);
+  if (!visit) return null;
+  const cleaner = visit.cleanerId
+    ? await new CleanerDirectory(db).get(visit.cleanerId)
+    : null;
+  return {
+    cleaner,
+    backup: visit.backup,
+    cleanerName: visit.cleanerName,
+    assignmentUnavailable: visit.assignmentUnavailable,
+    stage: visit.summary.stage,
+  };
 }

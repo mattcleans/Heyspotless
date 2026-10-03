@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getRepository } from "@/lib/data";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { ServiceStore } from "@/lib/service/store";
+import { BackupApprovalRequired, ServiceStore } from "@/lib/service/store";
 import { roomsFor } from "@/lib/service/rooms";
 
 /**
@@ -30,11 +30,18 @@ export async function POST(request: NextRequest) {
   const profile = await repo.getCurrentProfile();
   if (!profile) return NextResponse.json({ error: "not signed in" }, { status: 401 });
 
+  if (profile.role !== "cleaner") return NextResponse.json({ error: "Cleaner access required" }, { status: 403 });
   const cleaner = await repo.getCleanerByProfile(profile.id);
   if (!cleaner) return NextResponse.json({ error: "no cleaner record" }, { status: 403 });
 
   const store = new ServiceStore(createAdminClient());
-  if (!(await store.start(jobId, cleaner.id))) {
+  let saved;
+  try { saved = await store.start(jobId, cleaner.id); }
+  catch (error) {
+    if (error instanceof BackupApprovalRequired) return NextResponse.json({ error:error.message, code:"backup_approval_required" },{status:409});
+    throw error;
+  }
+  if (!saved) {
     return NextResponse.json({ error: "that job cannot be started" }, { status: 409 });
   }
 

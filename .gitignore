@@ -13,3 +13,6 @@ next-env.d.ts
 *.pem
 npm-debug.log*
 coverage/
+
+# Private preview setup inputs and generated SQL contain account identifiers.
+.preview/

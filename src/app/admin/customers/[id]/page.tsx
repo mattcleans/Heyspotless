@@ -12,7 +12,11 @@ import { PropertyForm } from "../property-form";
 
 export const metadata = { title: "Customer — Spotless Ops" };
 
-export default async function CustomerPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function CustomerPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
   const { id } = await params;
 
   const repo = await getRepository();
@@ -26,11 +30,27 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
 
   return (
     <>
-      <PageHeader eyebrow="Admin · Customer" title={`${customer.firstName} ${customer.lastName}`}>
-        {[formatPhone(customer.phone), customer.email].filter(Boolean).join(" · ") ||
-          "No contact details on file."}
+      <PageHeader
+        eyebrow="Admin · Customer"
+        title={`${customer.firstName} ${customer.lastName}`}
+      >
+        {[formatPhone(customer.phone), customer.email]
+          .filter(Boolean)
+          .join(" · ") || "No contact details on file."}
       </PageHeader>
 
+      <Link
+        href={`/admin/customers/${id}/schedules`}
+        className="secondary-action mb-5 inline-flex"
+      >
+        Manage recurring schedules
+      </Link>
+      <Link
+        href={`/admin/customers/${id}/quotes`}
+        className="secondary-action mb-5 ml-2 inline-flex"
+      >
+        Prepare and review quotes
+      </Link>
       <div className="mb-6 grid gap-3 sm:grid-cols-2">
         <Stat
           label="Lifetime value"
@@ -40,12 +60,20 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
         <Stat
           label="Properties"
           value={String(properties.length)}
-          note={properties.length === 0 ? "Add one before quoting." : "Quotable addresses."}
+          note={
+            properties.length === 0
+              ? "Add one before quoting."
+              : "Quotable addresses."
+          }
         />
         <Stat
           label="Cleans booked"
           value={String(jobs.length)}
-          note={jobs.length === 0 ? "Nothing on the board yet." : "Visible on dispatch."}
+          note={
+            jobs.length === 0
+              ? "Nothing on the board yet."
+              : "Visible on dispatch."
+          }
         />
       </div>
 
@@ -54,7 +82,8 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
 
         {properties.length === 0 ? (
           <div className="card p-6 text-center text-sm text-ink-3">
-            No properties yet. A quote is priced off beds and baths, so this is the next step.
+            No properties yet. A quote is priced off beds and baths, so this is
+            the next step.
           </div>
         ) : (
           <ul className="space-y-2">
@@ -67,17 +96,25 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
                       {p.city}, {p.state} {p.zip}
                     </p>
                     <p className="nums mt-1 text-xs text-ink-3">
-                      {formatRooms(p.rooms.bedrooms, p.rooms.bathrooms, p.rooms.halfBaths ?? 0)}
+                      {formatRooms(
+                        p.rooms.bedrooms,
+                        p.rooms.bathrooms,
+                        p.rooms.halfBaths ?? 0,
+                      )}
                     </p>
                   </div>
                   <div className="flex flex-wrap justify-end gap-1.5">
-                    {p.gateCode ? <Pill tone="sky">Gate {p.gateCode}</Pill> : null}
+                    {p.gateCode ? (
+                      <Pill tone="sky">Gate {p.gateCode}</Pill>
+                    ) : null}
                     {p.pets ? <Pill tone="warn">Pets</Pill> : null}
                   </div>
                 </div>
                 {p.accessNotes || p.parkingNotes ? (
                   <p className="mt-3 border-t border-line-soft pt-3 text-xs text-ink-3">
-                    {[p.accessNotes, p.parkingNotes].filter(Boolean).join(" · ")}
+                    {[p.accessNotes, p.parkingNotes]
+                      .filter(Boolean)
+                      .join(" · ")}
                   </p>
                 ) : null}
               </li>
@@ -96,11 +133,18 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
         ) : (
           <ul className="space-y-2">
             {jobs.map((job) => (
-              <li key={job.id} className="card flex items-center justify-between gap-4 p-4">
+              <li
+                key={job.id}
+                className="card flex items-center justify-between gap-4 p-4"
+              >
                 <div>
-                  <p className="font-medium text-ink">
-                    {SERVICE_LABELS[job.service]} · {FREQUENCY_LABELS[job.frequency]}
-                  </p>
+                  <Link
+                    href={`/admin/visits/${job.id}`}
+                    className="font-medium text-ink underline"
+                  >
+                    {SERVICE_LABELS[job.service]} ·{" "}
+                    {FREQUENCY_LABELS[job.frequency]}
+                  </Link>
                   <p className="mt-0.5 text-sm text-ink-3">
                     {job.street}
                     {job.scheduledStart
@@ -109,7 +153,9 @@ export default async function CustomerPage({ params }: { params: Promise<{ id: s
                   </p>
                 </div>
                 <div className="flex items-center gap-3">
-                  <Pill tone={job.status === "unscheduled" ? "warn" : "sky"}>{job.status}</Pill>
+                  <Pill tone={job.status === "unscheduled" ? "warn" : "sky"}>
+                    {job.status}
+                  </Pill>
                   <span className="nums font-semibold text-navy">
                     {formatCents(job.priceCents)}
                   </span>

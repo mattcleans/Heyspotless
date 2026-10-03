@@ -1,7 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { RecurringStore } from "@/lib/recurring/store";
-import { DEFAULT_HORIZON_DAYS, occurrencesBetween } from "@/lib/recurring/schedule";
+import {
+  DEFAULT_HORIZON_DAYS,
+  occurrencesBetween,
+} from "@/lib/recurring/schedule";
 import { addCalendarDays, todayIn } from "@/lib/time/zone";
 import { cronSecretMatches } from "@/lib/stripe/env";
 
@@ -56,13 +59,17 @@ export async function POST(request: NextRequest) {
 
   for (const plan of plans) {
     try {
-      const horizon = addCalendarDays(today, plan.horizonDays || DEFAULT_HORIZON_DAYS);
+      const horizon = addCalendarDays(
+        today,
+        plan.horizonDays || DEFAULT_HORIZON_DAYS,
+      );
 
       for (const occurrence of occurrencesBetween(plan, today, horizon)) {
         const { jobId, created } = await store.materialise(
           plan.id,
           occurrence.date,
           occurrence.startsAt,
+          plan.scheduleRevision,
         );
 
         if (jobId === null) {
@@ -92,9 +99,13 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  return NextResponse.json(problems.length > 0 ? { ...result, problems } : result);
+  return NextResponse.json(
+    problems.length > 0 ? { ...result, problems } : result,
+  );
 }
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message.slice(0, 500) : "generation failed";
+  return error instanceof Error
+    ? error.message.slice(0, 500)
+    : "generation failed";
 }
