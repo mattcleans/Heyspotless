@@ -31,6 +31,14 @@ export async function WorkspaceIdentity({
             (repo.isDemo ? "Sample workspace" : "Hey Spotless")}
         </span>
       </div>
+      {!repo.isDemo && profile && (
+        <Link
+          href="/account/password"
+          className="workspace-return min-h-11 inline-flex items-center"
+        >
+          Password settings
+        </Link>
+      )}
       {profile?.role === "admin" && area !== "admin" ? (
         <Link href="/admin" className="workspace-return">
           Return to Management
