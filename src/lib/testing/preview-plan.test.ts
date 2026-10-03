@@ -140,6 +140,14 @@ describe("private preview preparation", () => {
       "respond_my_visit_backup(uuid,uuid,uuid,uuid,uuid,boolean,text,uuid)",
     );
     expect(sql).toContain("recurring_schedule_job_changes");
+    expect(sql).toContain(
+      "respond_to_offer_with_capacity(uuid,uuid,boolean,text)",
+    );
+    expect(sql).toContain(
+      "assign_job_for_schedule_with_capacity(uuid,uuid,integer,bigint)",
+    );
+    expect(sql).toContain("has_function_privilege('service_role'");
+    expect(sql).toContain("('offers','capacity_conflict_at')");
     expect(sql).toContain("('payouts','tip_net_cents')");
     expect(sql).toContain("has_function_privilege('anon'");
     expect(sql).toContain("relrowsecurity");

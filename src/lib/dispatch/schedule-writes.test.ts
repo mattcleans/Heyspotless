@@ -32,7 +32,7 @@ describe("dispatch appointment revisions", () => {
     expect(
       await new DispatchStore(db).assignDirectly("job", "cleaner", 8000, 8),
     ).toBe(false);
-    expect(rpc).toHaveBeenCalledWith("assign_job_for_schedule", {
+    expect(rpc).toHaveBeenCalledWith("assign_job_for_schedule_with_capacity", {
       p_job_id: "job",
       p_cleaner_id: "cleaner",
       p_payout_cents: 8000,
@@ -84,5 +84,26 @@ describe("dispatch appointment revisions", () => {
         "job",
       ]),
     ).toEqual(new Map());
+  });
+});
+
+describe("employee capacity write recovery", () => {
+  it("returns an ordinary unfilled result when employee capacity was taken after matching", async () => {
+    rpc.mockResolvedValue({
+      data: null,
+      error: { code: "PCP01", message: "capacity conflict" },
+    });
+    expect(
+      await new DispatchStore(db).assignDirectly("job", "cleaner", 8000, 8),
+    ).toBe(false);
+  });
+  it("preserves unexpected write failures for the sweep to report", async () => {
+    rpc.mockResolvedValue({
+      data: null,
+      error: { code: "08006", message: "connection lost" },
+    });
+    await expect(
+      new DispatchStore(db).assignDirectly("job", "cleaner", 8000, 8),
+    ).rejects.toThrow("assignDirectly");
   });
 });

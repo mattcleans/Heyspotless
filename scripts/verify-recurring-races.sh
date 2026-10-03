@@ -21,7 +21,7 @@ insert into customers(id,profile_id,first_name,last_name) values('e2000000-0000-
 insert into properties(id,customer_id,street,city,zip) values('e3000000-0000-0000-0000-000000000001','e2000000-0000-0000-0000-000000000001','Sample','Dallas','75001');
 insert into cleaners(id,full_name,type,status,rating,background_check_cleared) values('e4000000-0000-0000-0000-000000000001','Series Race Cleaner','contractor_1099','active',4.5,true);
 insert into recurring_plans(id,customer_id,property_id,service,freq,agreed_price_cents,estimated_minutes,anchor_date,start_time,horizon_days)
- select ('e9000000-0000-0000-0000-'||lpad(n::text,12,'0'))::uuid,'e2000000-0000-0000-0000-000000000001','e3000000-0000-0000-0000-000000000001','standard','weekly',20000,90,(clock_timestamp() at time zone 'America/Chicago')::date+1,'09:30',7 from generate_series(1,4)n;
+ select ('e9000000-0000-0000-0000-'||lpad(n::text,12,'0'))::uuid,'e2000000-0000-0000-0000-000000000001','e3000000-0000-0000-0000-000000000001','standard','weekly',20000,90,(clock_timestamp() at time zone 'America/Chicago')::date+n,'09:30',7 from generate_series(1,4)n;
 select materialise_recurring_job(id,anchor_date,recurring_start_at(anchor_date,start_time)) from recurring_plans where id::text like 'e9000000-%';
 update jobs set status='assigned' where recurring_plan_id::text like 'e9000000-%';
 insert into job_assignments(job_id,cleaner_id,payout_cents) select id,'e4000000-0000-0000-0000-000000000001',5000 from jobs where recurring_plan_id::text like 'e9000000-%';

@@ -99,6 +99,10 @@ const functions = [
   "read_my_visit_schedule_identity(uuid)",
   "read_my_recurring_visit_changes(uuid)",
 ];
+const serverFunctions = [
+  "respond_to_offer_with_capacity(uuid,uuid,boolean,text)",
+  "assign_job_for_schedule_with_capacity(uuid,uuid,integer,bigint)",
+];
 const tables = [
   "visit_cleaner_requests",
   "visit_backup_decisions",
@@ -115,12 +119,15 @@ const columns = [
   ["jobs", "generation_epoch"],
   ["recurring_plans", "generation_epoch"],
   ["invoices", "kind"],
+  ["offers", "capacity_conflict_at"],
 ];
 
 export function previewReadinessSql(): string {
   return `-- Run against the verified preview project. Read-only, no account data.
 with required_functions(signature) as (values
 ${functions.map((f) => ` ('public.${f}')`).join(",\n")}
+), required_server_functions(signature) as (values
+${serverFunctions.map((f) => ` ('public.${f}')`).join(",\n")}
 ), required_tables(name) as (values
 ${tables.map((t) => ` ('${t}')`).join(",\n")}
 ), required_columns(table_name,column_name) as (values
@@ -131,6 +138,12 @@ select 'function' as kind, f.signature as name,
  coalesce(has_function_privilege('authenticated',to_regprocedure(f.signature),'EXECUTE'),false) as permitted,
  coalesce(not has_function_privilege('anon',to_regprocedure(f.signature),'EXECUTE'),false) as protected
 from required_functions f
+union all
+select 'server_function',f.signature,to_regprocedure(f.signature) is not null,
+ coalesce(has_function_privilege('service_role',to_regprocedure(f.signature),'EXECUTE'),false),
+ coalesce(not has_function_privilege('anon',to_regprocedure(f.signature),'EXECUTE')
+  and not has_function_privilege('authenticated',to_regprocedure(f.signature),'EXECUTE'),false)
+from required_server_functions f
 union all
 select 'table',t.name,c.oid is not null,
  coalesce(has_table_privilege('authenticated',c.oid,'SELECT'),false),coalesce(c.relrowsecurity,false)

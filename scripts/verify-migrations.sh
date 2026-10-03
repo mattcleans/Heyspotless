@@ -1455,7 +1455,7 @@ begin
   insert into jobs (customer_id, property_id, status, service, freq,
                     scheduled_start, price_cents, estimated_clean_minutes)
     values (v_cust, v_prop, 'scheduled', 'standard', 'biweekly',
-            now() + interval '9 days', 17000, 138)
+            now() + interval '10 days', 17000, 138)
     returning id into v_job;
   v_offer := record_offer(v_job, v_sarah, null, 'waterfall', 1, 0.33, 5610, 138,
                           now() + interval '20 minutes', false);
@@ -3169,3 +3169,7 @@ as_super $PSQL -d "$DB" -f scripts/verify-recurring-generation.sql
 
 as_super $PSQL -d "$DB" -f scripts/verify-recurring-editor.sql
 as_super bash scripts/verify-recurring-races.sh "$DB"
+
+# Capacity across different visits: including crews and retained time edits.
+as_super $PSQL -d "$DB" -f scripts/verify-cleaner-capacity.sql
+as_super bash scripts/verify-cleaner-capacity-races.sh "$DB"
