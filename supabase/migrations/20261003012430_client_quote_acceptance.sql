@@ -109,10 +109,10 @@ declare p properties%rowtype;c customers%rowtype;t spotless_private.client_quote
   v_seen:=array_append(v_seen,x->>'itemKey');
   select * into e from price_book_extras where item_key=x->>'itemKey' and active for share;
   if e.id is null or e.price_cents<0 or e.clean_minutes<0 then raise exception 'Extra unavailable' using errcode='23514';end if;
-  v_lines:=v_lines||jsonb_build_array(jsonb_build_object('itemKey',e.item_key,'name',e.name,'quantity',v_qty,'unitPriceCents',e.price_cents,
+  v_lines:=v_lines||jsonb_build_array(jsonb_build_object('itemKey',e.item_key,'name',e.name||case when e.unit_label='flat' then '' else ' ('||e.unit_label||')' end,'quantity',v_qty,'unitPriceCents',e.price_cents,
    'totalCents',v_qty*e.price_cents,'cleanMinutes',v_qty*e.clean_minutes,'isExtra',true));
   v_total:=v_total+v_qty*e.price_cents;v_minutes:=v_minutes+v_qty*e.clean_minutes;
-  v_work:=v_work||case when v_work='' then '' else E'\n' end||e.name||' × '||v_qty;
+  v_work:=v_work||case when v_work='' then '' else E'\n' end||e.name||' × '||v_qty||case when e.unit_label='flat' then '' else ' ('||e.unit_label||')' end;
  end loop;
  if v_total<=0 or v_minutes<=0 then raise exception 'Invalid price book' using errcode='23514';end if;
  if p_repeats and recurring_start_at((p_start at time zone 'America/Chicago')::date,(p_start at time zone 'America/Chicago')::time)<>p_start then

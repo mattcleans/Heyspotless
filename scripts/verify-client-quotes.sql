@@ -17,9 +17,18 @@ insert into quote_test_saved select n,prepare_client_quote(('c8400000-0000-0000-
  'c8300000-0000-0000-0000-000000000001','standard',case when n=2 then 'weekly'::frequency else 'one_time'::frequency end,
  date_trunc('day',clock_timestamp()+interval '30 days')+interval '15 hours',clock_timestamp()+interval '7 days',n=2,'[{"itemKey":"refrigerator","quantity":1}]','Client-facing note') from generate_series(1,6)n;
 reset role;
+-- Counted extras retain their units in the client's saved lines and crew notes.
+select set_config('request.jwt.claim.sub','c8100000-0000-0000-0000-000000000001',true);
+set local role authenticated;
+do $$ declare r jsonb;begin
+ r:=prepare_client_quote('c8400000-0000-0000-0000-000000000008','c8300000-0000-0000-0000-000000000001','standard','one_time',date_trunc('day',clock_timestamp()+interval '30 days')+interval '15 hours',clock_timestamp()+interval '7 days',false,'[{"itemKey":"organization","quantity":2}]','');
+ if not exists(select 1 from jsonb_array_elements(r->'lines') l where l->>'itemKey'='organization' and l->>'name' like '%per hour%' and (l->>'totalCents')::integer=8000 and (l->>'quantity')::integer=2) then raise exception 'Counted extra unit or amount missing';end if;
+end $$;
+reset role;
 -- Use real seeded extra name; asserted amounts are the saved complete terms.
 do $$ declare q jsonb;begin
  select s.q into q from quote_test_saved s where n=1;
+ if (select work_notes from spotless_private.client_quote_terms where id='c8400000-0000-0000-0000-000000000008') not like '%per hour%' then raise exception 'Counted extra unit missing from work instructions';end if;
  if (q->>'totalCents')::integer<=20800 or jsonb_array_length(q->'lines')<>7 or q->>'state'<>'review' or q::text like '%PRIVATE-%' then raise exception 'Quote did not include extras or leaked private data';end if;
 end $$;
 select set_config('request.jwt.claim.sub','c8100000-0000-0000-0000-000000000002',true);
