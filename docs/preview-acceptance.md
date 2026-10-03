@@ -58,6 +58,12 @@ Use separate browser sessions for each role. Record the commit, target reference
 
 Only mark authenticated acceptance complete after observing it. Physical-phone offline recovery and provider/payment acceptance need separate evidence; the disabled-provider preview cannot prove them. Keep the PR draft until release gates are satisfied.
 
+## Cleaner offline reopening
+
+Open an owned assigned visit while connected, obtain the required client backup approval and confirm Start. Wait for the checklist's offline-ready message. Disconnect, close the app and reopen its visit URL: the saved-work screen must show the last checked time and earlier-status warning, with room capture available for the started checklist. Take a before/after photo, close and reopen again, and verify that the saved check and waiting-upload count remain. No Start, Done, offer acceptance, client message or payment action should be available offline.
+
+Reconnect and open the live visit. Verify current ownership/status and successful photo uploads before confirming Done. A confirmed upload must remain checked in device recovery; an older upload must not erase or acknowledge a retake. Verify expired, canceled and reassigned visits, expired login, another signed-in profile and sign-out. Pending bytes must survive, while another profile cannot see or upload newly owned captures. Legacy unowned photos require the authenticated online recovery path. Repeat on a physical iPhone/Android PWA, with device storage pressure and ordinary browser restart. A fictional desktop browser check does not satisfy this physical-device gate.
+
 
 Cleaner capacity acceptance requires `20261002235329_cleaner_capacity_guard.sql`. The readiness output also checks both server-only capacity write RPCs and `offers.capacity_conflict_at`. In a verified preview, offer two overlapping visits to the same cleaner before accepting either, accept one, and confirm the other is withdrawn without a decline. Repeat a response after interruption, try an adjacent appointment, and test a retained crew assistant against another overlapping assignment. Time changes must preserve every teammate when refused. The separate-connection PostgreSQL verifier covers both orderings of a retained time change versus an acceptance, a genuine Repeatable Read abort/whole-transaction retry and a countdown expiring during a lock wait. Authenticated app acceptance remains required.
 

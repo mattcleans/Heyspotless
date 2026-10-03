@@ -30,13 +30,23 @@ export interface JobCaptureProps {
   rooms: Room[];
   /** Rooms already photographed on the server, so a reinstall does not start over. */
   alreadyDone: { roomKey: string; kind: string }[];
+  ownerId?: string | null;
 }
 
-export function JobCapture({ jobId, rooms, alreadyDone }: JobCaptureProps) {
+export function JobCapture({
+  jobId,
+  rooms,
+  alreadyDone,
+  ownerId = null,
+}: JobCaptureProps) {
   const [taken, setTaken] = useState<Set<string>>(
     () => new Set(alreadyDone.map((p) => `${p.roomKey}:${p.kind}`)),
   );
-  const [queue, setQueue] = useState<QueueSummary>({ outstanding: 0, struggling: 0, busy: false });
+  const [queue, setQueue] = useState<QueueSummary>({
+    outstanding: 0,
+    struggling: 0,
+    busy: false,
+  });
   const [durable, setDurable] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState(false);
@@ -52,12 +62,14 @@ export function JobCapture({ jobId, rooms, alreadyDone }: JobCaptureProps) {
 
     void (async () => {
       try {
-        if (!(await store.isAvailable())) throw new Error("storage unavailable");
-        const queued = await store.listForJob(jobId);
+        if (!(await store.isAvailable()))
+          throw new Error("storage unavailable");
+        const queued = await store.listForJob(jobId, ownerId);
         if (cancelled) return;
         setTaken((current) => {
           const next = new Set(current);
-          for (const photo of queued) next.add(`${photo.roomKey}:${photo.kind}`);
+          for (const photo of queued)
+            next.add(`${photo.roomKey}:${photo.kind}`);
           return next;
         });
         setQueue(summarise(queued));
@@ -69,7 +81,7 @@ export function JobCapture({ jobId, rooms, alreadyDone }: JobCaptureProps) {
     return () => {
       cancelled = true;
     };
-  }, [jobId]);
+  }, [jobId, ownerId]);
 
   // Drain now, whenever the connection comes back, and on a slow tick for the
   // case where `online` lies — which on a phone moving between cells it often
@@ -78,8 +90,13 @@ export function JobCapture({ jobId, rooms, alreadyDone }: JobCaptureProps) {
     let cancelled = false;
     const tick = () => {
       void drain((summary) => {
-        if (!cancelled) { setQueue(summary); setUploadError(false); }
-      }, jobId).catch(() => { if (!cancelled) setUploadError(true); });
+        if (!cancelled) {
+          setQueue(summary);
+          setUploadError(false);
+        }
+      }, jobId).catch(() => {
+        if (!cancelled) setUploadError(true);
+      });
     };
     tick();
 
@@ -124,6 +141,7 @@ export function JobCapture({ jobId, rooms, alreadyDone }: JobCaptureProps) {
         await store.enqueue({
           id: `${jobId}:${target.roomKey}:${target.kind}`,
           jobId,
+          ownerId: ownerId ?? undefined,
           roomKey: target.roomKey,
           kind: target.kind,
           takenAt: Date.now(),
@@ -134,9 +152,13 @@ export function JobCapture({ jobId, rooms, alreadyDone }: JobCaptureProps) {
           blob,
         });
 
-        setTaken((current) => new Set(current).add(`${target.roomKey}:${target.kind}`));
+        setTaken((current) =>
+          new Set(current).add(`${target.roomKey}:${target.kind}`),
+        );
         setDurable(true);
-        void store.listForJob(jobId).then((photos) => setQueue(summarise(photos)))
+        void store
+          .listForJob(jobId, ownerId)
+          .then((photos) => setQueue(summarise(photos)))
           .catch(() => setUploadError(true));
         void drain(setQueue, jobId).catch(() => setUploadError(true));
       } catch (caught) {
@@ -151,12 +173,14 @@ export function JobCapture({ jobId, rooms, alreadyDone }: JobCaptureProps) {
         setSaving(false);
       }
     },
-    [jobId],
+    [jobId, ownerId],
   );
 
   const outstanding = rooms.reduce(
     (count, room) =>
-      count + (taken.has(`${room.key}:before`) ? 0 : 1) + (taken.has(`${room.key}:after`) ? 0 : 1),
+      count +
+      (taken.has(`${room.key}:before`) ? 0 : 1) +
+      (taken.has(`${room.key}:after`) ? 0 : 1),
     0,
   );
 
@@ -184,23 +208,33 @@ export function JobCapture({ jobId, rooms, alreadyDone }: JobCaptureProps) {
 
       {!durable && (
         <p className="mt-2 rounded-lg border border-line bg-surface-2 p-3 text-xs text-ink-2">
-          Photo storage could not be opened. A photo is marked saved only after it is stored
-          on this device. Try Safari or Chrome outside a private window. Call the office
-          if you cannot save your photos.
+          Photo storage could not be opened. A photo is marked saved only after
+          it is stored on this device. Try Safari or Chrome outside a private
+          window. Call the office if you cannot save your photos.
         </p>
       )}
 
       {error && (
-        <p className="mt-2 rounded-lg border border-line bg-surface-2 p-3 text-sm text-ink" role="alert">
+        <p
+          className="mt-2 rounded-lg border border-line bg-surface-2 p-3 text-sm text-ink"
+          role="alert"
+        >
           {error}
         </p>
       )}
 
-      {saving && <p className="mt-2 text-xs text-ink-2" role="status">Saving photo on this device…</p>}
+      {saving && (
+        <p className="mt-2 text-xs text-ink-2" role="status">
+          Saving photo on this device…
+        </p>
+      )}
 
       <ul className="mt-3 space-y-2">
         {rooms.map((room) => (
-          <li key={room.key} className="card flex items-center justify-between gap-3 p-3">
+          <li
+            key={room.key}
+            className="card flex items-center justify-between gap-3 p-3"
+          >
             <span className="text-sm text-ink">{room.label}</span>
             <span className="flex gap-2">
               {(["before", "after"] as const).map((kind) => {
@@ -233,35 +267,58 @@ export function JobCapture({ jobId, rooms, alreadyDone }: JobCaptureProps) {
       */}
       {queue.outstanding > 0 && (
         <div className="card mt-3 p-3" role="status">
-        <p className="text-xs text-ink-2">
-          {queue.outstanding} photo{queue.outstanding === 1 ? "" : "s"} saved on this phone,
-          waiting to upload for this visit. Keep this visit open while they upload.
-          If you close the app, reopen this visit to resume.
-          {queue.struggling > 0 && (
-            <>
-              {" "}
-              <strong className="text-ink-2">
-                {queue.struggling} {queue.struggling === 1 ? "is" : "are"} having trouble
-              </strong>. The photos remain saved on this device.
-            </>
-          )}
-        </p>
-        {queue.authRequired && (
-          <p className="mt-2 text-xs text-ink-2">
-            Sign in again to finish uploading. Your saved photos remain on this device.
-            {" "}<Link className="underline" href={`/login?next=${encodeURIComponent(`/cleaner/job/${jobId}`)}`}>Sign in</Link>
+          <p className="text-xs text-ink-2">
+            {queue.outstanding} photo{queue.outstanding === 1 ? "" : "s"} saved
+            on this phone, waiting to upload for this visit. Keep this visit
+            open while they upload. If you close the app, reopen this visit to
+            resume.
+            {queue.struggling > 0 && (
+              <>
+                {" "}
+                <strong className="text-ink-2">
+                  {queue.struggling} {queue.struggling === 1 ? "is" : "are"}{" "}
+                  having trouble
+                </strong>
+                . The photos remain saved on this device.
+              </>
+            )}
           </p>
-        )}
-        <button type="button" onClick={() => void retryUploads()} disabled={retrying}
-          className="mt-2 min-h-11 rounded-lg border border-line px-3 text-xs font-semibold text-navy disabled:opacity-60">
-          {retrying ? "Checking uploads…" : "Retry uploads"}
-        </button>
+          {queue.authRequired && (
+            <p className="mt-2 text-xs text-ink-2">
+              Sign in again to finish uploading. Your saved photos remain on
+              this device.{" "}
+              <Link
+                className="underline"
+                href={`/login?next=${encodeURIComponent(`/cleaner/job/${jobId}`)}`}
+              >
+                Sign in
+              </Link>
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => void retryUploads()}
+            disabled={retrying}
+            className="mt-2 min-h-11 rounded-lg border border-line px-3 text-xs font-semibold text-navy disabled:opacity-60"
+          >
+            {retrying ? "Checking uploads…" : "Retry uploads"}
+          </button>
         </div>
       )}
-      {uploadError && <p className="mt-3 text-sm text-ink-2" role="alert">
-        Upload status could not be checked. Keep this visit open and try again.
-        {" "}<button type="button" className="min-h-11 px-2 font-semibold underline" onClick={() => void retryUploads()} disabled={retrying}>Retry</button>
-      </p>}
+      {uploadError && (
+        <p className="mt-3 text-sm text-ink-2" role="alert">
+          Upload status could not be checked. Keep this visit open and try
+          again.{" "}
+          <button
+            type="button"
+            className="min-h-11 px-2 font-semibold underline"
+            onClick={() => void retryUploads()}
+            disabled={retrying}
+          >
+            Retry
+          </button>
+        </p>
+      )}
     </section>
   );
 }

@@ -1,6 +1,6 @@
 # Three-role experience completion audit
 
-Updated October 1, 2026. The goal remains incomplete. This audit preserves the full three-role scope and does not treat passing unit tests as proof of product acceptance.
+Updated October 3, 2026. The goal remains incomplete. The table reflects the current source; dated sections below preserve earlier evidence. Passing tests do not prove authenticated product acceptance.
 
 | Requirement | Current evidence | Remaining proof or work |
 |---|---|---|
@@ -8,15 +8,15 @@ Updated October 1, 2026. The goal remains incomplete. This audit preserves the f
 | Executives can interpret costing and follow up with overdue clients | Reporting labels its latest-200-record scope, shows loaded completed visits, and links customer records; build and lint pass | Authenticated reporting with representative costing and overdue records, validated destination links |
 | Cleaners can find visits and agreed pay | Daily and full schedules, scoped reads, contractor assignment-pay lookup, employee hourly copy | Authenticated agreed-pay comparison and assignment isolation |
 | Cleaners can accept work and recover failures | Offer retry and session recovery; preview failure verified | Test-account acceptance/decline, successful schedule refresh, expired-session recovery |
-| Cleaners can finish work and recover photo uploads | Committed IndexedDB writes, revision-safe retakes, shared upload passes, per-visit counts and retry/session recovery; browser reload preservation verified | Physical-phone offline capture, restart, reconnect, uploads and completion |
+| Cleaners can finish work and recover photo uploads | Committed, revision-safe capture/upload queue plus minimal saved checklist and static offline reopening; fictional cold-navigation capture/reload verified | Authenticated completion/upload recovery and physical-phone capture, restart, reconnect and storage pressure |
 | Clients can find and understand their visits | Account upcoming filtering, visit sections, exact-room photo updates, canceled recovery and changeable finish estimates; sample phone review verified | Own-record isolation and live stage progression |
-| Clients can submit and confirm booking requests | Native field validation, retained edits, explicit request/estimate receipt; browser form progression verified | Non-production submission receipt and failure recovery; confirmed appointment workflow |
+| Clients can submit and confirm booking requests | Public request receipt; exact owned quote approval and office booking with retained prices/extras and recurring first visit; SQL ownership/retry/concurrency verified | Authenticated request, quote decision, office booking and dispatch journey |
 | Clients can request a preferred cleaner and approve a specific backup | Own-visit preference requests, office review, identity-bound client backup approval, waiting cleaner state and audited release for matching; local browser and full-schema SQL checks pass | Deploy the cleaner-choice migration and verify authenticated preference, contractor acceptance, decline, release and replacement consent |
-| Clients can reschedule or skip, and manage preferences | Home instructions, cancellation/single-occurrence skip, and individual rescheduling with explicit fee review with review/receipt/release history are implemented | Deploy migrations and verify authenticated saves; implement a recurring schedule editor. The user authorized client confirmation, including recurring schedule changes |
+| Clients can reschedule or skip, and manage preferences | Home instructions, individual changes and client-confirmed recurring frequency/date/pause/end editor with preserved exceptions and accepted terms; $60 appointment-day cross-date changes and free same-day time changes | Deploy all migrations to the isolated preview and verify authenticated saves, stale reviews and recovery |
 | Cleaners can manage availability and understand earnings | Working-hours editor and recorded-pay screen published in draft PR #28; pay separates ledger records from assignment amounts and hourly terms | Apply availability migration; verify authenticated saves, representative pay records and full statements |
-| Payments, receipt, rating and tips reconcile | Existing automated billing tests and readiness document | Stripe test-mode integration, business approval, authenticated rating/tip flow; no live activation authorized |
+| Payments, receipt, rating and tips reconcile | SQL billing/collection/refund invariants; cancellation and rescheduling fees require explicit checkout, protected from clean-invoice autocharge consent; actual cancellation/collection races verified | Stripe test-mode integration, business approval and authenticated checkout, receipt, rating/tip flow |
 | Experience works for actual users in all three roles | Preview interaction checks and automated suites | Task-based usability sessions with executives, cleaners and clients |
-| Requested PR delivers the latest changes | PR #26 merged September 30. Draft PR #28 includes schedules, availability, pay, home instructions, photo durability, executive review, accurate client tracking and cleaner choice; cancellations and individual rescheduling with explicit fee review added to that same draft | Verify final rescheduling commit CI and authenticated acceptance |
+| Requested PR delivers the latest changes | PR #26 merged September 30. Draft PR #28 includes the implemented three-role workflows, quotes, crew replacement, recurring edits, fee guards and offline recovery | Verify CI on each final source tree and complete authenticated acceptance before release |
 
 ## Access and safety boundaries
 

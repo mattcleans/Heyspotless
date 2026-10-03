@@ -25,6 +25,8 @@ export type QueueItemState = "pending" | "uploading" | "done";
 export interface QueueItem {
   id: string;
   jobId: string;
+  /** New captures are bound to the verified cleaner profile on this device. */
+  ownerId?: string;
   roomKey: string;
   kind: "before" | "after" | "issue";
   takenAt: number;
@@ -58,8 +60,14 @@ export const ATTEMPTS_BEFORE_WARNING = 4;
  * would otherwise retry in lockstep, and twenty simultaneous uploads on
  * recovering LTE is how you turn one dropped connection into twenty.
  */
-export function backoffMs(attempts: number, rng: () => number = Math.random): number {
-  const exponential = Math.min(BASE_BACKOFF_MS * 2 ** Math.max(0, attempts - 1), MAX_BACKOFF_MS);
+export function backoffMs(
+  attempts: number,
+  rng: () => number = Math.random,
+): number {
+  const exponential = Math.min(
+    BASE_BACKOFF_MS * 2 ** Math.max(0, attempts - 1),
+    MAX_BACKOFF_MS,
+  );
   // ±25%, so the spread is real without the first retry taking minutes.
   const jitter = exponential * 0.25 * (rng() * 2 - 1);
   return Math.max(0, Math.round(exponential + jitter));
@@ -147,8 +155,14 @@ export interface QueueSummary {
   authRequired?: boolean;
 }
 
-export function summarise(allItems: readonly QueueItem[], jobId?: string): QueueSummary {
-  const items = jobId === undefined ? allItems : allItems.filter((item) => item.jobId === jobId);
+export function summarise(
+  allItems: readonly QueueItem[],
+  jobId?: string,
+): QueueSummary {
+  const items =
+    jobId === undefined
+      ? allItems
+      : allItems.filter((item) => item.jobId === jobId);
   const outstanding = items.filter((i) => i.state !== "done").length;
   return {
     outstanding,
@@ -156,8 +170,11 @@ export function summarise(allItems: readonly QueueItem[], jobId?: string): Queue
       (i) => i.state !== "done" && i.attempts >= ATTEMPTS_BEFORE_WARNING,
     ).length,
     busy: outstanding > 0,
-    authRequired: items.some((i) => i.state !== "done"
-      && (i.lastError === "record: 401" || i.lastError === "storage: 401")),
+    authRequired: items.some(
+      (i) =>
+        i.state !== "done" &&
+        (i.lastError === "record: 401" || i.lastError === "storage: 401"),
+    ),
   };
 }
 
@@ -169,6 +186,10 @@ export function summarise(allItems: readonly QueueItem[], jobId?: string): Queue
  * `record_job_photo` being idempotent per (job, room, kind), an upload that
  * succeeded but whose response was lost costs one wasted PUT and nothing else.
  */
-export function storagePathFor(jobId: string, roomKey: string, kind: string): string {
+export function storagePathFor(
+  jobId: string,
+  roomKey: string,
+  kind: string,
+): string {
   return `jobs/${jobId}/${roomKey}-${kind}.jpg`;
 }

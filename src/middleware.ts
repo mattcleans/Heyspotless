@@ -101,6 +101,6 @@ export const config = {
      * Everything except static assets and image optimisation. Auth cookies must
      * be refreshed on real navigations, not on every icon fetch.
      */
-    "/((?!_next/static|_next/image|favicon.ico|icon.svg|manifest.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|icon.svg|manifest.webmanifest|sw\\.js$|offline-cleaner\\.(?:html|js)$|offline-work\\.js$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 };

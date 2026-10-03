@@ -40,13 +40,21 @@ export type DrainListener = (summary: QueueSummary) => void;
  * rather than uploading the same photo twice. The loop is restarted by the
  * caller on `online`, on an interval, and when a photo is added.
  */
-export async function drain(notify?: DrainListener, jobId?: string, retryNow = false): Promise<void> {
-  const listener = (items: store.StoredPhoto[]) => notify?.(summarise(items, jobId));
+export async function drain(
+  notify?: DrainListener,
+  jobId?: string,
+  retryNow = false,
+): Promise<void> {
+  const listener = (items: store.StoredPhoto[]) =>
+    notify?.(summarise(items, jobId));
   listeners.add(listener);
   try {
     if (retryNow) {
       for (const photo of await store.listOutstanding()) {
-        if (photo.state === "pending" && (jobId === undefined || photo.jobId === jobId)) {
+        if (
+          photo.state === "pending" &&
+          (jobId === undefined || photo.jobId === jobId)
+        ) {
           await store.update({ ...photo, nextAttemptAt: Date.now() });
         }
       }
@@ -61,7 +69,9 @@ export async function drain(notify?: DrainListener, jobId?: string, retryNow = f
           await drainLoop();
         }
       };
-      running = run().finally(() => { running = null; });
+      running = run().finally(() => {
+        running = null;
+      });
     }
     await running;
   } finally {
@@ -99,7 +109,9 @@ async function drainLoop(): Promise<void> {
     if (!(await store.update(beginUpload(next)))) continue;
     startedAt.set(next.id, now);
 
-    const photo = (await store.listForJob(next.jobId)).find((p) => p.id === next.id);
+    const photo = (await store.listForJob(next.jobId)).find(
+      (p) => p.id === next.id,
+    );
     if (!photo || !store.samePhoto(photo, next)) {
       // Gone from under us — already confirmed by another tab.
       startedAt.delete(next.id);
@@ -133,13 +145,21 @@ async function drainLoop(): Promise<void> {
 async function upload(photo: store.StoredPhoto): Promise<void> {
   const path = storagePathFor(photo.jobId, photo.roomKey, photo.kind);
   const supabase = createClient();
+  if (photo.ownerId) {
+    const { data, error } = await supabase.auth.getUser();
+    if (error || data.user?.id !== photo.ownerId)
+      throw new Error("record: 401");
+  }
 
-  const { error } = await supabase.storage.from(PHOTO_BUCKET).upload(path, photo.blob, {
-    contentType: photo.blob.type || "image/jpeg",
-    upsert: true,
-  });
+  const { error } = await supabase.storage
+    .from(PHOTO_BUCKET)
+    .upload(path, photo.blob, {
+      contentType: photo.blob.type || "image/jpeg",
+      upsert: true,
+    });
   if (error) {
-    if ("statusCode" in error && Number(error.statusCode) === 401) throw new Error("storage: 401");
+    if ("statusCode" in error && Number(error.statusCode) === 401)
+      throw new Error("storage: 401");
     throw new Error(`storage: ${error.message}`);
   }
 
@@ -158,7 +178,12 @@ async function upload(photo: store.StoredPhoto): Promise<void> {
     throw new Error(`record: ${response.status}`);
   }
   const payload: unknown = await response.json();
-  if (!payload || typeof payload !== "object" || !("recorded" in payload) || payload.recorded !== true) {
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    !("recorded" in payload) ||
+    payload.recorded !== true
+  ) {
     throw new Error("record: unconfirmed");
   }
 }

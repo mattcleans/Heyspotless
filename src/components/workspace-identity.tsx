@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getRepository } from "@/lib/data";
+import { OfflineIdentity } from "./offline-identity";
 
 const labels = { admin: "Manager", customer: "Customer", cleaner: "Cleaner" };
 /** The signed-in role is distinct from the screen a manager is previewing. */
@@ -12,6 +13,11 @@ export async function WorkspaceIdentity({
   const profile = await repo.getCurrentProfile();
   return (
     <div className="workspace-identity">
+      <OfflineIdentity
+        ownerId={
+          !repo.isDemo && profile?.role === "cleaner" ? profile.id : null
+        }
+      />
       <div>
         <span className="workspace-role">
           {repo.isDemo

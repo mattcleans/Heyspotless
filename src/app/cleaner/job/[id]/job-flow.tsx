@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { VisitRefresh } from "@/components/visit-refresh";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { OfflineWorkRecovery } from "@/components/offline-work-recovery";
+import type { SavedWork } from "../../../../../public/offline-work.js";
 import { JobCapture } from "../../job-capture";
 import { Pill } from "@/components/ui";
 import type { Room } from "@/lib/service/rooms";
@@ -31,16 +33,46 @@ export interface JobFlowProps {
   rooms: Room[];
   alreadyDone: { roomKey: string; kind: string }[];
   backupBlocked?: boolean;
+  ownerId?: string | null;
+  checkedAt?: number;
+  scheduledAt?: string | null;
 }
 
-export function JobFlow({ jobId, initialStatus, rooms, alreadyDone, backupBlocked = false }: JobFlowProps) {
+export function JobFlow({
+  jobId,
+  initialStatus,
+  rooms,
+  alreadyDone,
+  backupBlocked = false,
+  ownerId = null,
+  checkedAt = 0,
+  scheduledAt = null,
+}: JobFlowProps) {
   const [status, setStatus] = useState<Status>(initialStatus);
   const [blocked, setBlocked] = useState(backupBlocked);
   const [needsSignIn, setNeedsSignIn] = useState(false);
   const [working, setWorking] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const [outstanding, setOutstanding] = useState<{ label: string; missing: string[] }[] | null>(null);
+  const [outstanding, setOutstanding] = useState<
+    { label: string; missing: string[] }[] | null
+  >(null);
   const [onMyWay, setOnMyWay] = useState<"idle" | "sending" | "sent">("idle");
+  const [verifiedAt, setVerifiedAt] = useState(checkedAt);
+  const work = useMemo<SavedWork | null>(
+    () =>
+      ownerId && status !== "assigned"
+        ? {
+            jobId,
+            ownerId,
+            status,
+            rooms,
+            confirmed: alreadyDone,
+            checkedAt: verifiedAt,
+            scheduledAt,
+          }
+        : null,
+    [ownerId, status, jobId, rooms, alreadyDone, verifiedAt, scheduledAt],
+  );
 
   /**
    * Tell the customer she is coming.
@@ -93,14 +125,23 @@ export function JobFlow({ jobId, initialStatus, rooms, alreadyDone, backupBlocke
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ jobId }),
       });
-      const data = await response.json().catch(() => ({})) as {started?:unknown;error?:unknown;code?:unknown};
+      const data = (await response.json().catch(() => ({}))) as {
+        started?: unknown;
+        error?: unknown;
+        code?: unknown;
+      };
       if (response.status === 401) setNeedsSignIn(true);
       if (data.code === "backup_approval_required") setBlocked(true);
       if (!response.ok || data.started !== true) {
-        setNote(typeof data.error === "string" ? data.error : "Could not confirm the visit started. Refresh or try again.");
+        setNote(
+          typeof data.error === "string"
+            ? data.error
+            : "Could not confirm the visit started. Refresh or try again.",
+        );
         return;
       }
       setStatus("in_progress");
+      setVerifiedAt(Date.now());
     } catch {
       setNote("Could not start the job. Check your signal and try again.");
     } finally {
@@ -134,16 +175,23 @@ export function JobFlow({ jobId, initialStatus, rooms, alreadyDone, backupBlocke
 
       if (response.status === 401) setNeedsSignIn(true);
       if (!response.ok || data.completed !== true) {
-        setNote(typeof data.error === "string" ? data.error : "Could not confirm this visit finished. Refresh or try again.");
+        setNote(
+          typeof data.error === "string"
+            ? data.error
+            : "Could not confirm this visit finished. Refresh or try again.",
+        );
         return;
       }
 
       setStatus("complete");
+      setVerifiedAt(Date.now());
       setOutstanding(
         Array.isArray(data.outstanding)
           ? data.outstanding.map((gap) => ({
               label: typeof gap.label === "string" ? gap.label : "Room",
-              missing: Array.isArray(gap.missing) ? gap.missing.map(String) : [],
+              missing: Array.isArray(gap.missing)
+                ? gap.missing.map(String)
+                : [],
             }))
           : null,
       );
@@ -156,8 +204,17 @@ export function JobFlow({ jobId, initialStatus, rooms, alreadyDone, backupBlocke
 
   return (
     <>
+      <OfflineWorkRecovery
+        work={work}
+        ownerId={ownerId}
+        jobId={jobId}
+        checkedAt={verifiedAt}
+      />
       {note && (
-        <p className="mt-4 rounded-lg border border-line bg-surface-2 p-3 text-sm text-ink" role="alert">
+        <p
+          className="mt-4 rounded-lg border border-line bg-surface-2 p-3 text-sm text-ink"
+          role="alert"
+        >
           {note}
         </p>
       )}
@@ -169,7 +226,11 @@ export function JobFlow({ jobId, initialStatus, rooms, alreadyDone, backupBlocke
           disabled={onMyWay !== "idle"}
           className="mt-6 w-full rounded-lg border border-navy px-4 py-3 text-sm font-semibold text-navy disabled:opacity-60"
         >
-          {onMyWay === "sent" ? "They know you're coming" : onMyWay === "sending" ? "Texting…" : "On my way"}
+          {onMyWay === "sent"
+            ? "They know you're coming"
+            : onMyWay === "sending"
+              ? "Texting…"
+              : "On my way"}
         </button>
       )}
 
@@ -184,11 +245,35 @@ export function JobFlow({ jobId, initialStatus, rooms, alreadyDone, backupBlocke
         </button>
       )}
 
-      {needsSignIn && <Link className="secondary-action mt-4 inline-flex" href={`/login?next=${encodeURIComponent(`/cleaner/job/${jobId}`)}`}>Sign in to continue</Link>}
-      {status === "assigned" && blocked && <section className="visit-feature mt-5" role="status"><h2 className="font-semibold text-navy">Waiting for client approval</h2><p className="mt-2 text-sm">This visit has a backup cleaner. Do not start work until the client approves the current backup. Refresh for their decision or call the office.</p><VisitRefresh label="Check approval" /></section>}
+      {needsSignIn && (
+        <Link
+          className="secondary-action mt-4 inline-flex"
+          href={`/login?next=${encodeURIComponent(`/cleaner/job/${jobId}`)}`}
+        >
+          Sign in to continue
+        </Link>
+      )}
+      {status === "assigned" && blocked && (
+        <section className="visit-feature mt-5" role="status">
+          <h2 className="font-semibold text-navy">
+            Waiting for client approval
+          </h2>
+          <p className="mt-2 text-sm">
+            This visit has a backup cleaner. Do not start work until the client
+            approves the current backup. Refresh for their decision or call the
+            office.
+          </p>
+          <VisitRefresh label="Check approval" />
+        </section>
+      )}
       {status === "in_progress" && (
         <>
-          <JobCapture jobId={jobId} rooms={rooms} alreadyDone={alreadyDone} />
+          <JobCapture
+            jobId={jobId}
+            rooms={rooms}
+            alreadyDone={alreadyDone}
+            ownerId={ownerId}
+          />
           <button
             type="button"
             onClick={() => void finish()}
@@ -209,15 +294,25 @@ export function JobFlow({ jobId, initialStatus, rooms, alreadyDone, backupBlocke
           {outstanding && outstanding.length > 0 ? (
             <p className="mt-3 text-sm text-ink-2">
               Photo requirements recorded when you finished:{" "}
-              {outstanding.map((gap) => `${gap.label} (${gap.missing.join(" + ")})`).join(", ")}.
-              The visit is finished. Check the checklist below for what is saved and still uploading.
+              {outstanding
+                .map((gap) => `${gap.label} (${gap.missing.join(" + ")})`)
+                .join(", ")}
+              . The visit is finished. Check the checklist below for what is
+              saved and still uploading.
             </p>
           ) : (
             <p className="mt-3 text-sm text-ink-2">
-              {outstanding ? "The server confirmed all required photos when you finished." : "This visit is finished. Check the photo checklist below for saved photos and any remaining uploads."}
+              {outstanding
+                ? "The server confirmed all required photos when you finished."
+                : "This visit is finished. Check the photo checklist below for saved photos and any remaining uploads."}
             </p>
           )}
-          <JobCapture jobId={jobId} rooms={rooms} alreadyDone={alreadyDone} />
+          <JobCapture
+            jobId={jobId}
+            rooms={rooms}
+            alreadyDone={alreadyDone}
+            ownerId={ownerId}
+          />
         </div>
       )}
     </>
@@ -245,7 +340,8 @@ function currentPosition(): Promise<{ lat: number; lng: number } | null> {
     };
 
     navigator.geolocation.getCurrentPosition(
-      (position) => done({ lat: position.coords.latitude, lng: position.coords.longitude }),
+      (position) =>
+        done({ lat: position.coords.latitude, lng: position.coords.longitude }),
       () => done(null),
       { enableHighAccuracy: true, timeout: 5000, maximumAge: 60_000 },
     );
