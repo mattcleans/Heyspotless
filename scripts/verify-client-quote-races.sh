@@ -144,7 +144,7 @@ set role authenticated;
 select book_client_quote('c8400000-0000-0000-0000-000000000007',2);
 SQL
 if wait "$QUOTE_PID";then echo 'Stale Repeatable Read booking did not abort' >&2;exit 1;fi
-if ! rg -q 'could not serialize access due to concurrent update' "$QUOTE_DIR/rr";then cat "$QUOTE_DIR/rr";exit 1;fi
+if ! grep -q 'could not serialize access due to concurrent update' "$QUOTE_DIR/rr";then cat "$QUOTE_DIR/rr";exit 1;fi
 quote_sql <<'SQL'
 do $$ begin
  if (select count(*) from quotes where id::text like 'c8400000-%')<>7 or (select count(*) from jobs where quote_id::text like 'c8400000-%')<>3 or (select count(*) from recurring_plans where property_id='c8300000-0000-0000-0000-000000000001')<>1 then raise exception 'Concurrent quote workflow duplicated terms, visit or plan';end if;

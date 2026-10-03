@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
+import Link from "next/link";
 import {
   PRICE_BOOK_EXTRAS,
   SERVICE_TYPES,
@@ -50,6 +51,7 @@ export function PrepareQuote({
     [error, setError] = useState(""),
     [quote, setQuote] = useState<ClientQuote | null>(null),
     [refresh, setRefresh] = useState(false);
+  const pathname = usePathname();
   const router = useRouter(),
     home = homes.find((p) => p.id === propertyId);
   async function prepare(body: Record<string, unknown>) {
@@ -300,12 +302,23 @@ export function PrepareQuote({
         </button>
       )}
       {refresh && (
-        <button
-          className="secondary-action mt-4"
-          onClick={() => router.refresh()}
-        >
-          Refresh quotes before continuing
-        </button>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <button
+            className="secondary-action mt-4"
+            onClick={() => {
+              setRefresh(false);
+              router.refresh();
+            }}
+          >
+            Refresh quotes before continuing
+          </button>
+          <Link
+            className="secondary-action mt-4"
+            href={`/login?next=${encodeURIComponent(pathname)}`}
+          >
+            Sign in again
+          </Link>
+        </div>
       )}
       {demo && (
         <p className="mt-4 text-sm">
