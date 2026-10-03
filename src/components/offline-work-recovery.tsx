@@ -31,7 +31,13 @@ export function OfflineWorkRecovery({
           return;
         }
         const saved = await persistOwnedWork(work);
-        if (!saved) return;
+        if (!saved) {
+          if (alive) {
+            setReady(false);
+            setFailed(true);
+          }
+          return;
+        }
         await prepareWorkShell();
         if (alive) {
           setReady(true);
