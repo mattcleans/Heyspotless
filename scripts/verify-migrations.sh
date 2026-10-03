@@ -1631,9 +1631,23 @@ RACE_OFFER_B=$(as_super $PSQL -d "$DB" -tAc \
                        now() + interval '20 minutes', false)")
 
 as_super $PSQL -d "$DB" -tAc \
-  "select respond_to_offer('$RACE_OFFER_A', '$RACE_A_ID', true)" \
+  "begin; set local application_name='offer_same_job_winner';
+   select respond_to_offer('$RACE_OFFER_A', '$RACE_A_ID', true);
+   select pg_sleep(2); commit;" \
   > /tmp/spotless_accept_a.txt 2>&1 &
 ACCEPT_A=$!
+# Observe the accepted-but-uncommitted winner. The second caller reads its
+# still-sent offer, then waits on the SAME job lock, rather than arriving late.
+OFFER_BARRIER=0
+for _ in $(seq 1 100); do
+  OFFER_SEEN=$(as_super $PSQL -d "$DB" -tAc "select count(*) from pg_stat_activity where datname=current_database() and application_name='offer_same_job_winner' and wait_event='PgSleep'")
+  if [ "$OFFER_SEEN" = 1 ]; then OFFER_BARRIER=1; break; fi
+  sleep .05
+done
+if [ "$OFFER_BARRIER" != 1 ]; then
+  echo "same-job acceptance did not reach its lock barrier" >&2
+  exit 1
+fi
 as_super $PSQL -d "$DB" -tAc \
   "select respond_to_offer('$RACE_OFFER_B', '$RACE_B_ID', true)" \
   > /tmp/spotless_accept_b.txt 2>&1 &

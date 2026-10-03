@@ -127,9 +127,9 @@ end
 $expiry$;
 create function public.respond_to_offer(p_offer_id uuid,p_cleaner_id uuid,p_accept boolean,p_reason text default null)
 returns text language plpgsql security definer set search_path=pg_catalog,pg_temp as $$
-declare v_job uuid;v_conflicted boolean;j public.jobs%rowtype;o public.offers%rowtype;
+declare v_job uuid;v_conflicted boolean;v_initial_sent boolean;j public.jobs%rowtype;o public.offers%rowtype;
 begin
- select job_id,status='withdrawn' and capacity_conflict_at is not null into v_job,v_conflicted
+ select job_id,status='withdrawn' and capacity_conflict_at is not null,status='sent' into v_job,v_conflicted,v_initial_sent
   from public.offers where id=p_offer_id and cleaner_id=p_cleaner_id;
  if v_job is null then return 'not_found'; end if;
  if v_conflicted then return 'conflict'; end if;
@@ -141,6 +141,11 @@ begin
  begin
   select * into j from public.jobs where id=v_job;
   select * into o from public.offers where id=p_offer_id and cleaner_id=p_cleaner_id;
+  -- Preserve the original same-job race: a sent offer read before waiting is
+  -- 'taken' when another cleaner wins under the job lock. Already-stale
+  -- withdrawn offers retain the original 'superseded' result.
+  if v_initial_sent and p_accept and o.status='withdrawn' and j.status='assigned'
+   and exists(select 1 from public.job_assignments where job_id=j.id) then return 'taken'; end if;
   if p_accept and o.status='sent' and o.expires_at>clock_timestamp()
    and j.status in ('unscheduled','scheduled','dispatching') and j.started_at is null
    and not exists(select 1 from public.job_assignments where job_id=j.id) then
