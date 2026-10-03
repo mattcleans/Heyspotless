@@ -73,13 +73,13 @@ end $$;
 select set_config('request.jwt.claim.sub','c7100000-0000-0000-0000-000000000003',true);
 set local role authenticated;
 do $$ begin
- begin perform respond_my_visit_backup('c7500000-0000-0000-0000-000000000001',(select id from job_assignments where job_id='c7500000-0000-0000-0000-000000000001' and is_lead),'c7400000-0000-0000-0000-000000000001','c7400000-0000-0000-0000-000000000004',public.uuid_generate_v4(),true,'',null);raise exception 'Other client approved';exception when insufficient_privilege then null;end;
+ begin perform respond_my_visit_backup('c7500000-0000-0000-0000-000000000001',(select id from job_assignments where job_id='c7500000-0000-0000-0000-000000000001' and is_lead),'c7400000-0000-0000-0000-000000000001','c7400000-0000-0000-0000-000000000004',pg_catalog.gen_random_uuid(),true,'',null);raise exception 'Other client approved';exception when insufficient_privilege then null;end;
  if exists(select 1 from crew_lead_releases) then raise exception 'Client read cleaner release';end if;
 end $$;
 reset role;
 select set_config('request.jwt.claim.sub','c7100000-0000-0000-0000-000000000002',true);
 set local role authenticated;
-select respond_my_visit_backup('c7500000-0000-0000-0000-000000000001',(select id from client_visit_assignments where job_id='c7500000-0000-0000-0000-000000000001' and is_lead),'c7400000-0000-0000-0000-000000000001','c7400000-0000-0000-0000-000000000004',public.uuid_generate_v4(),true,'',null);
+select respond_my_visit_backup('c7500000-0000-0000-0000-000000000001',(select id from client_visit_assignments where job_id='c7500000-0000-0000-0000-000000000001' and is_lead),'c7400000-0000-0000-0000-000000000001','c7400000-0000-0000-0000-000000000004',pg_catalog.gen_random_uuid(),true,'',null);
 reset role;
 select start_job('c7500000-0000-0000-0000-000000000001','c7400000-0000-0000-0000-000000000004');
 -- Employee and requested-cleaner replacements, with the same retained crew.
@@ -112,7 +112,7 @@ reset role;
 -- A fresh client approval of the original lead withdraws the pending offer.
 select set_config('request.jwt.claim.sub','c7100000-0000-0000-0000-000000000002',true);
 set local role authenticated;
-select respond_my_visit_backup('c7500000-0000-0000-0000-000000000006',(select id from client_visit_assignments where job_id='c7500000-0000-0000-0000-000000000006' and is_lead),'c7400000-0000-0000-0000-000000000001','c7400000-0000-0000-0000-000000000002',public.uuid_generate_v4(),true,'','c7800000-0000-0000-0000-000000000006');
+select respond_my_visit_backup('c7500000-0000-0000-0000-000000000006',(select id from client_visit_assignments where job_id='c7500000-0000-0000-0000-000000000006' and is_lead),'c7400000-0000-0000-0000-000000000001','c7400000-0000-0000-0000-000000000002',pg_catalog.gen_random_uuid(),true,'','c7800000-0000-0000-0000-000000000006');
 select confirm_my_visit_reschedule('c7500000-0000-0000-0000-000000000011',(quote_my_visit_reschedule_with_fee('c7500000-0000-0000-0000-000000000011',(((clock_timestamp() at time zone 'America/Chicago')::date+30+time '12:00') at time zone 'America/Chicago'))->>'id')::uuid);
 reset role;
 select set_config('request.jwt.claim.sub','c7100000-0000-0000-0000-000000000004',true);
@@ -125,7 +125,7 @@ select start_job('c7500000-0000-0000-0000-000000000003','c7400000-0000-0000-0000
 -- The employee's exact assignment also becomes startable only after approval.
 select set_config('request.jwt.claim.sub','c7100000-0000-0000-0000-000000000002',true);
 set local role authenticated;
-select respond_my_visit_backup('c7500000-0000-0000-0000-000000000002',(select id from client_visit_assignments where job_id='c7500000-0000-0000-0000-000000000002' and is_lead),'c7400000-0000-0000-0000-000000000001','c7400000-0000-0000-0000-000000000005',public.uuid_generate_v4(),true,'',null);
+select respond_my_visit_backup('c7500000-0000-0000-0000-000000000002',(select id from client_visit_assignments where job_id='c7500000-0000-0000-0000-000000000002' and is_lead),'c7400000-0000-0000-0000-000000000001','c7400000-0000-0000-0000-000000000005',pg_catalog.gen_random_uuid(),true,'',null);
 reset role;
 select start_job('c7500000-0000-0000-0000-000000000002','c7400000-0000-0000-0000-000000000005');
 -- A saved availability week with no matching day invalidates the offer.

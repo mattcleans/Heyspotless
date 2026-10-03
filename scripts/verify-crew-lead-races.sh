@@ -35,7 +35,7 @@ PGAPPNAME=crew_client_first crew_sql >"$CREW_DIR/client" <<'SQL' &
 begin;
 select set_config('request.jwt.claim.sub','c7100000-0000-0000-0000-000000000002',true);
 set local role authenticated;
-select respond_my_visit_backup('c7500000-0000-0000-0000-000000000001',(select id from client_visit_assignments where job_id='c7500000-0000-0000-0000-000000000001' and is_lead),'c7400000-0000-0000-0000-000000000001','c7400000-0000-0000-0000-000000000002',public.uuid_generate_v4(),true,'','c7800000-0000-0000-0000-000000000001');
+select respond_my_visit_backup('c7500000-0000-0000-0000-000000000001',(select id from client_visit_assignments where job_id='c7500000-0000-0000-0000-000000000001' and is_lead),'c7400000-0000-0000-0000-000000000001','c7400000-0000-0000-0000-000000000002',pg_catalog.gen_random_uuid(),true,'','c7800000-0000-0000-0000-000000000001');
 select pg_sleep(2);
 commit;
 SQL

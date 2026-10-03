@@ -6,6 +6,9 @@ set -euo pipefail
 
 DB="${1:-spotless_verify}"
 PSQL="psql -v ON_ERROR_STOP=1 -q"
+# Match hosted Supabase: extension functions live outside public, while SQL
+# sessions can resolve them. SECURITY DEFINER routines keep their own paths.
+export PGOPTIONS="${PGOPTIONS:+$PGOPTIONS }-c search_path=public,extensions"
 
 # Two ways to reach a superuser. On a developer machine Postgres runs locally
 # and the way in is the `postgres` system account. In CI it is a service
@@ -25,6 +28,9 @@ as_super createdb "$DB"
 # environment. This stub exists only for verification and is not a migration.
 as_super $PSQL -d "$DB" <<'SQL'
 create schema if not exists auth;
+create schema if not exists extensions;
+create extension if not exists "uuid-ossp" with schema extensions;
+set search_path=public,extensions;
 
 -- Exercise access controls with Supabase-like client and server roles. These
 -- are cluster roles, so a second verification run must reuse them.
@@ -40,6 +46,7 @@ begin
     create role service_role nologin bypassrls;
   end if;
 end $$;
+grant usage on schema extensions to anon,authenticated,service_role;
 
 -- Model both PUBLIC's default EXECUTE and explicit client-role defaults.
 -- Migration 0007 must revoke both sources of privilege.

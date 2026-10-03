@@ -1,7 +1,8 @@
 -- A replacement proposal is separate from normal dispatch: teammates already
 -- accepted this visit. Private snapshots preserve their exact agreements.
+-- Use the PostgreSQL builtin; hosted Supabase keeps uuid-ossp in extensions.
 create table spotless_private.crew_lead_proposals (
- id uuid primary key default public.uuid_generate_v4(),
+ id uuid primary key default pg_catalog.gen_random_uuid(),
  job_id uuid not null references public.jobs(id),
  cleaner_id uuid not null references public.cleaners(id),
  created_by uuid not null references public.profiles(id),
@@ -9,7 +10,7 @@ create table spotless_private.crew_lead_proposals (
  payout_cents integer not null check(payout_cents>=0),
  snapshot jsonb not null,
  candidate_snapshot jsonb not null,
- assignment_key uuid not null default public.uuid_generate_v4(),
+ assignment_key uuid not null default pg_catalog.gen_random_uuid(),
  state text not null default 'review' check(state in ('review','sent','accepted','declined','withdrawn','expired','conflict')),
  created_at timestamptz not null default clock_timestamp(),
  expires_at timestamptz not null default clock_timestamp()+interval '10 minutes',
