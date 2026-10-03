@@ -3187,3 +3187,7 @@ as_super bash scripts/verify-recurring-races.sh "$DB"
 # Capacity across different visits: including crews and retained time edits.
 as_super $PSQL -d "$DB" -f scripts/verify-cleaner-capacity.sql
 as_super bash scripts/verify-cleaner-capacity-races.sh "$DB"
+
+# Replace one declined crew lead while preserving the other agreements.
+as_super $PSQL -d "$DB" -f scripts/verify-crew-lead-replacement.sql
+as_super bash scripts/verify-crew-lead-races.sh "$DB"

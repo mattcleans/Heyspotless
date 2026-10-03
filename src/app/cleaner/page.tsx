@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { CrewOfferActions } from "./crew-offer-actions";
+import { myCrewOffers } from "@/lib/crew/store";
 import { OfferActions } from "./offer-actions";
 import { PushPrompt } from "./push-prompt";
 import { Pill } from "@/components/ui";
@@ -27,6 +29,8 @@ export default async function CleanerPage() {
     cleaner && !repo.isDemo
       ? await releasedVisits(await createClient(), cleaner.id)
       : [];
+  const crewOffers =
+    cleaner && !repo.isDemo ? await myCrewOffers(await createClient()) : [];
   const now = new Date();
   const today = visitsOnDay(jobs, now);
   const upcoming = jobs
@@ -100,9 +104,11 @@ export default async function CleanerPage() {
                     : "Time was not set"}
                 </p>
                 <p className="mt-1 text-ink-2">
-                  {change.newStart
-                    ? `Client moved it to ${formatDateTimeInZone(new Date(change.newStart))}. Check your current schedule and offers.`
-                    : "This future recurring appointment was removed. It is no longer an assignment."}
+                  {change.kind === "crew_lead"
+                    ? "The office replaced you as crew lead after the client requested another cleaner. Do not attend this assignment. Check your current schedule."
+                    : change.newStart
+                      ? `Client moved it to ${formatDateTimeInZone(new Date(change.newStart))}. Check your current schedule and offers.`
+                      : "This future recurring appointment was removed. It is no longer an assignment."}
                 </p>
               </li>
             ))}
@@ -175,6 +181,44 @@ export default async function CleanerPage() {
           </div>
         )}
       </section>
+      {crewOffers.length > 0 && (
+        <section aria-labelledby="crew-offers-heading">
+          <div className="section-heading">
+            <h2 id="crew-offers-heading">Crew lead offers</h2>
+            <span className="text-xs text-ink-2">Recent 20 · past week</span>
+          </div>
+          <p className="mb-3 text-sm text-ink-2">
+            Lead an existing crew. Teammates keep their accepted assignments. A
+            backup must be approved by the client before anyone starts.
+          </p>
+          <ul className="space-y-3">
+            {crewOffers.map((offer) => (
+              <li key={offer.id} className="visit-feature">
+                <h3 className="font-semibold text-navy">
+                  Crew lead · {offer.city}
+                </h3>
+                <p className="mt-2 text-sm">
+                  {formatDateTimeInZone(new Date(offer.start))} · About{" "}
+                  {formatHours(offer.minutes)}
+                </p>
+                <p className="mt-3 text-xl font-semibold nums">
+                  {offer.type === "w2_core"
+                    ? "Paid under your hourly terms"
+                    : `${formatCents(offer.payoutCents)} visit pay`}
+                </p>
+                {offer.state === "sent" && (
+                  <p className="mt-2 text-sm text-ink-2">
+                    Offer expires{" "}
+                    {formatDateTimeInZone(new Date(offer.expiresAt))}. Home
+                    access notes are available after assignment.
+                  </p>
+                )}
+                <CrewOfferActions offer={offer} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <section
         id="offers"
         aria-labelledby="offers-heading"

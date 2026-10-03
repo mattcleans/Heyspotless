@@ -85,6 +85,12 @@ function parse(value: unknown): Input {
 // Catalog probes are read-only and also work on the pre-workflow schema. They
 // check signatures and permissions rather than calling a mutating quote RPC.
 const functions = [
+  "read_crew_lead_review(uuid)",
+  "quote_crew_lead_replacement(uuid,uuid)",
+  "confirm_crew_lead_replacement(uuid)",
+  "withdraw_crew_lead_offer(uuid)",
+  "read_my_crew_lead_offers()",
+  "respond_my_crew_lead_offer(uuid,boolean)",
   "set_my_availability(jsonb)",
   "set_my_home_instructions(uuid,text,text,text,text,jsonb)",
   "request_my_visit_cleaner(uuid,uuid,uuid,text,uuid)",
@@ -104,6 +110,7 @@ const serverFunctions = [
   "assign_job_for_schedule_with_capacity(uuid,uuid,integer,bigint)",
 ];
 const tables = [
+  "crew_lead_releases",
   "visit_cleaner_requests",
   "visit_backup_decisions",
   "visit_backup_releases",

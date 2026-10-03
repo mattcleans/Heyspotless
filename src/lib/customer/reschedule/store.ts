@@ -35,6 +35,7 @@ export async function rescheduleHistory(db: SupabaseClient, id: string) {
   return data.map(toRescheduleReceipt);
 }
 export interface ReleasedVisit {
+  kind: "schedule" | "crew_lead";
   id: string;
   previousStart: string | null;
   newStart: string | null;
@@ -44,7 +45,7 @@ export async function releasedVisits(
   db: SupabaseClient,
   cleanerId: string,
 ): Promise<ReleasedVisit[]> {
-  const fetchReleases = async (table: string) => {
+  const fetchReleases = async (table: string): Promise<ReleasedVisit[]> => {
     const { data, error } = await db
       .from(table)
       .select("id,previous_start,new_start,released_at")
@@ -76,6 +77,7 @@ export async function releasedVisits(
           "Schedule changes are unavailable. Refresh before heading to a visit.",
         );
       return {
+        kind: table === "crew_lead_releases" ? "crew_lead" : "schedule",
         id: row.id,
         previousStart: row.previous_start,
         newStart: row.new_start,
@@ -83,11 +85,12 @@ export async function releasedVisits(
       };
     });
   };
-  const [individual, series] = await Promise.all([
+  const [individual, series, crew] = await Promise.all([
     fetchReleases("visit_reschedule_releases"),
     fetchReleases("recurring_schedule_releases"),
+    fetchReleases("crew_lead_releases"),
   ]);
-  return [...individual, ...series]
+  return [...individual, ...series, ...crew]
     .sort((a, b) => Date.parse(b.releasedAt) - Date.parse(a.releasedAt))
     .slice(0, 10);
 }

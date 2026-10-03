@@ -127,3 +127,23 @@ it("shows removed recurring assignments with no replacement time", async () => {
     args: ["recurring_schedule_releases"],
   });
 });
+
+it("distinguishes crew replacement from rescheduling or removal of a recurring visit", async () => {
+  result = {
+    data: [
+      {
+        id: "released",
+        previous_start: "2026-10-05T14:30Z",
+        new_start: null,
+        released_at: "2026-10-02T14:00Z",
+      },
+    ],
+    error: null,
+  };
+  const changes = await releasedVisits(db(), "own-cleaner");
+  expect(changes.some((c) => c.kind === "crew_lead")).toBe(true);
+  expect(calls).toContainEqual({
+    method: "from",
+    args: ["crew_lead_releases"],
+  });
+});

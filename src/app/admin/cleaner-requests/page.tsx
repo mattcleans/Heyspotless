@@ -120,11 +120,13 @@ export default async function Page() {
                       decisionId={b.decisionId}
                     />
                   )}
-                {b.declined && !b.canRelease && (
-                  <p className="mt-2 text-sm">
-                    This visit has multiple assignments. Contact the office to
-                    review the crew before making changes.
-                  </p>
+                {b.declined && !b.canRelease && b.unambiguous && (
+                  <Link
+                    href={`/admin/visits/${b.jobId}/replace-lead`}
+                    className="secondary-action mt-3"
+                  >
+                    Review crew lead replacement
+                  </Link>
                 )}
               </li>
             ))}
