@@ -529,6 +529,7 @@ export class BillingStore {
       .neq("kind", "reschedule_fee")
       .in("status", ["sent", "overdue"])
       .is("voided_at", null)
+      .is("autocharge_paused_at", null)
       .gt("balance_cents", 0)
       .order("due_on", { ascending: true, nullsFirst: true })
       .limit(limit);

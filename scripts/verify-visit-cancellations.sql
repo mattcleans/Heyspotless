@@ -84,7 +84,10 @@ do $$ declare q jsonb; r jsonb; begin
  exception when insufficient_privilege then null; end;
 end $$;
 reset role;
-do $$ declare r record; begin
+do $$ declare r record; v_signature text; begin
+ foreach v_signature in array array['public.keep_cancellation_fee_manual()','public.pause_confirmed_cancellation_fee()','public.guard_canceled_visit_collection()'] loop
+  if has_function_privilege('anon',v_signature,'EXECUTE') or has_function_privilege('authenticated',v_signature,'EXECUTE') or has_function_privilege('service_role',v_signature,'EXECUTE') then raise exception 'Cancellation collection helper exposed: %',v_signature;end if;
+ end loop;
  if not exists(select 1 from recurring_plan_skips where plan_id='89000000-0000-0000-0000-000000000001' and occurrence_date=current_date+7) then raise exception 'skip not saved'; end if;
  if (select active from recurring_plans where id='89000000-0000-0000-0000-000000000001') is not true then raise exception 'plan canceled'; end if;
  select * into r from materialise_recurring_job('89000000-0000-0000-0000-000000000001',current_date+7,now()+interval '7 days');
@@ -104,6 +107,10 @@ do $$ declare r record; begin
   perform begin_payment_operation('87000000-0000-0000-0000-000000000003','checkout','paid-canceled-new-payment',6000,900);
   raise exception 'canceled paid invoice recollected';
  exception when check_violation then null; end;
+ if (select autocharge_paused_at from invoices where id=(select invoice_id from visit_cancellations where job_id='85000000-0000-0000-0000-000000000002')) is null then raise exception 'Cancellation fee entered automatic collection';end if;
+ update invoices set autocharge_paused_at=null,autocharge_paused_reason=null,next_attempt_at=clock_timestamp() where id=(select invoice_id from visit_cancellations where job_id='85000000-0000-0000-0000-000000000002');
+ if (select autocharge_paused_at from invoices where id=(select invoice_id from visit_cancellations where job_id='85000000-0000-0000-0000-000000000002')) is null then raise exception 'Cancellation fee could be unpaused';end if;
+ begin perform begin_payment_operation((select invoice_id from visit_cancellations where job_id='85000000-0000-0000-0000-000000000002'),'autocharge','fee-autocharge',6000,900);raise exception 'Cancellation fee charged under clean consent';exception when check_violation then null;end;
  perform begin_payment_operation((select invoice_id from visit_cancellations where job_id='85000000-0000-0000-0000-000000000002'),'checkout','fee-checkout',6000,900);
  begin
   update jobs set status='assigned' where id='85000000-0000-0000-0000-000000000002';
@@ -196,6 +203,7 @@ do $$ declare r jsonb; again jsonb; begin
  r:=resolve_visit_cancellation_billing('85000000-0000-0000-0000-000000000003',(select id from visit_cancellations where job_id='85000000-0000-0000-0000-000000000003'));
  again:=resolve_visit_cancellation_billing('85000000-0000-0000-0000-000000000003',(r->>'id')::uuid);
  if r<>again or (r->>'billing_review')::boolean or r->>'invoice_id' is null then raise exception 'billing resolution not idempotent'; end if;
+ if (select autocharge_paused_at from invoices where id=(r->>'invoice_id')::uuid) is null then raise exception 'Resolved fee bypassed explicit checkout';end if;
 end $$;
 do $$ declare q jsonb;r jsonb; begin
  q:=quote_my_visit_cancellation('85000000-0000-0000-0000-000000000007','door_turnaway');

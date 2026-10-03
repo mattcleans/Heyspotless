@@ -3196,3 +3196,6 @@ as_super bash scripts/verify-crew-lead-races.sh "$DB"
 as_super $PSQL -d "$DB" -f scripts/verify-client-quotes.sql
 
 as_super bash scripts/verify-client-quote-races.sh "$DB"
+
+# Cancellation/collection ordering and explicit fee checkout.
+as_super bash scripts/verify-cancellation-collection-races.sh "$DB"
