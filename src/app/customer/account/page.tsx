@@ -85,6 +85,13 @@ export default async function CustomerPage() {
         </Link>
       )}
 
+      <Link
+        href="/customer/quotes"
+        className="secondary-action mt-4 ml-2 inline-flex"
+      >
+        Review quotes
+      </Link>
+
       {autopayEndedByUs ? (
         <Callout tone="warn" label="Autopay was switched off">
           {customer?.autopayEndedReason

@@ -45,6 +45,12 @@ export default async function CustomerPage({
       >
         Manage recurring schedules
       </Link>
+      <Link
+        href={`/admin/customers/${id}/quotes`}
+        className="secondary-action mb-5 ml-2 inline-flex"
+      >
+        Prepare and review quotes
+      </Link>
       <div className="mb-6 grid gap-3 sm:grid-cols-2">
         <Stat
           label="Lifetime value"

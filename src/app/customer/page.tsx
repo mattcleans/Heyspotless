@@ -44,6 +44,12 @@ export default async function ClientHome() {
           ? `${home.city}, ${home.zip}`
           : "A clean home. A familiar face. One less thing to do."}
       </p>
+      <Link
+        href="/customer/quotes"
+        className="secondary-action mt-4 inline-flex"
+      >
+        Review quotes
+      </Link>
       {next && (
         <section aria-labelledby="next-visit">
           <div className="section-heading">

@@ -3191,3 +3191,8 @@ as_super bash scripts/verify-cleaner-capacity-races.sh "$DB"
 # Replace one declined crew lead while preserving the other agreements.
 as_super $PSQL -d "$DB" -f scripts/verify-crew-lead-replacement.sql
 as_super bash scripts/verify-crew-lead-races.sh "$DB"
+
+# Exact client quote approval and office booking.
+as_super $PSQL -d "$DB" -f scripts/verify-client-quotes.sql
+
+as_super bash scripts/verify-client-quote-races.sh "$DB"
