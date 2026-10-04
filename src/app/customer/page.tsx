@@ -8,7 +8,7 @@ import { AppIcon } from "@/components/app-navigation";
 import { Pill } from "@/components/ui";
 import { SERVICE_LABELS, SERVICE_TYPES } from "@/lib/pricing/price-book";
 import { formatDateTimeInZone } from "@/lib/time/zone";
-import { activeVisits } from "@/lib/experience/schedule";
+import { visitSections } from "@/lib/experience/schedule";
 import { loadCustomerVisit } from "@/lib/visits/customer-visit-store";
 import { STAGE_LABELS } from "@/lib/visits/progress";
 
@@ -21,7 +21,9 @@ export default async function ClientHome() {
   const properties = customer ? await repo.listProperties(customer.id) : [];
   const home = properties[0];
   const jobs = customer ? await repo.listJobs({ customerId: customer.id }) : [];
-  const next = activeVisits(jobs)[0];
+  const sections = visitSections(jobs, new Date());
+  const next =
+    sections.ongoing[0] ?? sections.upcoming[0] ?? sections.awaitingTime[0];
   const last = jobs
     .filter((j) => j.status === "complete")
     .sort(
@@ -53,7 +55,11 @@ export default async function ClientHome() {
       {next && (
         <section aria-labelledby="next-visit">
           <div className="section-heading">
-            <h2 id="next-visit">Your next visit</h2>
+            <h2 id="next-visit">
+              {next.status === "in_progress"
+                ? "Your clean in progress"
+                : "Your next visit"}
+            </h2>
             <Link href="/customer/visits">All visits</Link>
           </div>
           <div className="visit-feature">
@@ -100,6 +106,30 @@ export default async function ClientHome() {
                   : "View visit details"}
             </Link>
           </div>
+        </section>
+      )}
+      {sections.unresolved.length > 0 && (
+        <section className="visit-feature mt-5" aria-labelledby="past-visits">
+          <h2 id="past-visits" className="font-semibold text-navy">
+            Past visits to check
+          </h2>
+          <p className="mt-2 text-sm text-ink-2">
+            These appointment times have passed, but the visits aren’t marked
+            complete. Open a visit for its latest status or call the office for
+            help.
+          </p>
+          <ul className="mt-3 space-y-3">
+            {sections.unresolved.map((visit) => (
+              <li key={visit.id}>
+                <Link
+                  className="secondary-action inline-flex"
+                  href={`/customer/visits/${visit.id}`}
+                >
+                  {formatDateTimeInZone(visit.scheduledStart!)} · View visit
+                </Link>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
       <section className="booking-feature">
