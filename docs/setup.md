@@ -335,6 +335,12 @@ reason a home-screen icon cannot answer — not before.
 
 ## Sign-in readiness and testing
 
+Email and password are the default sign-in method for every role. A confirmed
+account created without a password still needs **Set or reset password** once.
+After signing in, **Password settings** changes the verified user's own password;
+the workspace also provides **Sign out**. Account approval or email confirmation
+does not prove that a password has been saved.
+
 In Supabase Authentication > URL Configuration, set Site URL to
 `https://app.heyspotless.com`, not `http://localhost:3000`. Keep
 `https://app.heyspotless.com/auth/callback` in Redirect URLs. The application sends
@@ -361,6 +367,53 @@ unlinked account. Neither an email send success nor a passing unit suite proves
 that a production mailbox received the message or that the role is provisioned.
 
 If no email arrives, check the auth delivery log and SMTP configuration. The
-default Supabase sender only permits the organization's team addresses; customer
-and cleaner testing needs a configured production sender. Reference:
-https://supabase.com/docs/guides/auth/auth-smtp
+default Supabase sender only permits the organization's team addresses, regardless
+of their application role. A cleaner or customer who is already an organization
+member can use it for preview testing without receiving additional organization
+access. Do not grant organization access just to make an app user's email work.
+The default sender permits only two emails per hour, across authentication email
+requests. A successful request is not proof of delivery, and a blocked retry is
+not evidence that the recipient's account is unapproved. General app users need
+custom SMTP. See [Supabase SMTP](https://supabase.com/docs/guides/auth/auth-smtp)
+and [rate limits](https://supabase.com/docs/guides/auth/rate-limits).
+
+### When a recovery link does not open Password settings
+
+Check each stage separately: the reset request was accepted; the mailbox received
+the newest message; its link reached Supabase; the app exchanged the returned
+code; and `/account/password` rendered for the verified user. A Supabase HTTP 303
+redirect alone does not prove that the app established a recovery session. Record
+statuses and timestamps, not tokens, recovery URLs, cookies or passwords.
+
+If the browser stalls on the Supabase verification page, try the full recovery
+flow in a regular browser. Open the hosted app there, request a fresh email there,
+then open that newest email in that same browser and device. Moving an existing
+link to a different browser does not transfer its PKCE verifier. Avoid repeatedly
+opening a consumed link or sending retries while the sender reports a limit.
+Password entry, confirmation and saving remain with the account owner.
+
+Email scanners can also consume one-use links. Supabase documents a code-based
+alternative using `{{ .Token }}` and `verifyOtp`; this app currently implements
+the recovery-link flow, so changing the template to a code-only email would break
+setup. Implement and test code entry before changing the email. On the Free plan,
+the dashboard requires custom SMTP to customize recovery templates; inspect the
+current project before planning a template change. See
+[email template limitations](https://supabase.com/docs/guides/auth/auth-email-templates).
+
+### Custom SMTP without upgrading the preview database
+
+Reuse an authorized mail provider and verified sending domain. Resend supports
+Supabase SMTP on its Free plan; its published daily limit is 100 emails as of
+October 4, 2026. Check [current pricing](https://resend.com/pricing) before setup.
+An account, verified domain and API key are prerequisites, not evidence that
+messages have been delivered.
+
+For Resend, configure the verified preview project under Authentication > Emails
+> SMTP Settings with host `smtp.resend.com`, port `465`, username `resend`, the
+authorized API key as the SMTP password, and a sender address on the verified
+domain. Keep that key in provider settings, never source or browser-exposed
+environment variables. Use the [official Supabase integration guide](https://resend.com/docs/send-with-supabase-smtp).
+
+Verify a delivered recovery email and the complete user-owned password setup and
+password sign-in before declaring access ready. Keep database and provider plan
+changes separate; custom SMTP does not require upgrading the preview database.
