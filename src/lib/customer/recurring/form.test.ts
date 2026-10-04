@@ -56,6 +56,33 @@ describe("recurring schedule microcopy", () => {
     expect(html).toContain("approve any proposed backup");
     expect(html).toContain("Previously skipped dates stay skipped");
     expect(html).toContain("No future visits in this review");
+    expect(html).toContain("The pattern continues beyond this review.");
+  });
+  it.each([
+    ["2026-11-02", "Nov 2, 2026"],
+    ["2026-11-16", "Nov 16, 2026"],
+    ["2026-11-30", "Nov 30, 2026"],
+  ])("shows end date %s without promising continuation after the review horizon", (endsOn, label) => {
+    const review = toScheduleReview({
+      plan_id: "d9000000-0000-0000-0000-000000000001",
+      effective_from: "2026-10-05",
+      first_date: "2026-10-05",
+      freq: "biweekly",
+      start_time: "10:00",
+      paused_until: null,
+      ends_on: endsOn,
+      price_cents: 17000,
+      previous_price_cents: 17000,
+      estimated_minutes: 90,
+      fee_cents: 0,
+      horizon_until: "2026-11-16",
+      visits: [],
+      preserved_skips: [],
+    });
+    const html = renderToStaticMarkup(createElement(RecurringReview, { review }));
+    expect(html).toContain(`The pattern ends on ${label}.`);
+    expect(html).not.toContain("continues after that");
+    expect(html).not.toContain("continues beyond");
   });
 });
 it("shows a removed recurring visit as a free recorded cancellation", async () => {

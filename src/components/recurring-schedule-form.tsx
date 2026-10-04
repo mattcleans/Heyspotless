@@ -70,8 +70,10 @@ export function RecurringReview({ review }: { review: ScheduleReview }) {
         <p>
           Future edits take effect {day(review.effective_from)}. The pattern
           starts {day(review.first_date)}. Review covers dates through{" "}
-          {day(review.horizon_until)}; this pattern continues after that
-          {review.ends_on ? ` until ${day(review.ends_on)}` : ""}.
+          {day(review.horizon_until)}.{" "}
+          {review.ends_on
+            ? `The pattern ends on ${day(review.ends_on)}.`
+            : "The pattern continues beyond this review."}
         </p>
         {review.paused_until && (
           <p className="mt-2">
