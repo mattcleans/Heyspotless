@@ -80,4 +80,15 @@ describe("cancellation recovery and policy copy", () => {
     expect(html).toContain("does not change your recurring schedule");
     expect(html).not.toContain("View account balance");
   });
+  it("requires explicit account payment for a fee without promising autopay collection", () => {
+    const html = renderToStaticMarkup(
+      createElement(CancellationReceiptDetails, {
+        receipt: { ...receipt, billingReview: false, invoiceId: "fee-invoice" },
+      }),
+    );
+    expect(html).toContain("Pay it through Account");
+    expect(html).toContain("will not be charged automatically");
+    expect(html).toContain('href="/customer/account"');
+    expect(html).not.toContain("follows your existing payment settings");
+  });
 });

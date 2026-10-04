@@ -34,7 +34,7 @@ export function CancellationReceiptDetails({
         {receipt.billingReview
           ? "The office needs to reconcile an existing payment or payment attempt before settling the balance. This cancellation did not start another payment."
           : receipt.feeCents
-            ? "The fee is on your account. If you have authorized autopay, it follows your existing payment settings."
+            ? "The fee is on your account. Pay it through Account; it will not be charged automatically."
             : "This confirmation did not start a payment."}
       </p>
       <p className="mt-2 text-sm text-ink-2">
