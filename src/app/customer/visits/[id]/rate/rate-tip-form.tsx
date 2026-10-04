@@ -32,10 +32,12 @@ export function RateTipForm({
   jobId,
   cleanerFirstName,
   cleanPriceCents,
+  tipsEnabled,
 }: {
   jobId: string;
   cleanerFirstName: string;
   cleanPriceCents: number;
+  tipsEnabled: boolean;
 }) {
   const router = useRouter();
   const [score, setScore] = useState<number | null>(null);
@@ -46,6 +48,8 @@ export function RateTipForm({
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [tipAddedCents, setTipAddedCents] = useState<number | null>(null);
+  const [receiptNotice, setReceiptNotice] = useState<string | null>(null);
 
   const split = tipCents > 0 ? tipPassThrough(tipCents) : null;
 
@@ -67,22 +71,39 @@ export function RateTipForm({
           score,
           highlights: chosen,
           privateNote: note.trim() || null,
-          tipCents,
+          tipCents: tipsEnabled ? tipCents : 0,
         }),
       });
 
       const payload: unknown = await response.json().catch(() => ({}));
-      const data = (payload ?? {}) as { recorded?: unknown; error?: unknown };
+      const data = (payload ?? {}) as {
+        recorded?: unknown;
+        error?: unknown;
+        warning?: unknown;
+        tip?: { tipCents?: unknown } | null;
+      };
 
-      if (!response.ok && data.recorded !== true) {
+      if (data.recorded !== true) {
         setError(typeof data.error === "string" ? data.error : "That did not save.");
         return;
       }
 
+      setTipAddedCents(
+        typeof data.tip?.tipCents === "number" && data.tip.tipCents > 0
+          ? data.tip.tipCents
+          : null,
+      );
+      setReceiptNotice(
+        typeof data.error === "string"
+          ? data.error
+          : typeof data.warning === "string"
+            ? data.warning
+            : null,
+      );
       setDone(true);
       router.refresh();
     } catch {
-      setError("No connection. Nothing was sent — try again.");
+      setError("We could not confirm whether your rating saved. Check your connection and try again.");
     } finally {
       setSending(false);
     }
@@ -90,14 +111,7 @@ export function RateTipForm({
 
   if (done) {
     return (
-      <div className="card p-6 text-center">
-        <p className="text-lg font-semibold text-navy">Thank you.</p>
-        <p className="mt-2 text-sm text-ink-2">
-          {split
-            ? `${cleanerFirstName} will get ${formatCents(split.netCents)} of your ${formatCents(split.tipCents)} tip — the rest is the card fee.`
-            : `${cleanerFirstName} will see your rating.`}
-        </p>
-      </div>
+      <RatingReceipt tipAddedCents={tipAddedCents} notice={receiptNotice} />
     );
   }
 
@@ -147,7 +161,7 @@ export function RateTipForm({
             </div>
           </div>
 
-          <div className="card p-5">
+          {tipsEnabled ? <div className="card p-5">
             <div className="flex items-baseline justify-between">
               <p className="eyebrow">Add a tip</p>
               <p className="text-[11px] text-ink-3">
@@ -199,7 +213,7 @@ export function RateTipForm({
                 {split.feeCents > 0 ? ` · card fee ${formatCents(split.feeCents)}` : ""}
               </p>
             ) : null}
-          </div>
+          </div> : <p className="text-sm text-ink-2">Online tipping is unavailable. You can still save your rating.</p>}
 
           <div className="card p-5">
             <p className="eyebrow">Private note</p>
@@ -234,4 +248,17 @@ export function RateTipForm({
       ) : null}
     </div>
   );
+}
+
+export function RatingReceipt({ tipAddedCents, notice }: {
+  tipAddedCents: number | null;
+  notice: string | null;
+}) {
+  return <div className="card p-6 text-center">
+    <p className="text-lg font-semibold text-navy">Thank you. Your rating is saved.</p>
+    {tipAddedCents !== null && <p className="mt-2 text-sm text-ink-2">
+      Your {formatCents(tipAddedCents)} tip was added to your bill. Check Account for the payment status.
+    </p>}
+    {notice && <p className="mt-2 text-sm text-bad" role="status">{notice}</p>}
+  </div>;
 }

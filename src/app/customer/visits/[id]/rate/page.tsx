@@ -5,6 +5,7 @@ import { getRepository } from "@/lib/data";
 import { CleanerDirectory } from "@/lib/cleaners/store";
 import { firstName } from "@/lib/cleaners/profile";
 import { formatDateInZone } from "@/lib/time/zone";
+import { isBillingEnabled } from "@/lib/stripe/env";
 import { RateTipForm } from "./rate-tip-form";
 
 /**
@@ -54,6 +55,7 @@ export default async function RateVisitPage({ params }: { params: Promise<{ id: 
         jobId={id}
         cleanerFirstName={cleaner ? firstName(cleaner.fullName) : "your cleaner"}
         cleanPriceCents={job.priceCents}
+        tipsEnabled={isBillingEnabled()}
       />
     </>
   );

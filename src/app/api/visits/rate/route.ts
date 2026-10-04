@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { isDemoMode } from "@/lib/supabase/env";
 import { tipPassThrough } from "@/lib/billing/tips";
+import { isBillingEnabled } from "@/lib/stripe/env";
 
 /**
  * Screen 7, submitted: the rating, what stood out, a private note, and a tip.
@@ -43,6 +44,7 @@ export async function POST(request: NextRequest) {
   const repo = await getRepository();
   const profile = await repo.getCurrentProfile();
   if (!profile) return NextResponse.json({ error: "not signed in" }, { status: 401 });
+  if (profile.role !== "customer") return NextResponse.json({ error: "Client access required" }, { status: 403 });
 
   const body = await readJson(request);
   const jobId = typeof body["jobId"] === "string" ? body["jobId"] : null;
@@ -93,6 +95,13 @@ export async function POST(request: NextRequest) {
 
   if (tipCents === 0) return NextResponse.json({ recorded: true, tip: null });
 
+  if (!isBillingEnabled()) {
+    return NextResponse.json(
+      { recorded: true, tip: null, error: "Online tipping is unavailable. Your rating was saved and no tip was added." },
+      { status: 409 },
+    );
+  }
+
   // ---- 2. the tip, on the bill -------------------------------------------
   const { data: invoice } = await db
     .from("invoices")
@@ -104,6 +113,13 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
 
   const invoiceId = (invoice as Record<string, unknown> | null)?.["id"];
+
+  if (typeof invoiceId !== "string") {
+    return NextResponse.json(
+      { recorded: true, tip: null, error: "Your rating was saved. A tip cannot be added until this visit has a bill." },
+      { status: 409 },
+    );
+  }
 
   if (typeof invoiceId === "string") {
     const { error } = await db.rpc("set_invoice_tip", {
