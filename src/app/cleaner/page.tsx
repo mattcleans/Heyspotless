@@ -33,17 +33,20 @@ export default async function CleanerPage() {
     cleaner && !repo.isDemo ? await myCrewOffers(await createClient()) : [];
   const now = new Date();
   const today = visitsOnDay(jobs, now);
+  const ongoing = jobs.filter((j) => j.status === "in_progress");
+  const continuing = ongoing.filter((j) => !today.some((t) => t.id === j.id));
+  const dayVisits = [...ongoing, ...today.filter((j) => j.status !== "in_progress")];
   const upcoming = jobs
     .filter(
       (j) =>
         j.scheduledStart &&
         j.scheduledStart > now &&
-        !today.some((t) => t.id === j.id) &&
+        !dayVisits.some((t) => t.id === j.id) &&
         !["complete", "canceled"].includes(j.status),
     )
     .sort((a, b) => a.scheduledStart!.getTime() - b.scheduledStart!.getTime());
   const payouts = new Map<string, number>();
-  if (cleaner && !repo.isDemo && today.length > 0) {
+  if (cleaner && !repo.isDemo && dayVisits.length > 0) {
     const db = await createClient();
     const { data, error } = await db
       .from("job_assignments")
@@ -51,7 +54,7 @@ export default async function CleanerPage() {
       .eq("cleaner_id", cleaner.id)
       .in(
         "job_id",
-        today.map((j) => j.id),
+        dayVisits.map((j) => j.id),
       );
     if (error)
       throw new Error("Unable to load your agreed pay. Please try again.");
@@ -68,6 +71,10 @@ export default async function CleanerPage() {
           : "Your day, at a glance."}
       </h1>
       <p className="mt-3 text-sm text-ink-2">
+        {continuing.length > 0 &&
+          (continuing.length === 1
+            ? "Continue your clean below. "
+            : "Continue your cleans below. ")}
         {today.length
           ? `${today.length} visits today. ${done} complete.`
           : "No visits scheduled for today."}
@@ -121,16 +128,20 @@ export default async function CleanerPage() {
       )}
       <section aria-labelledby="schedule">
         <div className="section-heading">
-          <h2 id="schedule">Today’s visits</h2>
+          <h2 id="schedule">
+            {continuing.length ? "Your visits" : "Today’s visits"}
+          </h2>
           <span className="text-xs text-ink-2">Dallas time</span>
         </div>
-        {today.length ? (
+        {dayVisits.length ? (
           <ol className="space-y-3">
-            {today.map((job) => (
+            {dayVisits.map((job) => (
               <li key={job.id} className="visit-feature">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-semibold text-navy">
-                    {formatDateTimeInZone(job.scheduledStart!)}
+                    {job.scheduledStart
+                      ? formatDateTimeInZone(job.scheduledStart)
+                      : "Time to be confirmed"}
                   </p>
                   <Pill tone={job.status === "complete" ? "good" : "sky"}>
                     {JOB_LABELS[job.status] ?? "Scheduled"}
