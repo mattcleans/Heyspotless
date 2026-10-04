@@ -22,7 +22,7 @@ import { ReplyBox } from "./reply-box";
  */
 export const dynamic = "force-dynamic";
 
-export const metadata = { title: "Inbox — Spotless Ops" };
+export const metadata = { title: "Inbox | Hey Spotless management" };
 
 export default async function InboxPage({
   searchParams,

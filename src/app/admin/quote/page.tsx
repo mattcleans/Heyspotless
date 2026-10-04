@@ -2,7 +2,7 @@ import Link from "next/link";
 import { PageHeader } from "@/components/ui";
 import { QuoteBuilder } from "./quote-builder";
 
-export const metadata = { title: "Quote builder — Spotless Ops" };
+export const metadata = { title: "Quote builder | Hey Spotless management" };
 
 export default function QuotePage() {
   return (

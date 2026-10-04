@@ -16,7 +16,7 @@ import { formatCents, formatHours, formatPct } from "@/lib/money";
 import { formatDateTimeInZone } from "@/lib/time/zone";
 import { SERVICE_LABELS, FREQUENCY_LABELS } from "@/lib/pricing/price-book";
 
-export const metadata = { title: "Dispatch — Spotless Ops" };
+export const metadata = { title: "Dispatch | Hey Spotless management" };
 
 const estimate = zipCentroidEstimator(ZIP_CENTROIDS);
 

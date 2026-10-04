@@ -11,7 +11,7 @@ import { PayInvoiceButton, SaveCardButton } from "./billing-actions";
 import { createClient } from "@/lib/supabase/server";
 import { cancellationsForInvoices } from "@/lib/customer/cancellation/store";
 
-export const metadata = { title: "Account" };
+export const metadata = { title: "Your account | Hey Spotless" };
 
 export default async function CustomerPage() {
   const repo = await getRepository();

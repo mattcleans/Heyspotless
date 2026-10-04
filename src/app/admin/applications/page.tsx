@@ -22,7 +22,7 @@ import { ApplicationActions } from "./application-actions";
  */
 export const dynamic = "force-dynamic";
 
-export const metadata = { title: "Applications — Spotless Ops" };
+export const metadata = { title: "Applications | Hey Spotless management" };
 
 interface ApplicationRow {
   id: string;

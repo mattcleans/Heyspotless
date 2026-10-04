@@ -10,7 +10,7 @@ import { BookingForm } from "../booking-form";
 import { CustomerForm } from "../customer-form";
 import { PropertyForm } from "../property-form";
 
-export const metadata = { title: "Customer — Spotless Ops" };
+export const metadata = { title: "Customer | Hey Spotless management" };
 
 export default async function CustomerPage({
   params,

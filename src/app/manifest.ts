@@ -7,9 +7,9 @@ import { CUSTOMER_BRAND } from "@/lib/brand";
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Spotless Ops",
-    short_name: "Spotless",
-    description: `${CUSTOMER_BRAND} operations — schedule, dispatch, bill, communicate.`,
+    name: CUSTOMER_BRAND,
+    short_name: CUSTOMER_BRAND,
+    description: `Book and manage cleans, follow visits, and coordinate your team with ${CUSTOMER_BRAND}.`,
     start_url: "/",
     display: "standalone",
     background_color: "#f6f9fb",
