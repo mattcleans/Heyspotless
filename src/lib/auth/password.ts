@@ -57,10 +57,9 @@ export function passwordAuthError(
   error: { code?: string } | null,
   action: "sign-in" | "save" | "email",
 ): string {
-  if (
-    error?.code === "over_request_rate_limit" ||
-    error?.code === "over_email_send_rate_limit"
-  )
+  if (error?.code === "over_email_send_rate_limit")
+    return "Password and sign-in emails are temporarily limited. Please try again later, or call 469-280-0397 for help.";
+  if (error?.code === "over_request_rate_limit")
     return "Too many attempts. Wait a minute, then try again.";
   if (action === "sign-in") {
     if (error?.code === "invalid_credentials")
