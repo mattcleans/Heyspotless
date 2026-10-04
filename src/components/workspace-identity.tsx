@@ -32,12 +32,22 @@ export async function WorkspaceIdentity({
         </span>
       </div>
       {!repo.isDemo && profile && (
-        <Link
-          href="/account/password"
-          className="workspace-return min-h-11 inline-flex items-center"
-        >
-          Password settings
-        </Link>
+        <>
+          <Link
+            href="/account/password"
+            className="workspace-return min-h-11 inline-flex items-center"
+          >
+            Password settings
+          </Link>
+          <form action="/auth/sign-out" method="post">
+            <button
+              type="submit"
+              className="workspace-return min-h-11 inline-flex items-center"
+            >
+              Sign out
+            </button>
+          </form>
+        </>
       )}
       {profile?.role === "admin" && area !== "admin" ? (
         <Link href="/admin" className="workspace-return">
