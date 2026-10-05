@@ -2,6 +2,7 @@ import Link from "next/link";
 import { getRepository } from "@/lib/data";
 import { createClient } from "@/lib/supabase/server";
 import { isDemoMode } from "@/lib/supabase/env";
+import { isBillingEnabled } from "@/lib/stripe/env";
 import { CleanerDirectory } from "@/lib/cleaners/store";
 import { Avatar } from "@/components/cleaner-card";
 import { AppIcon } from "@/components/app-navigation";
@@ -149,7 +150,9 @@ export default async function ClientHome() {
         >
           <strong className="text-navy">How was your last clean?</strong>
           <p className="mt-1 text-sm text-ink-2">
-            Leave a rating, add a tip, or tell us what could be better.
+            {isBillingEnabled()
+              ? "Leave a rating, add a tip, or tell us what could be better."
+              : "Leave a rating or tell us what could be better."}
           </p>
         </Link>
       )}
