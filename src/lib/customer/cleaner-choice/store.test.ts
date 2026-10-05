@@ -81,6 +81,48 @@ beforeEach(() => {
   };
 });
 describe("scoped cleaner choices", () => {
+  it("restores only the current assignment decision's saved office note", async () => {
+    (
+      results.visit_backup_status.data as Record<string, unknown>[]
+    )[0]!.decision_id = "decision";
+    results.visit_backup_decisions.data = {
+      note: "Please use the side entrance",
+    };
+    expect((await loadVisitChoice(db(), "visit"))?.backup?.note).toBe(
+      "Please use the side entrance",
+    );
+    for (const [field, value] of [
+      ["id", "decision"],
+      ["job_id", "visit"],
+      ["assignment_key", "assignment"],
+      ["preferred_cleaner_id", "preferred"],
+      ["backup_cleaner_id", "backup"],
+    ])
+      expect(calls).toContainEqual({
+        table: "visit_backup_decisions",
+        method: "eq",
+        args: [field, value],
+      });
+  });
+  it("starts a new assignment with an empty note rather than reading old decisions", async () => {
+    results.visit_backup_decisions.data = { note: "Old cleaner's note" };
+    expect((await loadVisitChoice(db(), "visit"))?.backup?.note).toBe("");
+    expect(calls.some((c) => c.table === "visit_backup_decisions")).toBe(false);
+  });
+  it.each([
+    { data: null, error: null },
+    { data: null, error: { message: "denied" } },
+    { data: { note: null }, error: null },
+    { data: { note: 42 }, error: null },
+  ])("does not turn an unreadable saved decision into a blank note: %j", async (result) => {
+    (
+      results.visit_backup_status.data as Record<string, unknown>[]
+    )[0]!.decision_id = "decision";
+    results.visit_backup_decisions = result;
+    await expect(loadVisitChoice(db(), "visit")).rejects.toThrow(
+      "could not be loaded",
+    );
+  });
   it("reads only own-visit identities and public names, not assignment pay or client actor IDs", async () => {
     const choice = await loadVisitChoice(db(), "visit");
     expect(choice?.backup?.approved).toBe(false);

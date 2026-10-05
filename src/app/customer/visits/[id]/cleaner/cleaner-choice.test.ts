@@ -25,6 +25,7 @@ const choice: VisitChoice = {
     backupName: "Backup",
     approved: false,
     decisionId: null,
+    note: "",
     unambiguous: true,
   },
 };
@@ -38,6 +39,20 @@ const render = (over: Partial<VisitChoice> = {}, preview = false) =>
     }),
   );
 describe("honest client cleaner controls", () => {
+  it("restores the office note when reopening an approved backup", () => {
+    const html = render({
+      backup: {
+        ...choice.backup!,
+        approved: true,
+        decisionId: "approved",
+        note: "Please use the side entrance",
+      },
+    });
+    expect(html).toContain('id="backup-note"');
+    expect(html).toMatch(
+      /<textarea[^>]*id="backup-note"[^>]*>Please use the side entrance<\/textarea>/,
+    );
+  });
   it("distinguishes preference applied from requested cleaner acceptance", () => {
     expect(render()).toContain(
       "does not confirm that the requested cleaner has accepted",

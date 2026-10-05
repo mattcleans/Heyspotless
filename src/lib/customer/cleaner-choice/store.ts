@@ -16,6 +16,7 @@ export interface BackupChoice {
   backupName: string;
   approved: boolean;
   decisionId: string | null;
+  note: string;
   unambiguous: boolean;
 }
 export interface VisitChoice {
@@ -84,6 +85,21 @@ export async function loadVisitChoice(
     (typeof b.approved !== "boolean" || typeof b.unambiguous !== "boolean")
   )
     throw fail();
+  const decisionId = b ? nullable(b.decision_id) : null;
+  let backupNote = "";
+  if (b && decisionId !== null) {
+    const decision = await db
+      .from("visit_backup_decisions")
+      .select("note")
+      .eq("id", decisionId)
+      .eq("job_id", id)
+      .eq("assignment_key", text(b.assignment_id))
+      .eq("preferred_cleaner_id", text(b.preferred_cleaner_id))
+      .eq("backup_cleaner_id", text(b.backup_cleaner_id))
+      .maybeSingle();
+    if (decision.error || !decision.data) throw fail();
+    backupNote = text(decision.data.note);
+  }
   return {
     status: text(job.data.status),
     started: startedAt !== null,
@@ -113,7 +129,8 @@ export async function loadVisitChoice(
           preferredName: text(b.preferred_name),
           backupName: text(b.backup_name),
           approved: b.approved,
-          decisionId: nullable(b.decision_id),
+          decisionId,
+          note: backupNote,
           unambiguous: b.unambiguous,
         }
       : null,

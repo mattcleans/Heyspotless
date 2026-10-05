@@ -29,7 +29,7 @@ export function CleanerChoiceForm({
         : "",
   );
   const [note, setNote] = useState("");
-  const [backupNote, setBackupNote] = useState("");
+  const [backupNote, setBackupNote] = useState(choice.backup?.note ?? "");
   const [busy, setBusy] = useState(false),
     [message, setMessage] = useState<string | null>(null),
     [needsSignIn, setNeedsSignIn] = useState(false),
