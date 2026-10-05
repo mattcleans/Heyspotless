@@ -28,23 +28,31 @@ const HIGHLIGHTS = [
 
 const TIP_PERCENTAGES = [0.15, 0.2, 0.25] as const;
 
+export interface SavedRating {
+  score: number;
+  highlights: string[];
+  privateNote: string | null;
+}
+
 export function RateTipForm({
   jobId,
   cleanerFirstName,
   cleanPriceCents,
   tipsEnabled,
+  initialRating = null,
 }: {
   jobId: string;
   cleanerFirstName: string;
   cleanPriceCents: number;
   tipsEnabled: boolean;
+  initialRating?: SavedRating | null;
 }) {
   const router = useRouter();
-  const [score, setScore] = useState<number | null>(null);
-  const [chosen, setChosen] = useState<string[]>([]);
+  const [score, setScore] = useState<number | null>(initialRating?.score ?? null);
+  const [chosen, setChosen] = useState<string[]>(initialRating?.highlights ?? []);
   const [tipCents, setTipCents] = useState(0);
   const [customTip, setCustomTip] = useState("");
-  const [note, setNote] = useState("");
+  const [note, setNote] = useState(initialRating?.privateNote ?? "");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -117,6 +125,9 @@ export function RateTipForm({
 
   return (
     <div className="space-y-4">
+      {initialRating && <p className="text-sm text-ink-2">
+        Saved rating: {initialRating.score} out of 5. You can update it below.
+      </p>}
       <div className="card p-5">
         <p className="text-center text-sm text-ink-2">How did {cleanerFirstName} do?</p>
 
@@ -126,6 +137,7 @@ export function RateTipForm({
               key={n}
               type="button"
               aria-label={`${n} out of 5`}
+              aria-pressed={score === n}
               onClick={() => setScore(n)}
               className={`flex-1 rounded-lg border py-4 text-2xl transition-colors ${
                 score !== null && n <= score
@@ -149,6 +161,7 @@ export function RateTipForm({
                   key={h.key}
                   type="button"
                   onClick={() => toggle(h.key)}
+                  aria-pressed={chosen.includes(h.key)}
                   className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
                     chosen.includes(h.key)
                       ? "border-sky-deep bg-sky/20 text-navy"
@@ -242,7 +255,7 @@ export function RateTipForm({
               ? "Sending…"
               : tipCents > 0
                 ? `Submit and tip ${formatCents(tipCents)}`
-                : "Submit"}
+                : initialRating ? "Update rating" : "Submit"}
           </button>
         </>
       ) : null}

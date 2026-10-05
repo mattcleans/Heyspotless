@@ -2,7 +2,6 @@ import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { isDemoMode } from "@/lib/supabase/env";
 import { getRepository } from "@/lib/data";
-import { CleanerDirectory } from "@/lib/cleaners/store";
 import { firstName } from "@/lib/cleaners/profile";
 import { formatDateInZone } from "@/lib/time/zone";
 import { isBillingEnabled } from "@/lib/stripe/env";
@@ -24,23 +23,41 @@ export default async function RateVisitPage({ params }: { params: Promise<{ id: 
   if (isDemoMode()) notFound();
   if (!/^[0-9a-f-]{36}$/i.test(id)) notFound();
 
-  const db = await createClient();
   const repo = await getRepository();
+  const profile = await repo.getCurrentProfile();
+  if (profile?.role !== "customer") notFound();
+  const customer = await repo.getCustomerByProfile(profile.id);
+  if (!customer) notFound();
 
   // RLS scopes this to the signed-in customer, so somebody else's clean is
   // simply not there.
   const job = await repo.getJob(id);
-  if (!job || job.status !== "complete") notFound();
+  if (!job || job.customerId !== customer.id || job.status !== "complete") notFound();
 
-  const { data: progress } = await db
-    .from("visit_progress")
-    .select("cleaner_id, completed_at")
-    .eq("job_id", id)
-    .maybeSingle();
+  const db = await createClient();
+  const [progress, assigned, rating] = await Promise.all([
+    db.from("jobs").select("completed_at").eq("id", id).maybeSingle(),
+    db.from("client_visit_assignments").select("full_name")
+      .eq("job_id", id).eq("is_lead", true).limit(2),
+    db.from("ratings").select("score,highlights,private_note")
+      .eq("job_id", id).eq("customer_id", customer.id).maybeSingle(),
+  ]);
+  if (progress.error || assigned.error || rating.error) {
+    throw new Error("Your rating could not be loaded. Refresh and try again.");
+  }
+  if (!Array.isArray(assigned.data) || assigned.data.length > 1) {
+    throw new Error("Your cleaner assignment needs review. Please contact the office.");
+  }
 
-  const row = (progress ?? {}) as Record<string, unknown>;
-  const cleanerId = typeof row["cleaner_id"] === "string" ? row["cleaner_id"] : null;
-  const cleaner = cleanerId ? await new CleanerDirectory(db).get(cleanerId) : null;
+  const row = (progress.data ?? {}) as Record<string, unknown>;
+  const cleanerName = assigned.data[0]?.full_name;
+  const saved = rating.data;
+  const score = saved ? Number(saved.score) : null;
+  if (saved && (score === null || !Number.isFinite(score) || score < 1 || score > 5 ||
+    !Array.isArray(saved.highlights) || saved.highlights.some((h: unknown) => typeof h !== "string") ||
+    (saved.private_note !== null && typeof saved.private_note !== "string"))) {
+    throw new Error("Your saved rating could not be loaded. Refresh and try again.");
+  }
 
   const finished = row["completed_at"] ? new Date(String(row["completed_at"])) : null;
 
@@ -53,9 +70,12 @@ export default async function RateVisitPage({ params }: { params: Promise<{ id: 
 
       <RateTipForm
         jobId={id}
-        cleanerFirstName={cleaner ? firstName(cleaner.fullName) : "your cleaner"}
+        cleanerFirstName={typeof cleanerName === "string" ? firstName(cleanerName) : "your cleaner"}
         cleanPriceCents={job.priceCents}
         tipsEnabled={isBillingEnabled()}
+        initialRating={saved && score !== null ? {
+          score, highlights: saved.highlights as string[], privateNote: saved.private_note,
+        } : null}
       />
     </>
   );
