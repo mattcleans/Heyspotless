@@ -14,6 +14,7 @@ import {
   type ReviewPhoto,
 } from "@/lib/operations/visit-review";
 import { JOB_LABELS } from "@/lib/experience/schedule";
+import { FREQUENCY_LABELS, SERVICE_LABELS } from "@/lib/pricing/price-book";
 import { formatDateTimeInZone } from "@/lib/time/zone";
 import { formatCents } from "@/lib/money";
 import { Pill } from "@/components/ui";
@@ -176,6 +177,18 @@ export default async function VisitReviewPage({
             </dd>
           </div>
         ))}
+        <div>
+          <dt className="eyebrow">Service</dt>
+          <dd className="mt-1 text-sm">{SERVICE_LABELS[job.service]}</dd>
+        </div>
+        <div>
+          <dt className="eyebrow">Frequency</dt>
+          <dd className="mt-1 text-sm">{FREQUENCY_LABELS[job.frequency]}</dd>
+        </div>
+        <div>
+          <dt className="eyebrow">Client visit price</dt>
+          <dd className="mt-1 text-sm nums">{formatCents(job.priceCents)}</dd>
+        </div>
       </dl>
       <section className="visit-feature mt-5">
         <h2 className="font-semibold text-navy">{review.label}</h2>
