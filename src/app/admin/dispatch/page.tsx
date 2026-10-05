@@ -1,4 +1,7 @@
-import { PageHeader, Pill, Stat, Callout } from "@/components/ui";
+import Link from "next/link";
+import { DispatchRecommendation } from "@/components/dispatch-recommendation";
+import { JOB_LABELS } from "@/lib/experience/schedule";
+import { Pill, Stat, Callout } from "@/components/ui";
 import { AVERAGE_TICKET_CENTS, ZIP_CENTROIDS } from "@/lib/config";
 import { getRepository } from "@/lib/data";
 import type { Job } from "@/lib/data/types";
@@ -16,7 +19,7 @@ import { formatCents, formatHours, formatPct } from "@/lib/money";
 import { formatDateTimeInZone } from "@/lib/time/zone";
 import { SERVICE_LABELS, FREQUENCY_LABELS } from "@/lib/pricing/price-book";
 
-export const metadata = { title: "Dispatch | Hey Spotless management" };
+export const metadata = { title: "Matching plan | Hey Spotless management" };
 
 const estimate = zipCentroidEstimator(ZIP_CENTROIDS);
 
@@ -30,163 +33,6 @@ function buildContext(cleaners: Cleaner[], now: Date) {
   };
 }
 
-function DecisionSummary({ decision }: { decision: DispatchDecision }) {
-  switch (decision.kind) {
-    case "assign_guaranteed":
-      return (
-        <>
-          <Pill tone="good">Guaranteed hours · $0 marginal</Pill>
-          <p className="mt-2 text-sm text-ink-2">
-            <strong className="text-ink">{decision.cleaner.name}</strong> — {decision.rationale}
-          </p>
-        </>
-      );
-    case "assign_w2":
-      return (
-        <>
-          <Pill tone="sky">W-2 fallback · {formatCents(decision.marginalCents)}</Pill>
-          <p className="mt-2 text-sm text-ink-2">{decision.rationale}</p>
-        </>
-      );
-    case "open_board":
-      return (
-        <>
-          <Pill tone="sky">Open board · {formatCents(decision.payoutCents)}</Pill>
-          <p className="mt-2 text-sm text-ink-2">{decision.rationale}</p>
-          <p className="mt-1 text-xs text-ink-3">
-            Promotes to the waterfall{" "}
-            {formatDateTimeInZone(decision.promoteToWaterfallAt)}{" "}
-            · {decision.eligible.length} eligible
-          </p>
-        </>
-      );
-    case "waterfall":
-      return (
-        <>
-          <Pill tone="warn">
-            Waterfall · {decision.ladder.length} rung{decision.ladder.length === 1 ? "" : "s"}
-          </Pill>
-          <p className="mt-2 text-sm text-ink-2">{decision.rationale}</p>
-          <div className="mt-2.5 flex flex-wrap gap-1.5">
-            {decision.ladder.map((rung) => (
-              <span
-                key={rung.index}
-                className="nums rounded border border-line bg-surface-2 px-1.5 py-0.5 text-[11px] text-ink-2"
-                title={`${formatPct(rung.share)} of ticket · about ${formatCents(rung.impliedHourlyRateCents)}/hr against the estimate · at +${Math.round(rung.offerAtSeconds / 60)}m`}
-              >
-                {formatCents(rung.payoutCents)}
-              </span>
-            ))}
-          </div>
-          <p className="mt-1.5 text-xs text-ink-3">
-            Cleaners see one offer at a time with a countdown — never the ladder.
-          </p>
-        </>
-      );
-    case "hold_for_incumbent":
-      return (
-        <>
-          <Pill tone="good">
-            Held for {decision.cleaner.name} · {formatCents(decision.payoutCents)}
-          </Pill>
-          <p className="mt-2 text-sm text-ink-2">{decision.rationale}</p>
-          <p className="mt-1 text-xs text-ink-3">
-            Exclusive until {formatDateTimeInZone(decision.exclusiveUntil)} · then the{" "}
-            {decision.fallback === "waterfall" ? "waterfall" : "open board"}
-          </p>
-        </>
-      );
-    case "no_eligible_cleaner":
-      return (
-        <>
-          <Pill tone="bad">No eligible cleaner</Pill>
-          <p className="mt-2 text-sm text-ink-2">{decision.rationale}</p>
-        </>
-      );
-  }
-}
-
-/**
- * The spread on this job: the ticket, what the cleaner takes, and what is left.
- *
- * Shown wherever the decision names a payout, because a pairing that works
- * lasts years and the margin agreed when it forms is the margin for years.
- * Deciding that without the number in front of you is how a relationship gets
- * locked in at a spread nobody would have chosen.
- */
-function SpreadNote({ job, decision }: { job: Job; decision: DispatchDecision }) {
-  const payoutCents =
-    decision.kind === "hold_for_incumbent" || decision.kind === "open_board"
-      ? decision.payoutCents
-      : decision.kind === "assign_guaranteed" || decision.kind === "assign_w2"
-        ? decision.marginalCents
-        : null;
-
-  if (payoutCents === null || job.priceCents <= 0) return null;
-
-  const spread = job.priceCents - payoutCents;
-  return (
-    <p className="mt-2 text-xs text-ink-3">
-      <span className="nums">{formatCents(job.priceCents)}</span> ticket ·{" "}
-      <span className="nums">{formatCents(payoutCents)}</span> to the cleaner ·{" "}
-      <strong className="nums text-ink-2">{formatCents(spread)}</strong> contribution (
-      {formatPct(spread / job.priceCents)})
-    </p>
-  );
-}
-
-/**
- * What happened to the continuity promise, shown on every job including the
- * ones where nothing did.
- *
- * The two lines worth a manager's attention are the ones that are easy to
- * miss: a customer whose cleaner has lapsed a requirement and is about to meet
- * a stranger, and a customer we let go to market to save money. Both look like
- * an ordinary board posting without this.
- */
-function ContinuityNote({ decision }: { decision: DispatchDecision }) {
-  const c = decision.continuity;
-
-  if (c.status === "waived_too_costly") {
-    return (
-      <p className="mt-2 text-xs text-ink-3">
-        <Pill tone="warn">Substituting</Pill>{" "}
-        Their usual cleaner would have cost {formatCents(c.premiumCents)} more than the
-        alternative, over the {formatCents(c.capCents)} limit for this job.
-      </p>
-    );
-  }
-
-  if (c.status === "none" && c.reason === "incumbent_ineligible") {
-    return (
-      <p className="mt-2 text-xs text-ink-3">
-        <Pill tone="bad">Lost their cleaner</Pill>{" "}
-        This customer&apos;s cleaner did not clear the eligibility gate for this visit.
-      </p>
-    );
-  }
-
-  if (c.status === "none" && c.reason === "incumbent_passed") {
-    return (
-      <p className="mt-2 text-xs text-ink-3">
-        <Pill tone="warn">Passed</Pill>{" "}
-        Their usual cleaner has already turned this visit down, or did not answer in time — it
-        is on the open market now.
-      </p>
-    );
-  }
-
-  if (c.status === "none" && c.reason === "no_lead_time") {
-    return (
-      <p className="mt-2 text-xs text-ink-3">
-        <Pill tone="warn">No hold</Pill> Too close to the visit to wait on one answer.
-      </p>
-    );
-  }
-
-  return null;
-}
-
 function JobCard({ job, decision, now }: { job: Job; decision: DispatchDecision; now: Date }) {
   const hours = hoursUntil(job, now);
 
@@ -196,6 +42,9 @@ function JobCard({ job, decision, now }: { job: Job; decision: DispatchDecision;
         <h3 className="font-semibold text-ink">{job.customerName}</h3>
         <span className="nums text-sm text-navy">{formatCents(job.priceCents)}</span>
       </div>
+      <p className="mt-2 text-sm font-medium text-navy">
+        {JOB_LABELS[job.status] ?? "Check visit status"}
+      </p>
       <p className="mt-0.5 text-sm text-ink-3">
         {job.street}, {job.city} · {job.bedrooms}bd/{job.bathrooms}ba
       </p>
@@ -204,14 +53,22 @@ function JobCard({ job, decision, now }: { job: Job; decision: DispatchDecision;
         {formatHours(job.estimatedCleanMinutes)} ·{" "}
         {job.scheduledStart
           ? Number.isFinite(hours)
-            ? `in ${Math.round(hours)}h`
+            ? hours < 0
+              ? "Past appointment · review visit status"
+              : formatDateTimeInZone(job.scheduledStart)
             : "unscheduled"
           : "unscheduled"}
       </p>
       <div className="mt-3.5 border-t border-line-soft pt-3.5">
-        <DecisionSummary decision={decision} />
-        <SpreadNote job={job} decision={decision} />
-        <ContinuityNote decision={decision} />
+        <DispatchRecommendation decision={decision} priceCents={job.priceCents} now={now} />
+      </div>
+      <div className="mt-4 flex flex-wrap gap-3">
+        <Link href={`/admin/visits/${job.id}`} className="secondary-action">
+          Review visit
+        </Link>
+        <Link href={`/admin/customers/${job.customerId}`} className="secondary-action">
+          Customer details
+        </Link>
       </div>
     </li>
   );
@@ -315,26 +172,30 @@ export default async function DispatchPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Admin" title="Dispatch board">
-        Every job runs the same path: spend guaranteed hours first, then the eligibility gate, then
-        the board or the waterfall. Each card shows what the engine decided and why.
-      </PageHeader>
+      <div className="mb-7">
+        <h1 className="text-3xl font-semibold tracking-tight text-navy">Matching plan</h1>
+        <p className="mt-3 max-w-3xl text-sm text-ink-2">
+        Review suggested cleaners and estimated costs for visits needing a match.
+        This page recalculates a plan; opening it does not send offers or assign cleaners.
+        Open a visit to check its saved assignment and approval status.
+        </p>
+      </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat
-          label="Unfilled guaranteed hrs"
+          label="Guarantee left after plan"
           value={`${idleHours.toFixed(1)}h`}
-          note={`${formatCents(idleCents)} already spent, currently earning nothing`}
+          note={`${formatCents(idleCents)} estimated unallocated payroll after these recommendations`}
           tone={idleHours > 0 ? "warn" : "good"}
         />
         <Stat label="Jobs needing a cleaner" value={String(jobs.length)} />
         <Stat
-          label="Going to market"
+          label="Suggested contractor offers"
           value={String(needMarket)}
-          note="Board or waterfall — not covered by guaranteed hours"
+          note="Proposed open offers or timed offers; not confirmation that they were sent"
         />
         <Stat
-          label="Forecast week"
+          label="Estimated week with plan"
           value={forecast ? `${forecast.totalHours.toFixed(1)}h` : "—"}
           note={
             forecast
@@ -347,22 +208,21 @@ export default async function DispatchPage() {
 
       {guaranteed && idleHours > 0 ? (
         <div className="mt-4">
-          <Callout tone="warn" label="Idle guaranteed hours">
-            {guaranteed.name} has <strong>{idleHours.toFixed(1)} unfilled guaranteed hours</strong>{" "}
-            this week —{" "}
-            {formatCents(idleCents)} already committed to payroll and currently earning nothing.
-            Fill these before any job goes to the marketplace.
+          <Callout tone="warn" label="Hours left after these recommendations">
+            If this plan is used, {guaranteed.name} would have{" "}
+            <strong>{idleHours.toFixed(1)} guaranteed hours</strong> left to fill this week.
+            Review availability and saved assignments before scheduling more work.
           </Callout>
         </div>
       ) : null}
 
       {forecast && forecast.overtimeHours > 0 ? (
         <div className="mt-3">
-          <Callout tone="bad" label="Overtime before you commit the week">
-            This schedule is {forecast.totalHours.toFixed(1)} hours, not 40 — it carries{" "}
-            <strong>{forecast.overtimeHours.toFixed(1)} hours of overtime</strong> at time and a
-            half, costing {formatCents(forecast.weeklyCostCents)} rather than $805.00. Still the
-            cheapest labor available, but the week should be built knowing it.
+          <Callout tone="bad" label="Estimated overtime with this plan">
+            These recommendations would bring the week to {forecast.totalHours.toFixed(1)} hours,
+            including <strong>{forecast.overtimeHours.toFixed(1)} overtime hours</strong>.
+            Estimated weekly cost: {formatCents(forecast.weeklyCostCents)}.
+            Review the saved schedule before committing more work.
           </Callout>
         </div>
       ) : null}
@@ -370,6 +230,9 @@ export default async function DispatchPage() {
       <h2 className="mt-9 mb-3 text-sm font-semibold tracking-wide text-ink-2 uppercase">
         Jobs needing a cleaner
       </h2>
+      {!board.length && (
+        <p className="visit-feature">No recorded visits currently need matching. Check the full schedule for current assignments.</p>
+      )}
       <ul className="grid gap-3 md:grid-cols-2">
         {board.map(({ job, decision }) => (
           <JobCard key={job.id} job={job} decision={decision} now={now} />
@@ -383,7 +246,7 @@ export default async function DispatchPage() {
         <table className="w-full text-left">
           <thead>
             <tr className="border-b border-line bg-surface-2">
-              {["Cleaner", "Rating", "Accept", "Booked", "Unspent gtd", "Gate"].map((h) => (
+              {["Cleaner", "Rating", "Accept", "Booked", "Left after plan", "First visit check"].map((h) => (
                 <th
                   key={h}
                   className="px-4 py-2.5 font-mono text-[10px] font-semibold tracking-wider text-ink-2 uppercase"
