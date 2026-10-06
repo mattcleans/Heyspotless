@@ -76,28 +76,9 @@ function time(v: unknown) {
 function nullableId(v: unknown) {
   return v === null ? null : quoteId(v);
 }
-export function toClientQuote(v: unknown): ClientQuote {
-  const q = obj(v),
-    home = obj(q.home);
-  if (
-    !SERVICE_TYPES.includes(q.service as ServiceType) ||
-    !FREQUENCIES.includes(q.frequency as Frequency) ||
-    ![
-      "review",
-      "published",
-      "accepted",
-      "declined",
-      "expired",
-      "stale",
-      "withdrawn",
-      "booked",
-    ].includes(str(q.state)) ||
-    typeof q.repeats !== "boolean" ||
-    (q.accepted !== null && typeof q.accepted !== "boolean") ||
-    !Array.isArray(q.lines) ||
-    q.lines.length === 0
-  )
-    throw new Error("Invalid terms");
+export function toPricedTerms(v: unknown): Pick<ClientQuote, "lines" | "totalCents" | "estimatedMinutes"> {
+  const q = obj(v);
+  if (!Array.isArray(q.lines) || q.lines.length === 0) throw new Error("Invalid lines");
   const lines = q.lines.map((v) => {
     const l = obj(v);
     if (typeof l.isExtra !== "boolean") throw new Error("Invalid line");
@@ -121,6 +102,31 @@ export function toClientQuote(v: unknown): ClientQuote {
     lines.reduce((s, l) => s + l.cleanMinutes, 0) !== estimatedMinutes
   )
     throw new Error("Invalid totals");
+  return { lines, totalCents, estimatedMinutes };
+}
+export function toClientQuote(v: unknown): ClientQuote {
+  const q = obj(v),
+    home = obj(q.home);
+  if (
+    !SERVICE_TYPES.includes(q.service as ServiceType) ||
+    !FREQUENCIES.includes(q.frequency as Frequency) ||
+    ![
+      "review",
+      "published",
+      "accepted",
+      "declined",
+      "expired",
+      "stale",
+      "withdrawn",
+      "booked",
+    ].includes(str(q.state)) ||
+    typeof q.repeats !== "boolean" ||
+    (q.accepted !== null && typeof q.accepted !== "boolean") ||
+    !Array.isArray(q.lines) ||
+    q.lines.length === 0
+  )
+    throw new Error("Invalid terms");
+  const { lines, totalCents, estimatedMinutes } = toPricedTerms(q);
   if (q.repeats && q.frequency === "one_time")
     throw new Error("Invalid recurrence");
   const state = q.state as QuoteState,

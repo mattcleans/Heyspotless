@@ -136,10 +136,10 @@ export default async function ClientHome() {
       <section className="booking-feature">
         <h2>{next ? "Make room for life." : "Come home to a fresh start."}</h2>
         <p>
-          Tell us about your home. See your price and request a clean that fits
-          your routine.
+          Choose your saved home, review the exact price and request a clean
+          that fits your routine.
         </p>
-        <Link className="primary-action" href="/book">
+        <Link className="primary-action" href="/customer/book">
           {next ? "Book another clean" : "Build my clean"}
         </Link>
       </section>
@@ -179,7 +179,7 @@ export default async function ClientHome() {
             <Link
               key={service}
               className="service-option"
-              href={`/book?service=${service}`}
+              href={`/customer/book?service=${service}`}
             >
               <AppIcon
                 name={i === 0 ? "calendar" : i === 1 ? "sparkle" : "home"}
