@@ -14,7 +14,23 @@ import {
 } from "@/lib/crew/types";
 import { crewResponse } from "@/lib/crew/response";
 
-function CrewList({ crew }: { crew: CrewMember[] }) {
+const receiptLabels: Record<CrewReceipt["state"], string> = {
+  review: "Under review",
+  sent: "Awaiting acceptance",
+  accepted: "Accepted",
+  declined: "Declined",
+  withdrawn: "Withdrawn",
+  expired: "Expired",
+  conflict: "No longer available",
+};
+
+function CrewList({
+  crew,
+  replacingLead = false,
+}: {
+  crew: CrewMember[];
+  replacingLead?: boolean;
+}) {
   return (
     <ul className="mt-3 divide-y divide-line">
       {crew.map((c) => (
@@ -23,7 +39,10 @@ function CrewList({ crew }: { crew: CrewMember[] }) {
           className="flex flex-wrap justify-between gap-2 py-3 text-sm"
         >
           <span>
-            {c.name} · {c.isLead ? "Lead to replace" : "Stays assigned"}
+            {c.name} ·{" "}
+            {c.isLead
+              ? replacingLead ? "Lead to replace" : "Lead"
+              : replacingLead ? "Stays assigned" : "Teammate"}
           </span>
           <span className="font-semibold nums">
             {c.type === "w2_core"
@@ -54,6 +73,12 @@ export function ReplacementForm({
       ? saved
       : data.proposals.find((p) => p.state === "sent");
   const terminal = saved && saved.state !== "sent";
+  const history = data.proposals.filter(
+    (p) => p.state !== "review" && p.state !== "sent",
+  );
+  const currentReplacement = history.some(
+    (p) => p.state === "accepted" && p.assignmentCurrent,
+  );
   async function act(action: CrewAction) {
     setBusy(true);
     setError("");
@@ -203,7 +228,7 @@ export function ReplacementForm({
             {formatDateTimeInZone(new Date(quote.start))} ·{" "}
             {formatCents(quote.clientPriceCents)} client price
           </p>
-          <CrewList crew={quote.reviewCrew} />
+          <CrewList crew={quote.reviewCrew} replacingLead />
           <p className="mt-3 text-sm font-semibold">
             {quote.type === "contractor_1099"
               ? `${formatCents(quote.payoutCents)} visit pay, requiring the contractor’s acceptance`
@@ -239,7 +264,34 @@ export function ReplacementForm({
           </div>
         </section>
       )}
-      {!data.canReplace && !saved && (
+      {history.length > 0 && (
+        <section className="visit-feature" aria-labelledby="replacement-history">
+          <h2 id="replacement-history" className="font-semibold text-navy">
+            Replacement history
+          </h2>
+          <p className="mt-2 text-sm text-ink-2">
+            Saved outcomes from the latest replacement reviews. An earlier
+            acceptance does not confirm a current assignment.
+          </p>
+          <ul className="mt-3 divide-y divide-line">
+            {history.map((receipt) => (
+              <li key={receipt.id} className="space-y-2 py-4 text-sm">
+                <h3 className="font-semibold text-navy">
+                  {receipt.cleanerName} · {receiptLabels[receipt.state]}
+                </h3>
+                <p>
+                  {receipt.type === "w2_core"
+                    ? `${formatCents(receipt.hourlyRateCents!)} hourly rate under existing payroll terms`
+                    : `${formatCents(receipt.payoutCents)} agreed visit pay`}
+                  . Appointment: {formatDateTimeInZone(new Date(receipt.start))}.
+                </p>
+                <p>{crewMessage(receipt)}</p>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {!data.canReplace && !saved && !currentReplacement && (
         <p className="visit-feature text-sm">
           The current visit does not have an unstarted crew with one
           client-declined lead. Review the latest visit and client decision.
