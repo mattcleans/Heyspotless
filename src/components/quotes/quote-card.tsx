@@ -81,7 +81,9 @@ export function QuoteSheet({ quote: q }: { quote: ClientQuote }) {
       <p className="mt-4 text-sm text-ink-2">
         {q.state === "booked"
           ? "Open the visit for its current time, cleaner and status."
-          : "Accepting this quote lets the office book the proposed appointment. The cleaner is confirmed separately."}{" "}
+          : ["expired", "stale", "withdrawn"].includes(q.state)
+            ? "Ask the office for a new quote to arrange this clean."
+            : "Accepting this quote lets the office book the proposed appointment. The cleaner is confirmed separately."}{" "}
         No payment is taken here. On appointment day, cancelling or moving to
         another date costs $60. Door turnaways also cost $60. Changing only the
         time that same day is free, as are earlier-day changes.
