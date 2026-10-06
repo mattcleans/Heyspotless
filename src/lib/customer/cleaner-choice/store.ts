@@ -141,10 +141,13 @@ export async function listChoiceReview(db: SupabaseClient) {
     db
       .from("visit_cleaner_requests")
       .select(
-        "id,job_id,cleaner_name,note,jobs(status,customers(first_name,last_name),properties(street,city))",
+        "id,job_id,cleaner_name,note,jobs(status,started_at,job_assignments(count),offers(count),customers(first_name,last_name),properties(street,city))",
       )
       .eq("status", "pending")
-      .order("version", { ascending: true })
+      .eq("jobs.offers.status", "sent")
+      .gt("jobs.offers.expires_at", new Date().toISOString())
+      .order("created_at", { ascending: true })
+      .order("id", { ascending: true })
       .limit(200),
     db
       .from("visit_backup_status")
@@ -180,11 +183,33 @@ export async function listChoiceReview(db: SupabaseClient) {
     if (!row || typeof row !== "object") throw fail();
     return row as Record<string, unknown>;
   };
+  const relationCount = (value: unknown): number => {
+    if (!Array.isArray(value) || value.length !== 1) throw fail();
+    const count = relation(value[0]).count;
+    if (typeof count !== "number" || !Number.isSafeInteger(count) || count < 0)
+      throw fail();
+    return count;
+  };
   return {
     requests: requests.data.map((r) => {
       const j = relation(r.jobs),
         c = relation(j.customers),
         p = relation(j.properties);
+      const startedAt = nullable(j.started_at),
+        assignments = relationCount(j.job_assignments),
+        offers = relationCount(j.offers);
+      if (startedAt !== null && !Number.isFinite(Date.parse(startedAt)))
+        throw fail();
+      const applyBlocker =
+        startedAt !== null
+          ? "This visit has started. Review it before changing the cleaner."
+          : !["unscheduled", "scheduled", "dispatching"].includes(text(j.status))
+            ? "This visit is closed to matching changes. Review the visit before applying a preference."
+            : assignments > 0
+              ? "A cleaner is already assigned. Resolve the assignment before applying this preference."
+              : offers > 0
+                ? "A cleaner has an active offer. Resolve the offer before changing matching."
+                : null;
       return {
         id: text(r.id),
         jobId: text(r.job_id),
@@ -192,9 +217,8 @@ export async function listChoiceReview(db: SupabaseClient) {
         note: text(r.note),
         customerName: `${text(c.first_name)} ${text(c.last_name)}`,
         address: `${text(p.street)}, ${text(p.city)}`,
-        canApply: ["unscheduled", "scheduled", "dispatching"].includes(
-          text(j.status),
-        ),
+        canApply: applyBlocker === null,
+        applyBlocker,
       };
     }),
     backups: backups.data.map((b) => ({

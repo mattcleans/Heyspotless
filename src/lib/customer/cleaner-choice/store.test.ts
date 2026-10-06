@@ -17,6 +17,7 @@ function db() {
       for (const method of [
         "select",
         "eq",
+        "gt",
         "is",
         "in",
         "order",
@@ -202,6 +203,15 @@ describe("scoped cleaner choices", () => {
   });
 });
 describe("office choice queue", () => {
+  function pending(job: Record<string, unknown> = {}) {
+    results.visit_cleaner_requests.data = [{
+      id: "request", job_id: "visit", cleaner_name: "Preferred", note: "Please keep my usual cleaner",
+      jobs: { status: "scheduled", started_at: null,
+        job_assignments: [{ count: 0 }], offers: [{ count: 0 }],
+        customers: { first_name: "Preview", last_name: "Client" },
+        properties: { street: "Sample", city: "Dallas" }, ...job },
+    }];
+  }
   beforeEach(() => {
     results.visit_cleaner_requests.data = [];
     results.visit_backup_status.data = [
@@ -257,5 +267,34 @@ describe("office choice queue", () => {
       results.visit_backup_status.data as Record<string, unknown>[]
     )[0]!.release_allowed = false;
     expect((await listChoiceReview(db())).backups[0]!.canRelease).toBe(false);
+  });
+  it("allows an unstarted, unassigned visit without an active offer", async () => {
+    pending();
+    expect((await listChoiceReview(db())).requests[0]).toMatchObject({canApply: true, applyBlocker: null});
+  });
+  it.each([
+    [{ started_at: "2026-10-06T14:00:00Z" }, "This visit has started. Review it before changing the cleaner."],
+    [{ status: "complete" }, "This visit is closed to matching changes. Review the visit before applying a preference."],
+    [{ job_assignments: [{ count: 2 }] }, "A cleaner is already assigned. Resolve the assignment before applying this preference."],
+    [{ offers: [{ count: 1 }] }, "A cleaner has an active offer. Resolve the offer before changing matching."],
+  ])("explains the saved matching blocker %j before Apply", async (job, applyBlocker) => {
+    pending(job);
+    expect((await listChoiceReview(db())).requests[0]).toMatchObject({canApply: false, applyBlocker});
+  });
+  it.each([
+    { job_assignments: null }, { job_assignments: [] },
+    { job_assignments: [{ count: "0" }] }, { offers: [{ count: -1 }] },
+    { offers: [{ count: 0 }, { count: 1 }] }, { started_at: undefined },
+    { started_at: "invalid" },
+  ])("does not enable Apply when blocker evidence is unreadable %j", async (job) => {
+    pending(job);
+    await expect(listChoiceReview(db())).rejects.toThrow();
+  });
+  it("reads only active, unexpired offer counts and orders by request age rather than insertion sequence", async () => {
+    pending();
+    await listChoiceReview(db());
+    expect(calls).toContainEqual({table:"visit_cleaner_requests",method:"eq",args:["jobs.offers.status","sent"]});
+    expect(calls).toContainEqual({table:"visit_cleaner_requests",method:"gt",args:["jobs.offers.expires_at",expect.any(String)]});
+    expect(calls.filter(c=>c.table==="visit_cleaner_requests"&&c.method==="order").map(c=>c.args[0])).toEqual(["created_at","id"]);
   });
 });

@@ -5,10 +5,12 @@ import { useRouter } from "next/navigation";
 export function ReviewChoiceForm({
   id,
   canApply,
+  applyBlocker,
   preview = false,
 }: {
   id: string;
   canApply: boolean;
+  applyBlocker: string | null;
   preview?: boolean;
 }) {
   const router = useRouter(),
@@ -18,7 +20,7 @@ export function ReviewChoiceForm({
     [needsSignIn, setNeedsSignIn] = useState(false),
     [message, setMessage] = useState<string | null>(null);
   async function save(apply: boolean) {
-    if (busy || saved || preview || !note.trim()) return;
+    if (busy || saved || needsSignIn || preview || (apply && !canApply) || !note.trim()) return;
     setBusy(true);
     setMessage(null);
     try {
@@ -80,10 +82,7 @@ export function ReviewChoiceForm({
         </button>
       </div>
       {!canApply && (
-        <p className="mt-2 text-sm text-ink-2">
-          Resolve the current assignment or closed visit before applying a
-          preference.
-        </p>
+        <p className="mt-2 text-sm text-ink-2">{applyBlocker}</p>
       )}
       {needsSignIn && (
         <Link

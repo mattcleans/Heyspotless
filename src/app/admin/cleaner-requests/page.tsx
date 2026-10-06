@@ -67,7 +67,11 @@ export default async function Page() {
                 >
                   Review visit
                 </Link>
-                <ReviewChoiceForm id={r.id} canApply={r.canApply} />
+                <ReviewChoiceForm
+                  id={r.id}
+                  canApply={r.canApply}
+                  applyBlocker={r.applyBlocker}
+                />
               </li>
             ))}
           </ul>
