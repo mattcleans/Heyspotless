@@ -110,11 +110,13 @@ export function CleanerChoiceForm({
           aria-labelledby="backup-heading"
         >
           <h2 id="backup-heading" className="font-semibold text-navy">
-            {backup.approved
-              ? "Your approved backup"
-              : backup.decisionId
-                ? "You asked for a different cleaner"
-                : "Review your backup cleaner"}
+            {conflict
+              ? "Last loaded backup"
+              : backup.approved
+                ? "Your approved backup"
+                : backup.decisionId
+                  ? "You asked for a different cleaner"
+                  : "Review your backup cleaner"}
           </h2>
           <p className="mt-2 text-sm">
             {backup.backupName} is assigned in place of {backup.preferredName}.
@@ -174,7 +176,9 @@ export function CleanerChoiceForm({
       )}
       {choice.assigned && !backup && (
         <section className="visit-feature mt-4">
-          <h2 className="font-semibold text-navy">Current assignment</h2>
+          <h2 className="font-semibold text-navy">
+            {conflict ? "Last loaded assignment" : "Current assignment"}
+          </h2>
           <p className="mt-2">{choice.assigned.name}</p>
           <p className="mt-2 text-sm text-ink-2">
             A preference request does not replace this assignment. The office
@@ -184,7 +188,9 @@ export function CleanerChoiceForm({
       )}
       {choice.request && (
         <section className="visit-feature mt-4">
-          <h2 className="font-semibold text-navy">Your latest request</h2>
+          <h2 className="font-semibold text-navy">
+            {conflict ? "Last loaded request" : "Your latest request"}
+          </h2>
           <p className="mt-2">{choice.request.cleanerName}</p>
           <p className="mt-2 text-sm text-ink-2">
             {choice.request.status === "pending"
