@@ -28,6 +28,13 @@ export const receipt = {
   city: "Dallas",
 };
 describe("crew replacement agreements and recovery", () => {
+  it("reads own offer terms without requiring or copying the client price", () => {
+    const { clientPriceCents: omitted, ...own } = receipt;
+    expect(omitted).toBe(24000);
+    expect(toCrewReceipt(own).payoutCents).toBe(8000);
+    expect(toCrewReceipt(receipt)).not.toHaveProperty("clientPriceCents");
+    expect(crewResponse(200, own, id).receipt?.payoutCents).toBe(8000);
+  });
   it("never carries caller pay, identity or crew fields into a write", () => {
     expect(
       parseCrewAction({
@@ -89,28 +96,30 @@ describe("crew replacement agreements and recovery", () => {
     expect(() =>
       toCrewQuote({ ...receipt, state: "review", reviewCrew: [] }),
     ).toThrow();
-    expect(
-      toCrewQuote({
-        ...receipt,
-        state: "review",
-        reviewCrew: [
-          {
-            id,
-            name: "Old lead",
-            isLead: true,
-            payoutCents: 8000,
-            type: "contractor_1099",
-          },
-          {
-            id: jobId,
-            name: "Retained",
-            isLead: false,
-            payoutCents: 5100,
-            type: "contractor_1099",
-          },
-        ],
-      }).reviewCrew,
-    ).toHaveLength(2);
+    const quote = toCrewQuote({
+      ...receipt,
+      state: "review",
+      reviewCrew: [
+        {
+          id,
+          name: "Old lead",
+          isLead: true,
+          payoutCents: 8000,
+          type: "contractor_1099",
+        },
+        {
+          id: jobId,
+          name: "Retained",
+          isLead: false,
+          payoutCents: 5100,
+          type: "contractor_1099",
+        },
+      ],
+    });
+    expect(quote.reviewCrew).toHaveLength(2);
+    expect(quote.clientPriceCents).toBe(24000);
+    for (const clientPriceCents of [undefined, null, -1, "24000"])
+      expect(() => toCrewQuote({ ...quote, clientPriceCents })).toThrow();
   });
   it.each([401, 403, 409, 500])(
     "does not accept a stale success payload on HTTP %i",

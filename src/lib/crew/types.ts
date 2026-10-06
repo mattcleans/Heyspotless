@@ -18,7 +18,6 @@ export interface CrewReceipt {
   hourlyRateCents: number | null;
   start: string;
   minutes: number;
-  clientPriceCents: number;
   expiresAt: string;
   state: (typeof CREW_STATES)[number];
   assignmentId: string | null;
@@ -96,7 +95,6 @@ export function toCrewReceipt(v: unknown): CrewReceipt {
       r.hourlyRateCents === null ? null : cents(r.hourlyRateCents),
     start: instant(r.start),
     minutes: cents(r.minutes),
-    clientPriceCents: cents(r.clientPriceCents),
     expiresAt: instant(r.expiresAt),
     state: state as CrewReceipt["state"],
     assignmentId: r.assignmentId === null ? null : id(r.assignmentId),
@@ -150,7 +148,7 @@ export function toCrewQuote(v: unknown) {
     new Set(reviewCrew.map((c) => c.id)).size !== reviewCrew.length
   )
     throw failure();
-  return { ...receipt, reviewCrew };
+  return { ...receipt, clientPriceCents: cents(r.clientPriceCents), reviewCrew };
 }
 export function crewMessage(r: CrewReceipt): string {
   switch (r.state) {

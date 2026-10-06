@@ -45,6 +45,31 @@ beforeEach(() => {
   m.rpc.mockResolvedValue({ data: saved, error: null });
 });
 describe("own contractor replacement answer", () => {
+  it("returns only own terms even when an older RPC includes office fields", async () => {
+    m.rpc.mockResolvedValue({
+      data: {
+        ...saved,
+        reviewCrew: [{ payoutCents: 5100 }],
+        accessNotes: "PRIVATE",
+      },
+      error: null,
+    });
+    const response = await post();
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.payoutCents).toBe(8000);
+    expect(body).not.toHaveProperty("clientPriceCents");
+    expect(body).not.toHaveProperty("reviewCrew");
+    expect(body).not.toHaveProperty("accessNotes");
+  });
+  it("accepts the narrowed RPC receipt without a client price", async () => {
+    const { clientPriceCents: omitted, ...own } = saved;
+    expect(omitted).toBe(24000);
+    m.rpc.mockResolvedValue({ data: own, error: null });
+    const response = await post();
+    expect(response.status).toBe(200);
+    expect((await response.json()).payoutCents).toBe(8000);
+  });
   it.each([
     [null, 401],
     ["admin", 403],

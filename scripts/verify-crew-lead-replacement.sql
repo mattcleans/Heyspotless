@@ -31,12 +31,16 @@ select set_config('request.jwt.claim.sub','c7100000-0000-0000-0000-000000000001'
 set local role authenticated;
 do $$ declare review jsonb; begin
  review:=read_crew_lead_review('c7500000-0000-0000-0000-000000000001');
+ if review->>'clientPriceCents' is distinct from '24000' then raise exception 'Office lost saved client price';end if;
  if review->>'canReplace'<>'true' or jsonb_array_length(review->'crew')<>2 then raise exception 'Crew review missing';end if;
  if exists(select 1 from jsonb_array_elements(review->'candidates')c where c->>'id' in ('c7400000-0000-0000-0000-000000000002','c7400000-0000-0000-0000-000000000003','c7400000-0000-0000-0000-000000000006')) then raise exception 'Current crew or low-rated candidate listed';end if;
  begin perform quote_crew_lead_replacement('c7500000-0000-0000-0000-000000000001','c7400000-0000-0000-0000-000000000003');raise exception 'Assistant promoted out of accepted agreement';exception when check_violation then null;end;
 end $$;
 update crew_test_saved set quote=quote_crew_lead_replacement('c7500000-0000-0000-0000-000000000001','c7400000-0000-0000-0000-000000000004') where n=1;
-select confirm_crew_lead_replacement((select (quote->>'id')::uuid from crew_test_saved where n=1));
+do $$ begin
+ if (select quote->>'clientPriceCents' from crew_test_saved where n=1) is distinct from '24000' then raise exception 'Office quote lost client price';end if;
+ if confirm_crew_lead_replacement((select (quote->>'id')::uuid from crew_test_saved where n=1))->>'clientPriceCents' is distinct from '24000' then raise exception 'Office confirmation lost client price';end if;
+end $$;
 select confirm_crew_lead_replacement((select (quote->>'id')::uuid from crew_test_saved where n=1));
 reset role;
 do $$ begin
@@ -54,10 +58,12 @@ select set_config('request.jwt.claim.sub','c7100000-0000-0000-0000-000000000007'
 set local role authenticated;
 do $$ declare r jsonb;begin
  r:=read_my_crew_lead_offers();
+ if exists(select 1 from jsonb_array_elements(r)o where o ? 'clientPriceCents') then raise exception 'Cleaner offer exposed client price';end if;
  if jsonb_array_length(r)<>1 or r::text like '%PRIVATE-%' or r::text like '%5100%' or r::text like '%reviewCrew%' then raise exception 'Offer leaked another agreement or home/client notes';end if;
  if exists(select 1 from jobs where id='c7500000-0000-0000-0000-000000000001') or exists(select 1 from properties where id='c7300000-0000-0000-0000-000000000001') then raise exception 'Unassigned candidate read private home';end if;
  begin perform read_crew_lead_review('c7500000-0000-0000-0000-000000000001');raise exception 'Cleaner read management crew pay';exception when insufficient_privilege then null;end;
  r:=respond_my_crew_lead_offer((select (quote->>'id')::uuid from crew_test_saved where n=1),true);
+ if r ? 'clientPriceCents' or r->>'payoutCents' is distinct from '8000' then raise exception 'Cleaner acceptance leaked price or lost own terms';end if;
  if r->>'state'<>'accepted' or (r->>'payoutCents')::integer<>8000 or r->>'needsClientApproval'<>'true' then raise exception 'Wrong replacement agreement';end if;
  if r is distinct from respond_my_crew_lead_offer((r->>'id')::uuid,true) then raise exception 'Acceptance retry changed receipt';end if;
  begin perform respond_my_crew_lead_offer((r->>'id')::uuid,false);raise exception 'Saved accept flipped to decline';exception when sqlstate 'PT409' then null;end;
@@ -162,6 +168,7 @@ select set_config('request.jwt.claim.sub','c7100000-0000-0000-0000-000000000008'
 set local role authenticated;
 do $$ declare r jsonb;begin
  r:=read_my_crew_lead_offers()->0;
+ if r ? 'clientPriceCents' or r->>'hourlyRateCents' is distinct from '2175' then raise exception 'Employee receipt leaked price or lost own terms';end if;
  if r->>'state'<>'accepted' or r->>'assignmentCurrent'<>'false' then raise exception 'Old employee acceptance falsely confirmed current assignment';end if;
 end $$;
 reset role;
