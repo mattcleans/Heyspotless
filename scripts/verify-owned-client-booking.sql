@@ -36,7 +36,7 @@ do $$ declare q jsonb;begin
   perform review_my_booking('c9400000-0000-0000-0000-000000000001','c9300000-0000-0000-0000-000000000001','standard','one_time',date_trunc('day',now()+interval '30 days')+interval '15 hours',false,'[]','Different request');
   raise exception 'Changed body reused immutable review';
  exception when sqlstate 'PT409' then null;end;
- update booking_test_saved set q=confirm_my_booking((q->>'id')::uuid) where n in (1,2);
+ update booking_test_saved s set q=confirm_my_booking((s.q->>'id')::uuid) where s.n in (1,2);
  for q in select s.q from booking_test_saved s where n in (1,2) loop
   if q->>'state'<>'requested' or q->>'jobId' is null then raise exception 'Missing saved request identity';end if;
   if confirm_my_booking((q->>'id')::uuid)<>q then raise exception 'Confirmation retry changed result';end if;
