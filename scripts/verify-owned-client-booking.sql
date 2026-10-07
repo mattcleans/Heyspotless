@@ -62,26 +62,34 @@ do $$ declare q jsonb;begin
  begin perform confirm_my_booking((q->>'id')::uuid);raise exception 'Overlapping home request succeeded';exception when sqlstate 'PBO01' then null;end;
 end $$;
 reset role;
+select set_config('request.jwt.claim.sub','c9100000-0000-0000-0000-000000000004',true);
 update properties set bedrooms=3 where id='c9300000-0000-0000-0000-000000000001';
+select set_config('request.jwt.claim.sub','c9100000-0000-0000-0000-000000000001',true);
 set local role authenticated;
 do $$ begin
  begin perform confirm_my_booking('c9400000-0000-0000-0000-000000000003');raise exception 'Changed home was booked';exception when sqlstate 'PT409' then null;end;
  if not exists(select 1 from jsonb_array_elements(read_my_booking_reviews()) r where r->>'id'='c9400000-0000-0000-0000-000000000003' and r->>'state'='stale') then raise exception 'Stale home review not explained';end if;
 end $$;
 reset role;
+select set_config('request.jwt.claim.sub','c9100000-0000-0000-0000-000000000004',true);
 update properties set bedrooms=2 where id='c9300000-0000-0000-0000-000000000001';
 update spotless_private.client_booking_reviews set expires_at=clock_timestamp()-interval '1 second' where id='c9400000-0000-0000-0000-000000000004';
+select set_config('request.jwt.claim.sub','c9100000-0000-0000-0000-000000000001',true);
 set local role authenticated;
 do $$ begin
  begin perform confirm_my_booking('c9400000-0000-0000-0000-000000000004');raise exception 'Expired review was booked';exception when sqlstate 'PT409' then null;end;
 end $$;
 reset role;
 -- Canceled or removed results are recovered, never recreated by a retry.
+select set_config('request.jwt.claim.sub','c9100000-0000-0000-0000-000000000004',true);
 update jobs set status='canceled' where id=(select (q->>'jobId')::uuid from booking_test_saved where n=1);
+select set_config('request.jwt.claim.sub','c9100000-0000-0000-0000-000000000001',true);
 set local role authenticated;
 do $$ begin if confirm_my_booking('c9400000-0000-0000-0000-000000000001')->>'state'<>'canceled' then raise exception 'Canceled outcome was recreated';end if;end $$;
 reset role;
+select set_config('request.jwt.claim.sub','c9100000-0000-0000-0000-000000000004',true);
 delete from jobs where id=(select (q->>'jobId')::uuid from booking_test_saved where n=1);
+select set_config('request.jwt.claim.sub','c9100000-0000-0000-0000-000000000001',true);
 set local role authenticated;
 do $$ begin if confirm_my_booking('c9400000-0000-0000-0000-000000000001')->>'state'<>'unavailable' then raise exception 'Deleted outcome was recreated';end if;end $$;
 reset role;
