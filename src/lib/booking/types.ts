@@ -48,6 +48,7 @@ export function parseBookingAction(v: unknown): BookingAction {
     throw new Error("Check booking details");
   const date = zonedTimeToUtc(text(r.start));
   if (!date.ok) throw new Error("Choose a valid Dallas time");
+  if (r.repeats !== (r.frequency !== "one_time")) throw new Error("Choose a repeating schedule for the recurring rate");
   const seen = new Set<string>();
   const extras = r.extras.map(value => {
     const e = object(value), itemKey = text(e.itemKey);

@@ -21,6 +21,10 @@ do $$ declare q jsonb;begin
  if q->>'state'<>'review' or (q->>'totalCents')::integer<>24900 or (q->>'estimatedMinutes')::integer<>168
  or q->>'jobId' is not null or q->>'planId' is not null or q::text like '%PRIVATE-%' then raise exception 'Wrong owned price review or private data leak';end if;
  if (select (s.q->>'totalCents')::integer from booking_test_saved s where n=2)<>22000 then raise exception 'Recurring rate discounted the oven extra';end if;
+ begin
+  perform review_my_booking(gen_random_uuid(),'c9300000-0000-0000-0000-000000000001','standard','weekly',date_trunc('day',now()+interval '90 days'),false,'[]','');
+  raise exception 'Single visit obtained a recurring rate';
+ exception when sqlstate '22023' then null;end;
  if has_function_privilege('anon','public.review_my_booking(uuid,uuid,service_type,frequency,timestamptz,boolean,jsonb,text)','execute')
  or has_function_privilege('anon','public.confirm_my_booking(uuid)','execute')
  or has_function_privilege('authenticated','spotless_private.price_saved_home(uuid,service_type,frequency,jsonb)','execute') then raise exception 'Unexpected booking privilege';end if;

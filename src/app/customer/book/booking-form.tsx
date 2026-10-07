@@ -30,12 +30,13 @@ export function BookingForm({ homes, initialService = "standard", reviews, demo 
 }) {
   const router = useRouter(), heading = useRef<HTMLHeadingElement>(null);
   const [propertyId, setHome] = useState(homes[0]?.id ?? ""), [service, setService] = useState<ServiceType>(initialService),
-    [frequency, setFrequency] = useState<Frequency>("one_time"), [repeats, setRepeats] = useState(false),
+    [frequency, setFrequency] = useState<Frequency>("one_time"),
     [start, setStart] = useState(""), [extras, setExtras] = useState<Record<string, number>>({}), [note, setNote] = useState(""),
     [review, setReview] = useState<BookingReview | null>(null), [pending, setPending] = useState<BookingAction | null>(null),
     [busy, setBusy] = useState(false), [error, setError] = useState(""), [signIn, setSignIn] = useState(false),
     [needsReview, setNeedsReview] = useState(false);
   const home = homes.find(h => h.id === propertyId);
+  const repeats = frequency !== "one_time";
   const choicesLocked = busy || !!pending || !!review || signIn;
   useEffect(() => { if (review) heading.current?.focus(); }, [review]);
   let estimate = null;
@@ -62,7 +63,7 @@ export function BookingForm({ homes, initialService = "standard", reviews, demo 
     if (review) {
       const owned = homes.some(h => h.id === review.propertyId);
       setHome(owned ? review.propertyId : homes[0]?.id ?? ""); setService(review.service);
-      setFrequency(review.frequency); setRepeats(review.repeats);
+      setFrequency(review.repeats ? review.frequency : "one_time");
       setStart(["requested", "canceled", "unavailable"].includes(review.state) || Date.parse(review.requestedStart) <= Date.now()
         ? "" : toLocalInputValue(new Date(review.requestedStart)));
       setExtras(Object.fromEntries(review.lines.filter(l => l.isExtra).map(l => [l.itemKey, l.quantity]))); setNote(review.note);
@@ -89,7 +90,7 @@ export function BookingForm({ homes, initialService = "standard", reviews, demo 
           <div><dt className="font-semibold">Review valid until</dt><dd>{time(review.expiresAt)}</dd></div></dl>
         <p className="mt-4 text-sm text-ink-2">We’ll match a Cleaner for your requested appointment. Check the visit for confirmation and approve any backup before work starts. No payment is taken here.</p>
         <p className="mt-3 text-sm text-ink-2">On appointment day, canceling or moving to another date costs $60. Door turnaways also cost $60. Changing only the time that same day is free, as are earlier-day changes.</p>
-        {review.state !== "review" && <p role="status" className="mt-4 text-sm">{review.state === "expired" ? "This price review expired." : "Your saved home changed."} Review your choices again before requesting the clean.</p>}
+        {review.state !== "review" && <p role="status" className="mt-4 text-sm">{review.state === "expired" ? "This price review expired." : "Your saved home or repeating choice needs a new review."} Review your choices again before requesting the clean.</p>}
         <button disabled={busy || !!pending || signIn || needsReview || demo || review.state !== "review"} className="primary-action mt-5 w-full" onClick={() => void save({ action: "confirm", id: review.id })}>{busy ? "Saving…" : review.repeats ? "Request recurring cleans" : "Request this clean"}</button>
         <button disabled={busy || !!pending || signIn} className="secondary-action mt-3 w-full" onClick={edit}>Edit and review again</button>
         {needsReview && <a href="" className="secondary-action mt-3 inline-flex">Refresh saved home details</a>}
@@ -99,9 +100,9 @@ export function BookingForm({ homes, initialService = "standard", reviews, demo 
         <fieldset disabled={choicesLocked || demo} className="space-y-5">
           <label className="block text-sm font-medium">Your saved home<select className={field} value={propertyId} onChange={e => setHome(e.target.value)}>{homes.map(h => <option key={h.id} value={h.id}>{h.street}, {h.city}</option>)}</select></label>
           {home && <p className="text-sm text-ink-2">{home.rooms.bedrooms} bedrooms, {home.rooms.bathrooms} full baths, {home.rooms.halfBaths ?? 0} half baths, {home.rooms.kitchens ?? 1} kitchens, {home.rooms.livingRooms ?? 1} living rooms and {home.rooms.utilityRooms ?? 1} utility rooms. <Link href="/customer/account/homes" className="underline">Review home instructions</Link>.</p>}
-          <label className="block text-sm font-medium">Service<select className={field} value={service} onChange={e => { setService(e.target.value as ServiceType); setFrequency("one_time"); setRepeats(false); }}>{SERVICE_TYPES.map(s => <option key={s} value={s}>{SERVICE_LABELS[s]}</option>)}</select></label>
-          <label className="block text-sm font-medium">Visit rate<select className={field} value={frequency} onChange={e => { setFrequency(e.target.value as Frequency); if (e.target.value === "one_time") setRepeats(false); }}>{frequenciesForService(service).map(f => <option key={f} value={f}>{FREQUENCY_LABELS[f]}</option>)}</select></label>
-          <label className="flex min-h-11 items-start gap-3 text-sm"><input type="checkbox" className="mt-1" checked={repeats} disabled={frequency === "one_time" || choicesLocked || demo} onChange={e => setRepeats(e.target.checked)} /><span>Repeat this clean<span className="mt-1 block text-ink-2">{repeats ? "Creates an additional recurring schedule starting with the appointment below. Review the pattern before confirming." : "One visit only. Choosing a rate does not enroll you in a recurring schedule."}</span></span></label>
+          <label className="block text-sm font-medium">Service<select className={field} value={service} onChange={e => { setService(e.target.value as ServiceType); setFrequency("one_time"); }}>{SERVICE_TYPES.map(s => <option key={s} value={s}>{SERVICE_LABELS[s]}</option>)}</select></label>
+          <label className="block text-sm font-medium">How often<select className={field} value={frequency} onChange={e => setFrequency(e.target.value as Frequency)}>{frequenciesForService(service).map(f => <option key={f} value={f}>{f === "one_time" ? "Just this clean" : FREQUENCY_LABELS[f]}</option>)}</select></label>
+          <p className="text-sm text-ink-2">{repeats ? "This requests an additional recurring schedule. Review its exact pattern and price before confirming." : "One visit only. No recurring schedule is created."}</p>
           <label className="block text-sm font-medium">Preferred appointment · Dallas time<input type="datetime-local" required className={field} value={start} onChange={e => setStart(e.target.value)} /></label>
           <fieldset className="divide-y divide-line"><legend className="mb-2 text-sm font-semibold">Extras</legend>{EXTRAS.map(extra => <label key={extra.itemKey} className="flex items-center justify-between gap-3 py-3 text-sm"><span className="min-w-0">{extra.name}<span className="block text-ink-2">{formatCents(extra.priceCents)} {extra.unitLabel}</span></span><input aria-label={`${extra.name} quantity`} type="number" min={0} max={20} step={1} className="min-h-11 w-20 shrink-0 rounded-lg border border-line px-3 py-2 text-base" value={extras[extra.itemKey] ?? 0} onChange={e => setExtras(old => ({ ...old, [extra.itemKey]: Number(e.target.value) }))} /></label>)}</fieldset>
           <label className="block text-sm font-medium">Notes for this clean<textarea maxLength={1500} rows={3} className={field} value={note} onChange={e => setNote(e.target.value)} /></label>

@@ -18,14 +18,14 @@ describe("Client booking endpoint", () => {
   it("confirms only the immutable review identity", async () => { expect((await post()).status).toBe(200); expect(m.rpc).toHaveBeenCalledWith("confirm_my_booking", { p_id: id }); });
   it("reviews saved-home choices without accepting client totals or contact fields", async () => {
     m.rpc.mockResolvedValue({ data: bookingFixture, error: null });
-    expect((await post({ action: "review", id, propertyId: id, service: "standard", frequency: "biweekly", repeats: false,
+    expect((await post({ action: "review", id, propertyId: id, service: "standard", frequency: "one_time", repeats: false,
       start: "2028-01-07T11:00", extras: [], note: "Saved choices" })).status).toBe(200);
-    expect(m.rpc).toHaveBeenCalledWith("review_my_booking", { p_id: id, p_property_id: id, p_service: "standard", p_freq: "biweekly",
+    expect(m.rpc).toHaveBeenCalledWith("review_my_booking", { p_id: id, p_property_id: id, p_service: "standard", p_freq: "one_time",
       p_start: "2028-01-07T17:00:00.000Z", p_repeats: false, p_extras: [], p_note: "Saved choices" });
   });
   it("refuses a returned review that changes the requested appointment", async () => {
     m.rpc.mockResolvedValue({ data: { ...bookingFixture, requestedStart: "2028-01-08T17:00:00Z" }, error: null });
-    expect((await post({ action: "review", id, propertyId: id, service: "standard", frequency: "biweekly", repeats: false,
+    expect((await post({ action: "review", id, propertyId: id, service: "standard", frequency: "one_time", repeats: false,
       start: "2028-01-07T11:00", extras: [], note: "Saved choices" })).status).toBe(503);
   });
   it("does not forward price, ownership or assignment overrides", async () => { expect((await post({ action: "confirm", id, customerId: id, totalCents: 1 })).status).toBe(400); expect(m.rpc).not.toHaveBeenCalled(); });

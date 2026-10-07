@@ -2,18 +2,18 @@ import { describe, expect, it } from "vitest";
 import { bookingReviewMatches, parseBookingAction, toBookingReview } from "./types";
 import { bookingFixture } from "./test-fixtures";
 const id = "c9100000-0000-0000-0000-000000000001";
-const input = { action: "review", id, propertyId: id, service: "standard", frequency: "biweekly", start: "2028-01-07T11:00", repeats: false, extras: [{ itemKey: "oven", quantity: 1 }], note: "Saved choices" };
+const input = { action: "review", id, propertyId: id, service: "standard", frequency: "one_time", start: "2028-01-07T11:00", repeats: false, extras: [{ itemKey: "oven", quantity: 1 }], note: "Saved choices" };
 describe("owned Client booking contract", () => {
-  it("keeps a discounted visit separate from explicit repeating enrollment and resolves Dallas time", () => {
+  it("requires the one-time rate for a single visit and resolves Dallas time", () => {
     const r = parseBookingAction(input);
-    expect(r).toMatchObject({ action: "review", repeats: false, start: "2028-01-07T17:00:00.000Z", frequency: "biweekly" });
+    expect(r).toMatchObject({ action: "review", repeats: false, start: "2028-01-07T17:00:00.000Z", frequency: "one_time" });
   });
   it.each(["totalCents", "customerId", "rooms", "payoutCents", "cleanerId", "actor"]) ("refuses caller-controlled %s", field => {
     expect(() => parseBookingAction({ ...input, [field]: 1 })).toThrow();
     expect(() => parseBookingAction({ action: "confirm", id, [field]: 1 })).toThrow();
   });
   it.each([
-    { service: "deep", frequency: "weekly" }, { frequency: "one_time", repeats: true },
+    { service: "deep", frequency: "weekly" }, { frequency: "one_time", repeats: true }, { frequency: "weekly", repeats: false },
     { start: "2028-03-12T02:30" }, { propertyId: "other" }, { repeats: "yes" },
     { extras: [{ itemKey: "oven", quantity: 0 }] }, { extras: [{ itemKey: "oven", quantity: 1.5 }] },
     { extras: [{ itemKey: "oven", quantity: 21 }] }, { extras: [{ itemKey: "oven", quantity: 1 }, { itemKey: "oven", quantity: 1 }] },
