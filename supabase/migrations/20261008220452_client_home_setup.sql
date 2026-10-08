@@ -41,7 +41,7 @@ begin
   end if;
   foreach k in array array['street','city','state','zip'] loop
     if jsonb_typeof(p_home->k)<>'string' or btrim(p_home->>k)=''
-      or char_length(btrim(p_home->>k)) > case k when 'street' then 200 when 'city' then 100 when 'state' then 2 else 5 end
+      or char_length(btrim(p_home->>k)) > (case k when 'street' then 200 when 'city' then 100 when 'state' then 2 else 5 end)
       or (p_home->>k) ~ '[[:cntrl:]]' then
       raise exception 'invalid address' using errcode='22023';
     end if;
@@ -65,7 +65,7 @@ begin
     end if;
     foreach k in array array['firstName','lastName','phone'] loop
       if jsonb_typeof(p_contact->k)<>'string' or btrim(p_contact->>k)=''
-        or char_length(btrim(p_contact->>k))>case when k='phone' then 32 else 80 end
+        or char_length(btrim(p_contact->>k))>(case when k='phone' then 32 else 80 end)
         or (p_contact->>k) ~ '[[:cntrl:]]' then raise exception 'invalid contact' using errcode='22023'; end if;
     end loop;
     v_phone:=btrim(p_contact->>'phone');
