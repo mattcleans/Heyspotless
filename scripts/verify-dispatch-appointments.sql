@@ -23,9 +23,12 @@ begin
  o:=public.record_offer_for_schedule('db150000-0000-4000-8000-000000000004','db140000-0000-4000-8000-000000000001',null,'open_board',1,.4,8000,30,clock_timestamp()+interval '8 hours',false,1);
  if o is null or (select expires_at from public.offers where id=o) is distinct from (select scheduled_start from public.jobs where id='db150000-0000-4000-8000-000000000004') then raise exception 'Offer deadline outlived appointment';end if;
  if public.respond_to_offer_with_capacity(o,'db140000-0000-4000-8000-000000000001',true)<>'accepted' then raise exception 'Future offer was not accepted';end if;
- -- An accepted retry retains the original recorded agreement even after time passes.
+ -- Accepted history keeps its recorded agreement and established already-answered response.
  update public.jobs set scheduled_start=clock_timestamp()-interval '1 day' where id='db150000-0000-4000-8000-000000000004';
- if public.respond_to_offer_with_capacity(o,'db140000-0000-4000-8000-000000000001',true)<>'accepted' then raise exception 'Accepted history was relabeled expired';end if;
+ if public.respond_to_offer_with_capacity(o,'db140000-0000-4000-8000-000000000001',true)<>'superseded'
+ or (select status from public.offers where id=o)<>'accepted'
+ or (select count(*) from public.job_assignments where job_id='db150000-0000-4000-8000-000000000004')<>1
+ or (select payout_cents from public.job_assignments where job_id='db150000-0000-4000-8000-000000000004')<>8000 then raise exception 'Accepted history or retry outcome changed';end if;
  -- A legacy live countdown must not claim an appointment after it passes.
  update public.jobs set scheduled_start=clock_timestamp()+interval '500 milliseconds' where id='db150000-0000-4000-8000-000000000006';
  o:=public.record_offer('db150000-0000-4000-8000-000000000006','db140000-0000-4000-8000-000000000001',null,'open_board',1,.4,8000,30,clock_timestamp()+interval '5 minutes',false);

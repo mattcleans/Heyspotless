@@ -299,6 +299,6 @@ describe("appointment readiness before matching", () => {
     expect(entries.find(x => x.job.id === "missing")?.decision.kind).toBe("needs_scheduling");
     expect(entries.find(x => x.job.id === "future")?.decision.kind).toBe("assign_guaranteed");
     expect(residualGuaranteedHours(entries, ctx).get("shonda")).toBe(.5);
-    expect(roster[0].hoursScheduledThisWeek).toBe(39);
+    expect(roster[0]?.hoursScheduledThisWeek).toBe(39);
   });
 });
