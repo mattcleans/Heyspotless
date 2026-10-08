@@ -62,7 +62,7 @@ end $$;
 -- Office reads original terms on the first and generated visits without repricing.
 select set_config('request.jwt.claim.sub','c9100000-0000-0000-0000-000000000004',true);
 set local role authenticated;
-do $ declare q jsonb;v_job uuid;begin
+do $$ declare q jsonb;v_job uuid;begin
  for q in select s.q from booking_test_saved s where n in (1,2) loop
   if read_office_booking_for_visit((q->>'jobId')::uuid) is distinct from q then raise exception 'Office original terms changed';end if;
  end loop;
@@ -72,9 +72,9 @@ do $ declare q jsonb;v_job uuid;begin
  if read_office_booking_for_visit(v_job) is distinct from q then raise exception 'Generated visit lost original terms';end if;
  if read_office_booking_for_visit('c9500000-0000-0000-0000-000000000099') is not null then raise exception 'Missing visit fabricated original terms';end if;
  if has_function_privilege('anon','public.read_office_booking_for_visit(uuid)','execute') then raise exception 'Anonymous Office read enabled';end if;
-end $;
+end $$;
 reset role;
-do $ declare actor uuid;begin
+do $$ declare actor uuid;begin
  for actor in select ('c9100000-0000-0000-0000-'||lpad(n::text,12,'0'))::uuid from generate_series(1,3)n loop
   perform set_config('request.jwt.claim.sub',actor::text,true);
   set local role authenticated;
@@ -82,7 +82,7 @@ do $ declare actor uuid;begin
    raise exception 'Non-Office actor read original terms';exception when insufficient_privilege then null;end;
   reset role;
  end loop;
-end $;
+end $$;
 select set_config('request.jwt.claim.sub','c9100000-0000-0000-0000-000000000001',true);
 -- A second review for an already requested time cannot create a duplicate visit.
 set local role authenticated;
@@ -146,6 +146,6 @@ end $$;
 reset role;
 select set_config('request.jwt.claim.sub','',true);
 set local role authenticated;
-do $ begin begin perform read_my_booking_reviews();raise exception 'Unsigned access succeeded';exception when insufficient_privilege then null;end;
- begin perform read_office_booking_for_visit('c9500000-0000-0000-0000-000000000099');raise exception 'Unsigned Office read succeeded';exception when insufficient_privilege then null;end;end $;
+do $$ begin begin perform read_my_booking_reviews();raise exception 'Unsigned access succeeded';exception when insufficient_privilege then null;end;
+ begin perform read_office_booking_for_visit('c9500000-0000-0000-0000-000000000099');raise exception 'Unsigned Office read succeeded';exception when insufficient_privilege then null;end;end $$;
 rollback;
