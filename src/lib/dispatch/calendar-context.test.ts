@@ -1,3 +1,4 @@
+import { matchingWeek } from "./week";
 import { describe, expect, it, vi } from "vitest";
 import { createClient } from "@supabase/supabase-js";
 import { busyWindowsFor } from "./store";
@@ -16,11 +17,18 @@ const records = [
   { id: "da000000-0000-4000-8000-000000000003", cleaner_id: "finished-window",
     jobs: { scheduled_start: "2026-10-07T14:00:00Z", scheduled_end: "2026-10-07T15:00:00Z", estimated_clean_minutes: 30, status: "assigned" } },
 ];
-function api(failAssignments = false) {
+function api(failAssignments = false, failHours = false) {
   const urls: URL[] = [];
   const fetcher = vi.fn(async (input: RequestInfo | URL) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
     urls.push(url);
+    if (url.pathname.endsWith("/cleaner_week_load_by_week")) {
+      if (failHours) return new Response(JSON.stringify({ code: "42501", message: "Denied" }), { status: 403 });
+      const offset = Number(url.searchParams.get("offset") ?? "0");
+      const loads = [{ cleaner_id: "busy", week_start: "2026-10-05", scheduled_clean_hours: "12.5" },
+        { cleaner_id: "next-week", week_start: "2026-10-12", scheduled_clean_hours: "40" }];
+      return new Response(JSON.stringify(loads.slice(offset, offset + 1)), { status: 200, headers: { "Content-Type": "application/json" } });
+    }
     if (url.pathname.endsWith("/job_assignments")) {
       if (failAssignments) return new Response(JSON.stringify({ code: "42501", message: "Denied" }), { status: 403 });
       const cursor = url.searchParams.get("id")?.replace(/^gt\./, "");
@@ -48,9 +56,24 @@ describe("saved matching calendar via the actual Supabase query builder", () => 
     expect(urls[0]?.searchParams.get("jobs.or")).toContain("scheduled_start.lte.");
     expect(urls[0]?.searchParams.has("jobs.scheduled_start")).toBe(false);
   });
+  it("pages actual saved weekly aggregates and keeps future hours separate", async () => {
+    const { db, urls } = api();
+    const next = { ...job, scheduledStart: new Date("2026-10-12T16:00:00Z") };
+    const ctx = await matchingCalendarInputs(db, [job, next], now);
+    expect(ctx.scheduledHoursFor?.(contractor({ id: "busy" }), matchingWeek(now))).toBe(12.5);
+    expect(ctx.scheduledHoursFor?.(contractor({ id: "next-week" }), matchingWeek(now))).toBe(0);
+    expect(ctx.scheduledHoursFor?.(contractor({ id: "next-week" }), matchingWeek(next.scheduledStart))).toBe(40);
+    const weekly = urls.filter(u => u.pathname.endsWith("/cleaner_week_load_by_week"));
+    expect(weekly).toHaveLength(3);
+    expect(weekly[0]?.searchParams.get("week_start")).toBe("in.(2026-10-05,2026-10-12)");
+  });
+  it("does not guess empty hours when a weekly aggregate read is denied", async () => {
+    const { db } = api(false, true);
+    await expect(matchingCalendarInputs(db, [job], now)).rejects.toThrow("Matching weekly load unavailable");
+  });
   it("honors saved bookings, declared off-days and unknown declarations separately", async () => {
     const { db } = api();
-    const ctx = await matchingCalendarInputs(db, [job], now);
+    const ctx = await matchingCalendarInputs(db, [job, { ...job, scheduledStart: new Date("2026-10-12T16:00:00Z") }], now);
     expect(checkEligibility(contractor({ id: "busy" }), job, ctx.eligibilityFor?.(contractor({ id: "busy" }), job)).reasons).toContain("already_booked");
     expect(checkEligibility(contractor({ id: "off-day" }), job, ctx.eligibilityFor?.(contractor({ id: "off-day" }), job)).reasons).toContain("outside_working_hours");
     expect(checkEligibility(contractor({ id: "needs-review" }), job, ctx.eligibilityFor?.(contractor({ id: "needs-review" }), job)).reasons).toContain("assignment_time_unavailable");

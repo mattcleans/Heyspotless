@@ -3213,3 +3213,6 @@ as_super $PSQL -d "$DB" -f scripts/verify-dispatch-appointments.sql
 
 # Cancellation/collection ordering and explicit fee checkout.
 as_super bash scripts/verify-cancellation-collection-races.sh "$DB"
+
+# Dallas weeks, completed/canceled loads and invoker role isolation.
+as_super $PSQL -d "$DB" -f scripts/verify-dallas-weekly-matching.sql

@@ -1,3 +1,4 @@
+import { toCalendarDate, type CalendarDate } from "../time/zone";
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -484,4 +485,29 @@ function currentOfferRevision(row: Record<string, unknown>) {
     typeof row.schedule_revision === "number" &&
     row.schedule_revision === (job as Record<string, unknown>).schedule_revision
   );
+}
+
+/** Complete paged aggregates from the caller-scoped Dallas weekly view. */
+export async function scheduledHoursByWeek(db: SupabaseClient, weeks: readonly CalendarDate[]) {
+  const hours = new Map<CalendarDate, Map<string, number>>();
+  if (weeks.length === 0) return hours;
+  let offset = 0;
+  for (;;) {
+    const { data, error } = await db.from("cleaner_week_load_by_week")
+      .select("cleaner_id,week_start,scheduled_clean_hours").in("week_start", [...weeks])
+      .order("week_start").order("cleaner_id").range(offset, offset + 199);
+    if (error || !Array.isArray(data)) throw new Error("Matching weekly load unavailable");
+    if (data.length === 0) break;
+    for (const row of data as Record<string, unknown>[]) {
+      const week = toCalendarDate(row.week_start), id = row.cleaner_id;
+      const value = typeof row.scheduled_clean_hours === "number" || typeof row.scheduled_clean_hours === "string"
+        ? Number(row.scheduled_clean_hours) : NaN;
+      if (!week || !weeks.includes(week) || typeof id !== "string" || !Number.isFinite(value) || value < 0)
+        throw new Error("Matching weekly load unavailable");
+      const cleaners = hours.get(week) ?? new Map<string, number>();
+      cleaners.set(id, value); hours.set(week, cleaners);
+    }
+    offset += data.length;
+  }
+  return hours;
 }

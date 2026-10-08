@@ -13,20 +13,22 @@ import {
   residualGuaranteedHours,
   type DispatchDecision,
   type DispatchContext,
+  scheduledHoursInWeek,
 } from "@/lib/dispatch/engine";
-import { unspentGuaranteedCents } from "@/lib/dispatch/marginal-cost";
-import { forecastWeek, zipCentroidEstimator } from "@/lib/dispatch/route";
+import { zipCentroidEstimator } from "@/lib/dispatch/route";
 import { checkEligibility, REASON_LABELS } from "@/lib/dispatch/eligibility";
 import type { Cleaner } from "@/lib/dispatch/types";
 import { formatCents, formatHours, formatPct } from "@/lib/money";
-import { formatDateTimeInZone } from "@/lib/time/zone";
+import { employeeWeekPlan } from "@/lib/dispatch/employee-week-plan";
+import { matchingWeek } from "@/lib/dispatch/week";
+import { addCalendarDays, formatCalendarDate, formatDateTimeInZone } from "@/lib/time/zone";
 import { SERVICE_LABELS, FREQUENCY_LABELS } from "@/lib/pricing/price-book";
 
 export const metadata = { title: "Matching plan | Hey Spotless management" };
 
 const estimate = zipCentroidEstimator(ZIP_CENTROIDS);
 
-function buildContext(cleaners: Cleaner[], now: Date, calendar: Pick<DispatchContext, "eligibilityFor" | "priorJobsFor"> = {}) {
+function buildContext(cleaners: Cleaner[], now: Date, calendar: Pick<DispatchContext, "eligibilityFor" | "priorJobsFor" | "scheduledHoursFor"> = {}) {
   return {
     now,
     cleaners,
@@ -144,37 +146,11 @@ export default async function DispatchPage() {
   const board = dispatchBoard(jobs, context);
   const residual = residualGuaranteedHours(board, context);
 
-  // The cleaner with a weekly guarantee is the one whose idle hours cost money.
-  const guaranteed = cleaners.find((c) => (c.terms?.guaranteedHoursPerWeek ?? 0) > 0);
-
-  const idleHours = guaranteed ? (residual.get(guaranteed.id) ?? 0) : 0;
-  const idleCents = guaranteed
-    ? unspentGuaranteedCents({
-        ...guaranteed,
-        hoursScheduledThisWeek: (guaranteed.terms?.guaranteedHoursPerWeek ?? 0) - idleHours,
-      })
-    : 0;
-
-  // What the week looks like if every unassigned job lands on Shonda.
-  const assignedToGuaranteed = guaranteed
-    ? board.filter(
-        (e) =>
-          (e.decision.kind === "assign_guaranteed" || e.decision.kind === "assign_w2") &&
-          e.decision.cleaner.id === guaranteed.id,
-      )
-    : [];
-
-  const forecast = guaranteed
-    ? forecastWeek(
-        guaranteed,
-        assignedToGuaranteed.map((e) => ({
-          cleanMinutes: e.job.estimatedCleanMinutes,
-          driveMinutes: context.driveFor(guaranteed, e.job).minutes,
-        })),
-        AVERAGE_TICKET_CENTS,
-        guaranteed.hoursScheduledThisWeek * 60, // already on the schedule
-      )
-    : null;
+  const weeklyPlan = employeeWeekPlan(board, context, AVERAGE_TICKET_CENTS);
+  const currentWeek = matchingWeek(now);
+  const currentRoster = cleaners.map(cleaner => ({
+    ...cleaner, hoursScheduledThisWeek: scheduledHoursInWeek(cleaner, currentWeek, context),
+  }));
 
   const needsScheduling = board.filter(e => e.decision.kind === "needs_scheduling").length;
 
@@ -193,29 +169,10 @@ export default async function DispatchPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat
-          label="Guarantee left after plan"
-          value={`${idleHours.toFixed(1)}h`}
-          note={`${formatCents(idleCents)} estimated unallocated payroll after these recommendations`}
-          tone={idleHours > 0 ? "warn" : "good"}
-        />
+      <div className="grid grid-cols-2 gap-3">
         <Stat label="Jobs needing a cleaner" value={String(jobs.length)} />
-        <Stat
-          label="Suggested contractor offers"
-          value={String(needMarket)}
-          note="Proposed open offers or timed offers; not confirmation that they were sent"
-        />
-        <Stat
-          label="Estimated week with plan"
-          value={forecast ? `${forecast.totalHours.toFixed(1)}h` : "—"}
-          note={
-            forecast
-              ? `${forecast.overtimeHours.toFixed(1)}h overtime · ${formatCents(forecast.weeklyCostCents)}`
-              : "No cleaner on guaranteed hours"
-          }
-          tone={forecast && forecast.overtimeHours > 0 ? "warn" : "good"}
-        />
+        <Stat label="Suggested contractor offers" value={String(needMarket)}
+          note="Proposed open offers or timed offers; not confirmation that they were sent" />
       </div>
 
       {needsScheduling > 0 && <div className="mt-4">
@@ -224,26 +181,29 @@ export default async function DispatchPage() {
           Review their saved visit status with the Client; they remain on the board below.
         </Callout>
       </div>}
-      {guaranteed && idleHours > 0 ? (
-        <div className="mt-4">
-          <Callout tone="warn" label="Hours left after these recommendations">
-            If this plan is used, {guaranteed.name} would have{" "}
-            <strong>{idleHours.toFixed(1)} guaranteed hours</strong> left to fill this week.
-            Review availability and saved assignments before scheduling more work.
-          </Callout>
-        </div>
-      ) : null}
-
-      {forecast && forecast.overtimeHours > 0 ? (
-        <div className="mt-3">
-          <Callout tone="bad" label="Estimated overtime with this plan">
-            These recommendations would bring the week to {forecast.totalHours.toFixed(1)} hours,
-            including <strong>{forecast.overtimeHours.toFixed(1)} overtime hours</strong>.
-            Estimated weekly cost: {formatCents(forecast.weeklyCostCents)}.
-            Review the saved schedule before committing more work.
-          </Callout>
-        </div>
-      ) : null}
+      <section className="mt-8" aria-labelledby="weekly-plan-heading">
+        <h2 id="weekly-plan-heading" className="text-lg font-semibold text-navy">Employee weeks</h2>
+        <p className="mt-2 max-w-3xl text-sm text-ink-2">
+          Each Monday–Sunday week uses its own saved cleaning hours. Estimates add paid travel for
+          proposed visits; review travel on assigned visits before confirming payroll.
+        </p>
+        {!weeklyPlan.some(w => w.employees.length) ? <p className="mt-3 text-sm text-ink-3">No employee hourly terms are on this roster. Contractor visit pay appears in the recommendations below.</p> :
+          weeklyPlan.map(({ week, employees }) => <section key={week} className="mt-5" aria-label={`Week of ${formatCalendarDate(week)}`}>
+            <h3 className="text-sm font-semibold text-ink">Week of {formatCalendarDate(week)} through {formatCalendarDate(addCalendarDays(week, 6))}</h3>
+            <ul className="mt-2 divide-y divide-line-soft">
+              {employees.map(({ cleaner, priorHours, proposedVisits, guaranteeLeft, forecast }) => <li key={cleaner.id} className="py-3">
+                <p className="font-medium text-navy">{cleaner.name}</p>
+                <dl className="mt-2 grid grid-cols-2 gap-x-5 gap-y-2 text-sm sm:grid-cols-4">
+                  <div><dt className="text-ink-3">Saved cleaning</dt><dd className="nums">{priorHours.toFixed(1)}h</dd></div>
+                  <div><dt className="text-ink-3">Proposed visits</dt><dd className="nums">{proposedVisits}</dd></div>
+                  <div><dt className="text-ink-3">Hours with plan</dt><dd className="nums">{forecast.totalHours.toFixed(1)}h</dd></div>
+                  <div><dt className="text-ink-3">Guarantee left</dt><dd className="nums">{cleaner.terms?.guaranteedHoursPerWeek ? `${guaranteeLeft.toFixed(1)}h` : "No weekly guarantee"}</dd></div>
+                </dl>
+                <p className="mt-2 text-xs text-ink-3">{formatCents(forecast.weeklyCostCents)} estimated wage cost{forecast.overtimeHours > 0 ? ` · ${forecast.overtimeHours.toFixed(1)}h estimated overtime` : ""}</p>
+              </li>)}
+            </ul>
+          </section>)}
+      </section>
 
       <h2 className="mt-9 mb-3 text-sm font-semibold tracking-wide text-ink-2 uppercase">
         Jobs needing a cleaner
@@ -264,7 +224,7 @@ export default async function DispatchPage() {
         <table className="w-full text-left">
           <thead>
             <tr className="border-b border-line bg-surface-2">
-              {["Cleaner", "Rating", "Accept", "Booked", "Left after plan", "First visit check"].map((h) => (
+              {["Cleaner", "Rating", "Accept", "Cleaning this week", "Guarantee left this week", "First visit check"].map((h) => (
                 <th
                   key={h}
                   className="px-4 py-2.5 font-mono text-[10px] font-semibold tracking-wider text-ink-2 uppercase"
@@ -275,7 +235,7 @@ export default async function DispatchPage() {
             </tr>
           </thead>
           <tbody>
-            {cleaners.map((c) => (
+            {currentRoster.map((c) => (
               <CleanerRow
                 key={c.id}
                 cleaner={c}

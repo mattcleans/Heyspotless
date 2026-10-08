@@ -44,6 +44,22 @@ describe("Management matching uses the saved calendar", () => {
     expect(html).toContain('href="/admin/visits/saved-assignment-visit"');
     expect(html).not.toContain("Consider Shonda");
   });
+  it("labels independent current and future employee weeks", async () => {
+    const now = new Date("2026-10-08T15:00:00Z");
+    vi.useFakeTimers(); vi.setSystemTime(now);
+    try {
+      m.jobs.mockResolvedValue([{ id: "next", customerId: "client", customerName: "Synthetic Client", street: "Synthetic Home",
+        city: "Dallas", zip: "75024", bedrooms: 2, bathrooms: 2, status: "scheduled", service: "standard", frequency: "one_time",
+        priceCents: 19900, estimatedCleanMinutes: 60, scheduledStart: new Date("2026-10-12T16:00:00Z") }]);
+      m.calendar.mockResolvedValue({ scheduledHoursFor: (_: unknown, week: string) => week === "2026-10-05" ? 40 : 10 });
+      const html = renderToStaticMarkup(await Page());
+      expect(html).toContain("Week of Oct 5, 2026 through Oct 11, 2026");
+      expect(html).toContain("Week of Oct 12, 2026 through Oct 18, 2026");
+      expect(html).toContain("Saved cleaning");
+      expect(html).toContain("40.0h"); expect(html).toContain("10.0h");
+      expect(html).not.toContain("Estimated week with plan");
+    } finally { vi.useRealTimers(); }
+  });
   it("preserves a calendar read failure for the workspace recovery screen", async () => {
     m.calendar.mockRejectedValue(new Error("Calendar temporarily unavailable"));
     await expect(Page()).rejects.toThrow("Calendar temporarily unavailable");
