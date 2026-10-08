@@ -1,3 +1,5 @@
+import { BookingRequestTerms } from "@/components/booking-request-terms";
+import { originalClientBookingForVisit } from "@/lib/booking/store";
 import { recurringVisitChanges } from "@/lib/customer/recurring/store";
 import { RecurringVisitChanges } from "@/components/recurring-visit-changes";
 import Link from "next/link";
@@ -102,6 +104,12 @@ export default async function VisitReviewPage({
   const seriesChanges = repo.isDemo
     ? []
     : await recurringVisitChanges(await createClient(), id);
+  let originalBooking = null;
+  let bookingReadFailed = false;
+  if (!repo.isDemo) {
+    try { originalBooking = await originalClientBookingForVisit(await createClient(), id); }
+    catch { bookingReadFailed = true; }
+  }
   return (
     <>
       {photoError && (
@@ -190,6 +198,15 @@ export default async function VisitReviewPage({
           <dd className="mt-1 text-sm nums">{formatCents(job.priceCents)}</dd>
         </div>
       </dl>
+      {originalBooking && <section className="card mt-5 p-5">
+        <h2 className="font-semibold text-navy">Saved booking terms</h2>
+        <p className="mt-2 text-sm text-ink-2">The Client confirmed these original terms. The appointment, service and price above describe this visit now. Later changes do not rewrite this request.</p>
+        <BookingRequestTerms review={originalBooking} />
+      </section>}
+      {bookingReadFailed && <section className="visit-feature mt-5" role="status">
+        <h2 className="font-semibold text-navy">Original Client request unavailable</h2>
+        <p className="mt-2 text-sm">Refresh this visit before reviewing the original booking agreement. Current visit details remain above.</p>
+      </section>}
       <section className="visit-feature mt-5">
         <h2 className="font-semibold text-navy">{review.label}</h2>
         <p className="mt-2 text-sm text-ink-2">

@@ -6,3 +6,9 @@ export async function myBookingReviews(db: SupabaseClient) {
   if (error || !Array.isArray(data)) throw new Error("Booking requests are unavailable. Refresh or call the office.");
   return data.map(toBookingReview);
 }
+
+export async function originalClientBookingForVisit(db: SupabaseClient, jobId: string) {
+  const { data, error } = await db.rpc("read_office_booking_for_visit", { p_job_id: jobId });
+  if (error) throw new Error("Original Client request unavailable. Refresh this visit.");
+  return data === null ? null : toBookingReview(data);
+}

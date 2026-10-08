@@ -1,4 +1,5 @@
 "use client";
+import { BookingRequestTerms } from "@/components/booking-request-terms";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -15,9 +16,7 @@ function Receipt({ review, headingRef }: { review: BookingReview; headingRef?: R
   const saved = review.state === "requested", canceled = review.state === "canceled";
   return <section className="visit-feature mt-5">
     <h2 ref={headingRef} tabIndex={-1} className="text-xl font-semibold text-navy">{saved ? "Request saved" : canceled ? "This visit was canceled" : "Saved visit unavailable"}</h2>
-    <p className="mt-2 text-sm">{review.home.street}, {review.home.city}</p>
-    <p className="mt-2 text-sm">Originally requested: {time(review.requestedStart)}</p>
-    <p className="mt-2 text-sm">{SERVICE_LABELS[review.service]} · {formatCents(review.totalCents)} {review.repeats ? "per clean" : "for this clean"}.</p>
+    <BookingRequestTerms review={review} />
     <p className="mt-2 text-sm text-ink-2">{saved ? "Open your visit for the current appointment, matching and approval status. A request does not confirm a Cleaner. No payment was taken here."
       : canceled ? "This receipt retains your original request. Open the visit for its cancellation and fee details."
       : "Call the office to review this request’s history. Retrying it will not create another visit."}</p>

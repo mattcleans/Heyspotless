@@ -11,7 +11,9 @@ const m = vi.hoisted(() => ({
   job: vi.fn(),
   home: vi.fn(),
   jobs: vi.fn(),
+  booking: vi.fn(),
 }));
+vi.mock("@/lib/booking/store", () => ({ originalClientBookingForVisit: m.booking }));
 vi.mock("@/lib/data", () => ({ getRepository: m.repo }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: m.client }));
 vi.mock("@/lib/operations/visit-review-store", () => ({
@@ -77,6 +79,7 @@ beforeEach(() => {
   m.queue.mockResolvedValue([]);
   m.jobs.mockResolvedValue([job]);
   m.client.mockResolvedValue({});
+  m.booking.mockResolvedValue(null);
 });
 describe("management review screens", () => {
   it.each([null, "cleaner", "customer"])(
@@ -93,6 +96,7 @@ describe("management review screens", () => {
       expect(m.job).not.toHaveBeenCalled();
       expect(m.queue).not.toHaveBeenCalled();
       expect(m.facts).not.toHaveBeenCalled();
+      expect(m.booking).not.toHaveBeenCalled();
     },
   );
   it("labels an empty invoice-creation check without claiming all visits are paid", async () => {
@@ -161,6 +165,13 @@ describe("management review screens", () => {
     expect(html).toContain(`/api/admin/visits/${id}/photos/photo`);
     expect(html).not.toContain("storage_path");
     expect(html).toContain("opens in a new tab");
+  });
+  it("preserves current visit details when original booking terms cannot load", async () => {
+    m.booking.mockRejectedValue(new Error("temporarily unavailable"));
+    const html = renderToStaticMarkup(await detail());
+    expect(html).toContain("Original Client request unavailable");
+    expect(html).toContain("Current visit details remain above");
+    expect(html).toContain("Photo evidence");
   });
   it("shows actionable recovery when a photo could not be opened", async () => {
     expect(renderToStaticMarkup(await detail(id, "unavailable"))).toContain(
