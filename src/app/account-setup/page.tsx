@@ -11,6 +11,8 @@ export default async function AccountSetupPage() {
     data: { user },
   } = await db.auth.getUser();
   if (!user) redirect("/login");
+  const { data: profile } = await db.from("profiles").select("role").eq("id", user.id).maybeSingle();
+  if (profile?.role === "customer") redirect("/customer/account/homes/new");
   return (
     <main className="mx-auto max-w-lg px-5 py-12">
       <Link href="/" className="brand-lockup">
@@ -38,7 +40,7 @@ export default async function AccountSetupPage() {
       </section>
       <p className="mt-5 text-sm text-ink-2">
         New customer?{" "}
-        <Link href="/book" className="underline">
+        <Link href="/signup" className="underline">
           Request your first clean.
         </Link>
       </p>

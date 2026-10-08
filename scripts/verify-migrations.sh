@@ -58,6 +58,7 @@ alter default privileges in schema public
 create table if not exists auth.users (
   id                 uuid primary key default gen_random_uuid(),
   email              text unique,
+  email_confirmed_at timestamptz,
   raw_user_meta_data jsonb not null default '{}'::jsonb,
   created_at         timestamptz not null default now()
 );
@@ -3216,3 +3217,7 @@ as_super bash scripts/verify-cancellation-collection-races.sh "$DB"
 
 # Dallas weeks, completed/canceled loads and invoker role isolation.
 as_super $PSQL -d "$DB" -f scripts/verify-dallas-weekly-matching.sql
+
+# First Client/home setup, access denial, retry and existing-record preservation.
+as_super $PSQL -d "$DB" -f scripts/verify-client-home-setup.sql
+as_super bash scripts/verify-client-home-setup-races.sh "$DB"

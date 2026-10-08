@@ -14,7 +14,8 @@ export default async function HomesPage() {
       : homes.length ? <ul className="mt-5 space-y-3">{homes.map(home => <li key={home.id} className="visit-feature">
         <h2 className="text-lg font-semibold text-navy">{home.street}</h2><p className="mt-1 text-sm text-ink-2">{home.city}, {home.state} {home.zip}</p>
         <Link href={`/customer/account/homes/${encodeURIComponent(home.id)}`} className="secondary-action mt-4 inline-flex">Edit home instructions<span className="sr-only"> for {home.street}</span></Link>
-      </li>)}</ul> : <section className="visit-feature mt-5"><h2 className="font-semibold text-navy">No homes connected yet</h2><p className="mt-2 text-sm text-ink-2">If you already clean with us, call the office to connect your home. For a new home, <Link href="/book" className="underline">request a clean</Link>.</p></section>}
+      </li>)}</ul> : <section className="visit-feature mt-5"><h2 className="font-semibold text-navy">No homes connected yet</h2><p className="mt-2 text-sm text-ink-2">If you already clean with us, call the office to connect your home. For a new home, <Link href="/customer/account/homes/new" className="underline">request a clean</Link>.</p></section>}
+    {(customer || profile?.role === "customer") && <Link href="/customer/account/homes/new" className="primary-action mt-5 inline-flex">Add a home</Link>}
     <p className="mt-5 text-sm text-ink-2">To update an address, room counts, or a service plan, <a href="tel:+14692800397" className="underline">call the office</a>.</p>
   </>;
 }

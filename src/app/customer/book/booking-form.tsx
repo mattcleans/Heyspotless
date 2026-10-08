@@ -24,11 +24,11 @@ function Receipt({ review, headingRef }: { review: BookingReview; headingRef?: R
     {review.planId && <Link href="/customer/schedules" className="secondary-action mt-3 inline-flex">Manage recurring schedule</Link>}
   </section>;
 }
-export function BookingForm({ homes, initialService = "standard", reviews, demo = false }: {
-  homes: BookingHome[]; initialService?: ServiceType; reviews: BookingReview[]; demo?: boolean;
+export function BookingForm({ homes, initialService = "standard", initialHome, reviews, demo = false }: {
+  homes: BookingHome[]; initialService?: ServiceType; initialHome?: string; reviews: BookingReview[]; demo?: boolean;
 }) {
   const router = useRouter(), heading = useRef<HTMLHeadingElement>(null);
-  const [propertyId, setHome] = useState(homes[0]?.id ?? ""), [service, setService] = useState<ServiceType>(initialService),
+  const [propertyId, setHome] = useState(homes.find(h => h.id === initialHome)?.id ?? homes[0]?.id ?? ""), [service, setService] = useState<ServiceType>(initialService),
     [frequency, setFrequency] = useState<Frequency>("one_time"),
     [start, setStart] = useState(""), [extras, setExtras] = useState<Record<string, number>>({}), [note, setNote] = useState(""),
     [review, setReview] = useState<BookingReview | null>(null), [pending, setPending] = useState<BookingAction | null>(null),
@@ -71,7 +71,7 @@ export function BookingForm({ homes, initialService = "standard", reviews, demo 
     setReview(null); setNeedsReview(false);
   }
   if (!homes.length) return <><section className="visit-feature mt-5"><h2 className="font-semibold text-navy">Connect your home first</h2>
-    <p className="mt-2 text-sm">If you already clean with us, call the office to connect your saved home. Use the new-home request below for another address.</p></section>
+    <p className="mt-2 text-sm">If you already clean with us, call the office to connect your saved home. Add a home below to request a clean for a new address.</p></section>
     {reviews.filter(r => ["requested", "canceled", "unavailable"].includes(r.state)).map(r => <Receipt key={r.id} review={r} />)}</>;
   return <div className="mt-6 max-w-2xl">
     {review && !["review", "expired", "stale"].includes(review.state) ? <Receipt review={review} headingRef={heading} />

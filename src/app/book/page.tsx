@@ -42,6 +42,7 @@ export default async function BookPage({
           A little about your home, a clear estimate, and a helping hand. Our
           team will confirm availability and the final price before your visit.
         </p>
+        {!demo && <p className="mb-6 text-sm text-ink-2">Ready to manage your clean in the app? <Link href="/signup" className="font-semibold underline">Create your Client account</Link>, or <Link href="/customer/book" className="underline">book with your saved home</Link>.</p>}
         <BookingWidget initialService={initialService} demo={demo} />
       </main>
     </div>
