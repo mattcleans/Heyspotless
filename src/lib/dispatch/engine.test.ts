@@ -200,7 +200,7 @@ describe("planning a whole board", () => {
     return Array.from({ length: n }, (_, i) =>
       job({
         id: `job-${i}`,
-        scheduledStart: new Date(NOW.getTime() + (100 + i) * 3_600_000),
+        scheduledStart: new Date(NOW.getTime() + (100 + i * 3) * 3_600_000),
       }),
     );
   }
