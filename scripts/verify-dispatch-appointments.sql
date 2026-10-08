@@ -25,7 +25,8 @@ begin
  if public.respond_to_offer_with_capacity(o,'db140000-0000-4000-8000-000000000001',true)<>'accepted' then raise exception 'Future offer was not accepted';end if;
  -- Accepted history keeps its recorded agreement and established already-answered response.
  update public.jobs set scheduled_start=clock_timestamp()-interval '1 day' where id='db150000-0000-4000-8000-000000000004';
- if public.respond_to_offer_with_capacity(o,'db140000-0000-4000-8000-000000000001',true)<>'superseded'
+ r:=public.respond_to_offer_with_capacity(o,'db140000-0000-4000-8000-000000000001',true);
+ if r<>'superseded'
  or (select status from public.offers where id=o)<>'accepted'
  or (select count(*) from public.job_assignments where job_id='db150000-0000-4000-8000-000000000004')<>1
  or (select payout_cents from public.job_assignments where job_id='db150000-0000-4000-8000-000000000004')<>8000 then raise exception 'Accepted history or retry outcome changed';end if;
@@ -33,9 +34,10 @@ begin
  update public.jobs set scheduled_start=clock_timestamp()+interval '500 milliseconds' where id='db150000-0000-4000-8000-000000000006';
  o:=public.record_offer('db150000-0000-4000-8000-000000000006','db140000-0000-4000-8000-000000000001',null,'open_board',1,.4,8000,30,clock_timestamp()+interval '5 minutes',false);
  perform pg_sleep(.6);
- if public.respond_to_offer_with_capacity(o,'db140000-0000-4000-8000-000000000001',true)<>'expired'
+ r:=public.respond_to_offer_with_capacity(o,'db140000-0000-4000-8000-000000000001',true);
+ if r<>'expired'
  or exists(select 1 from public.job_assignments where job_id='db150000-0000-4000-8000-000000000006')
- or (select status from public.offers where id=o)<>'expired' then raise exception 'Passed appointment accepted';end if;
+ or (select status from public.offers where id=o)<>'expired' then raise exception 'Passed appointment outcome %, saved status %, assignment count %',r,(select status from public.offers where id=o),(select count(*) from public.job_assignments where job_id='db150000-0000-4000-8000-000000000006');end if;
  if not public.assign_job_for_schedule_with_capacity('db150000-0000-4000-8000-000000000007','db140000-0000-4000-8000-000000000002',8000,1) then raise exception 'Future employee assignment refused';end if;
  if has_function_privilege('authenticated','public.record_offer_for_schedule(uuid,uuid,uuid,dispatch_channel,integer,numeric,integer,integer,timestamptz,boolean,bigint)','execute')
  or has_function_privilege('anon','public.assign_job_for_schedule_with_capacity(uuid,uuid,integer,bigint)','execute') then raise exception 'Server matching access widened';end if;
