@@ -1,3 +1,5 @@
+import { createClient } from "@/lib/supabase/server";
+import { matchingCalendarInputs } from "@/lib/dispatch/calendar-context";
 import Link from "next/link";
 import { DispatchRecommendation } from "@/components/dispatch-recommendation";
 import { JOB_LABELS } from "@/lib/experience/schedule";
@@ -10,6 +12,7 @@ import {
   hoursUntil,
   residualGuaranteedHours,
   type DispatchDecision,
+  type DispatchContext,
 } from "@/lib/dispatch/engine";
 import { unspentGuaranteedCents } from "@/lib/dispatch/marginal-cost";
 import { forecastWeek, zipCentroidEstimator } from "@/lib/dispatch/route";
@@ -23,13 +26,14 @@ export const metadata = { title: "Matching plan | Hey Spotless management" };
 
 const estimate = zipCentroidEstimator(ZIP_CENTROIDS);
 
-function buildContext(cleaners: Cleaner[], now: Date) {
+function buildContext(cleaners: Cleaner[], now: Date, calendar: Pick<DispatchContext, "eligibilityFor" | "priorJobsFor"> = {}) {
   return {
     now,
     cleaners,
     driveFor: (c: Cleaner, j: { zip: string }) => estimate(c.lastStopZip, j.zip),
     // Deterministic so the board does not reshuffle between renders.
     rng: () => 0.5,
+    ...calendar,
   };
 }
 
@@ -78,17 +82,20 @@ function CleanerRow({
   cleaner,
   unspent,
   probe,
+  eligibilityFor,
 }: {
   cleaner: Cleaner;
   unspent: number;
   probe: Job | undefined;
+  eligibilityFor: DispatchContext["eligibilityFor"];
 }) {
   // Show why an ineligible cleaner is invisible to dispatch, using a real job so
   // the reason is concrete rather than hypothetical.
   const eligibility = probe
-    ? checkEligibility(cleaner, probe)
+    ? checkEligibility(cleaner, probe, eligibilityFor?.(cleaner, probe))
     : { eligible: true, reasons: [] as const };
 
+  const unknownAssignment = probe ? eligibilityFor?.(cleaner, probe).busyWindows?.find(w => w.requiresReview && w.jobId) : undefined;
   return (
     <tr className="border-b border-line-soft last:border-0">
       <td className="px-4 py-2.5">
@@ -106,13 +113,14 @@ function CleanerRow({
         {cleaner.terms?.guaranteedHoursPerWeek ? `${unspent.toFixed(1)}h` : "—"}
       </td>
       <td className="px-4 py-2.5">
-        {eligibility.eligible ? (
+        {!probe ? <Pill tone="neutral">Awaiting appointment</Pill> : eligibility.eligible ? (
           <Pill tone="good">Eligible</Pill>
         ) : (
           <span title={eligibility.reasons.map((r) => REASON_LABELS[r]).join(" · ")}>
             <Pill tone="bad">{REASON_LABELS[eligibility.reasons[0]!]}</Pill>
           </span>
         )}
+        {unknownAssignment?.jobId && <Link className="mt-2 inline-flex min-h-11 items-center text-xs underline" href={`/admin/visits/${encodeURIComponent(unknownAssignment.jobId)}`}>Review assignment time</Link>}
       </td>
     </tr>
   );
@@ -120,13 +128,15 @@ function CleanerRow({
 
 export default async function DispatchPage() {
   const repo = await getRepository();
+  if (!repo.isDemo && (await repo.getCurrentProfile())?.role !== "admin") return <section className="visit-feature"><h1 className="text-xl font-semibold">Matching plan</h1><p className="mt-3">Sign in with your Management account to review matching.</p><Link href="/login?next=%2Fadmin%2Fdispatch" className="secondary-action mt-3">Sign in</Link></section>;
   const [jobs, cleaners] = await Promise.all([
     repo.listJobs({ needingCleaner: true }),
     repo.listCleaners(),
   ]);
 
   const now = new Date();
-  const context = buildContext(cleaners, now);
+  const calendar = repo.isDemo ? {} : await matchingCalendarInputs(await createClient(), jobs, now);
+  const context = buildContext(cleaners, now, calendar);
 
   // Plan the whole board at once. Deciding each job independently would tell
   // every job the same guaranteed hours are free, and six jobs would each claim
@@ -270,12 +280,14 @@ export default async function DispatchPage() {
                 key={c.id}
                 cleaner={c}
                 unspent={residual.get(c.id) ?? 0}
-                probe={jobs[0]}
+                probe={board.find(e => e.decision.kind !== "needs_scheduling")?.job}
+                eligibilityFor={context.eligibilityFor}
               />
             ))}
           </tbody>
         </table>
       </div>
+      <p className="mt-2 text-xs text-ink-3">Roster eligibility is checked against the next usable appointment in this plan. It does not confirm availability for every future visit.</p>
       <p className="mt-2 text-xs text-ink-3">
         The 3.9 rating floor and the background-check gate are enforced as a database constraint on
         the offers table, not in this page — no dispatch bug or manual override can route around

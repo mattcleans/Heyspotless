@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SupabaseRepository } from "@/lib/data/supabase-repository";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { DispatchStore, availabilityFor, busyWindowsFor } from "@/lib/dispatch/store";
+import { DispatchStore } from "@/lib/dispatch/store";
+import { matchingCalendarInputs } from "@/lib/dispatch/calendar-context";
 import {
   MessagingStore,
   OFFER_SENT,
@@ -15,7 +16,6 @@ import { isMessagingEnabled } from "@/lib/messaging/env";
 import { PushStore } from "@/lib/push/store";
 import { sendPush } from "@/lib/push/gateway";
 import { isPushEnabled } from "@/lib/push/vapid";
-import { windowsOn } from "@/lib/dispatch/availability";
 import { dispatchBoard, hoursUntil, type DispatchDecision } from "@/lib/dispatch/engine";
 import { presentOffer } from "@/lib/dispatch/ladder";
 import { CLEANER_SHARE_OF_TICKET, payoutForTicket } from "@/lib/pricing/payout";
@@ -73,46 +73,11 @@ export async function POST(request: NextRequest) {
 
   const now = new Date();
 
-  // The window the board covers, for the double-booking check. Bounded by the
-  // furthest job rather than a fixed horizon, so a plan generating six weeks
-  // ahead does not quietly fall outside it.
-  const latest = jobs.reduce(
-    (max, j) => (j.scheduledStart && j.scheduledStart > max ? j.scheduledStart : max),
-    now,
-  );
-
-  // `listJobs` already attaches continuity and declines, so the board and this
-  // sweep cannot disagree about a job.
-  const [busy, availability] = await Promise.all([
-    busyWindowsFor(db, now, new Date(latest.getTime() + 24 * 3_600_000)),
-    availabilityFor(db),
-  ]);
-
+  const calendar = await matchingCalendarInputs(db, jobs, now);
   const context = {
-    now,
-    cleaners,
-    driveFor: (c: Cleaner, j: DispatchJob) => estimate(c.lastStopZip, j.zip),
-    /**
-     * The gate's own inputs, which had never had a caller — so neither the
-     * double-booking check nor working hours had any effect in production.
-     *
-     * The database has been catching overlaps all along, as a CHECK on the
-     * offers table, but catching it THERE means the offer write raises: one
-     * busy cleaner would abort the rest of that job's offers. Telling the
-     * engine first puts the CHECK back to being the backstop it was designed
-     * as.
-     */
-    eligibilityFor: (c: Cleaner, j: DispatchJob) => ({
-      busyWindows: busy.get(c.id) ?? [],
-      jobDurationMinutes: j.estimatedCleanMinutes,
-      workingWindows: j.scheduledStart
-        ? windowsOn(j.scheduledStart, availability.get(c.id))
-        : undefined,
-    }),
-    // Familiarity in the ranking, which was always zero in production because
-    // nothing ever supplied this hook.
-    priorJobsFor: (c: Cleaner, j: DispatchJob) =>
-      j.continuity && j.continuity.incumbentCleanerId === c.id ? j.continuity.priorVisits : 0,
+    now, cleaners,
+    driveFor: (cleaner: Cleaner, job: DispatchJob) => estimate(cleaner.lastStopZip, job.zip),
+    ...calendar,
   };
 
   // Who we can actually reach. An offer nobody is told about is not an offer:

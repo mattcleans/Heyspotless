@@ -272,6 +272,9 @@ export async function continuityFor(
 export interface TimeWindow {
   start: Date;
   end: Date;
+  /** Its appointment cannot be verified; never label this as free capacity. */
+  requiresReview?: boolean;
+  jobId?: string;
 }
 
 /**
@@ -292,42 +295,40 @@ export async function busyWindowsFor(
   from: Date,
   to: Date,
 ): Promise<Map<string, TimeWindow[]>> {
-  const { data, error } = await db
-    .from("job_assignments")
-    .select(
-      "cleaner_id, jobs!inner ( scheduled_start, scheduled_end, estimated_clean_minutes, status )",
-    )
-    .gte("jobs.scheduled_start", from.toISOString())
-    .lte("jobs.scheduled_start", to.toISOString())
-    .in("jobs.status", ["scheduled", "assigned", "in_progress"]);
-  if (error) throw new Error(`busyWindowsFor: ${error.message}`);
-
+  if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || to <= from)
+    throw new Error("Matching calendar range unavailable");
   const byCleaner = new Map<string, TimeWindow[]>();
-  for (const row of (Array.isArray(data) ? data : []) as Record<
-    string,
-    unknown
-  >[]) {
-    const cleanerId = row["cleaner_id"];
-    const job = (row["jobs"] ?? {}) as Record<string, unknown>;
-    if (typeof cleanerId !== "string") continue;
-
-    const start = toDate(job["scheduled_start"]);
-    if (!start) continue;
-
-    // An end time if the job has one, otherwise the estimate. A job with
-    // neither is treated as a point in time rather than skipped: it still
-    // means she is somewhere at that moment.
-    const minutes =
-      typeof job["estimated_clean_minutes"] === "number"
-        ? job["estimated_clean_minutes"]
-        : 0;
-    const end =
-      toDate(job["scheduled_end"]) ??
-      new Date(start.getTime() + minutes * 60_000);
-
-    const existing = byCleaner.get(cleanerId);
-    if (existing) existing.push({ start, end });
-    else byCleaner.set(cleanerId, [{ start, end }]);
+  let cursor: string | null = null;
+  for (;;) {
+    let query = db.from("job_assignments")
+      .select("id, job_id, cleaner_id, jobs!inner ( scheduled_start, scheduled_end, estimated_clean_minutes, status )")
+      .or(`scheduled_start.lte.${to.toISOString()},scheduled_start.is.null,scheduled_start.eq.infinity`, { referencedTable: "jobs" })
+      .in("jobs.status", ["scheduled", "assigned", "in_progress"])
+      .order("id", { ascending: true }).limit(200);
+    if (cursor) query = query.gt("id", cursor);
+    const { data, error } = await query;
+    if (error || !Array.isArray(data)) throw new Error("Matching assignment calendar unavailable");
+    if (data.length === 0) break;
+    const records = data as Record<string, unknown>[];
+    for (const row of records) {
+      const cleanerId = row.cleaner_id, job = row.jobs;
+      if (typeof cleanerId !== "string" || !job || typeof job !== "object" || Array.isArray(job))
+        throw new Error("Matching assignment calendar unavailable");
+      const visit = job as Record<string, unknown>;
+      const start = toDate(visit.scheduled_start), storedEnd = toDate(visit.scheduled_end);
+      const minutes = typeof visit.estimated_clean_minutes === "number" ? Math.max(visit.estimated_clean_minutes, 1) : 1;
+      const end = start ? storedEnd && storedEnd > start ? storedEnd : new Date(start.getTime() + minutes * 60_000) : null;
+      const requiresReview = !start || !end || !Number.isFinite(end.getTime())
+        || (visit.scheduled_end != null && !storedEnd);
+      if (!requiresReview && (end! <= from || start! >= to)) continue;
+      const jobId = typeof row.job_id === "string" ? row.job_id : undefined;
+      const window = requiresReview ? { start: from, end: to, requiresReview: true, jobId } : { start: start!, end: end!, jobId };
+      byCleaner.set(cleanerId, [...(byCleaner.get(cleanerId) ?? []), window]);
+    }
+    const next = records.at(-1)?.id;
+    if (typeof next !== "string" || !next || (cursor !== null && next <= cursor))
+      throw new Error("Matching calendar paging unavailable");
+    cursor = next;
   }
   return byCleaner;
 }

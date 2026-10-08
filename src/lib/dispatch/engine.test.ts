@@ -302,3 +302,33 @@ describe("appointment readiness before matching", () => {
     expect(roster[0]?.hoursScheduledThisWeek).toBe(39);
   });
 });
+
+describe("proposed appointment reservations within a batch", () => {
+  it("does not suggest the same employee for overlapping visits, but permits adjacent visits", () => {
+    const ctx = context([shonda({ hoursScheduledThisWeek: 0 })], 0, 0);
+    const start = new Date("2026-09-10T15:00:00Z");
+    const board = dispatchBoard([
+      job({ id: "first", scheduledStart: start, scheduledEnd: new Date("2026-09-10T17:00:00Z"), estimatedCleanMinutes: 30 }),
+      job({ id: "overlap", scheduledStart: new Date("2026-09-10T16:00:00Z"), estimatedCleanMinutes: 30 }),
+      job({ id: "adjacent", scheduledStart: new Date("2026-09-10T17:00:00Z"), estimatedCleanMinutes: 30 }),
+    ], ctx);
+    expect(board.find(e => e.job.id === "first")?.decision.kind).toBe("assign_guaranteed");
+    expect(board.find(e => e.job.id === "overlap")?.decision.kind).toBe("no_eligible_cleaner");
+    expect(board.find(e => e.job.id === "adjacent")?.decision.kind).toBe("assign_guaranteed");
+  });
+  it("reserves a contractor's exclusive hold before considering a second overlapping visit", () => {
+    const cleaner = contractor();
+    const ctx = context([cleaner], 0, 0);
+    const continuity = { preferredCleanerId: cleaner.id, incumbentCleanerId: null, priorVisits: 0 };
+    const board = dispatchBoard([
+      job({ id: "first", estimatedCleanMinutes: 90, continuity }),
+      job({ id: "second", scheduledStart: new Date("2026-09-10T15:30:00Z"), estimatedCleanMinutes: 90, continuity }),
+    ], ctx);
+    expect(board[0]?.decision.kind).toBe("hold_for_incumbent");
+    expect(board[1]?.decision.kind).toBe("no_eligible_cleaner");
+  });
+  it("keeps broadcast/open offers as choices rather than reserving every recipient", () => {
+    const board = dispatchBoard([job({ id: "one" }), job({ id: "two" })], context([contractor()], 0, 0));
+    expect(board.map(e => e.decision.kind)).toEqual(["open_board", "open_board"]);
+  });
+});

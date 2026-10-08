@@ -1,3 +1,4 @@
+import { matchingWindow } from "./window";
 /**
  * The gate nobody crosses.
  *
@@ -23,6 +24,7 @@ export type IneligibilityReason =
   | "insurance_expired"
   | "outside_service_zone"
   | "already_booked"
+  | "assignment_time_unavailable"
   | "outside_working_hours";
 
 export interface EligibilityResult {
@@ -32,7 +34,7 @@ export interface EligibilityResult {
 
 export interface EligibilityContext {
   /** Windows this cleaner is already committed to. */
-  busyWindows?: readonly { start: Date; end: Date }[];
+  busyWindows?: readonly { start: Date; end: Date; requiresReview?: boolean; jobId?: string }[];
   /** Duration of the job being offered, for the overlap check. */
   jobDurationMinutes?: number;
   /**
@@ -84,11 +86,11 @@ export function checkEligibility(
     reasons.push("outside_service_zone");
   }
 
-  const durationMs = (context.jobDurationMinutes ?? job.estimatedCleanMinutes) * 60_000;
-  const jobEnd = jobDate ? new Date(jobDate.getTime() + durationMs) : null;
+  const jobEnd = matchingWindow(job, context.jobDurationMinutes ?? job.estimatedCleanMinutes)?.end ?? null;
+  if (context.busyWindows?.some(w => w.requiresReview)) reasons.push("assignment_time_unavailable");
 
   if (jobDate && jobEnd && context.busyWindows?.length) {
-    const overlaps = context.busyWindows.some((w) => w.start < jobEnd && jobDate < w.end);
+    const overlaps = context.busyWindows.some((w) => !w.requiresReview && w.start < jobEnd && jobDate < w.end);
     if (overlaps) reasons.push("already_booked");
   }
 
@@ -119,5 +121,6 @@ export const REASON_LABELS: Record<IneligibilityReason, string> = {
   insurance_expired: "Insurance lapsed before this job date",
   outside_service_zone: "Outside their service zone",
   already_booked: "Already booked in this window",
+  assignment_time_unavailable: "Existing assignment time needs review",
   outside_working_hours: "Outside the hours they work",
 };

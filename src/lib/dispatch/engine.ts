@@ -1,3 +1,4 @@
+import { matchingWindow } from "./window";
 /**
  * The dispatch engine.
  *
@@ -153,8 +154,8 @@ export function isUrgent(job: DispatchJob, now: Date): boolean {
 export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDecision {
   const { now, cleaners, driveFor } = context;
   const start = job.scheduledStart?.getTime();
-  if (start === undefined || !Number.isFinite(start) || start <= now.getTime()) {
-    const reason = start === undefined ? "missing_time" : !Number.isFinite(start) ? "invalid_time" : "past_time";
+  if (start === undefined || !Number.isFinite(start) || start <= now.getTime() || !matchingWindow(job)) {
+    const reason = start === undefined ? "missing_time" : !Number.isFinite(start) || !matchingWindow(job) ? "invalid_time" : "past_time";
     return {
       kind: "needs_scheduling",
       reason,
@@ -507,6 +508,7 @@ export function dispatchBoard<J extends DispatchJob>(
   });
 
   const entries: BoardEntry<J>[] = [];
+  const proposedWindows = new Map<string, { start: Date; end: Date }[]>();
 
   for (const job of order) {
     const roster = context.cleaners.map((c) => ({
@@ -514,7 +516,12 @@ export function dispatchBoard<J extends DispatchJob>(
       hoursScheduledThisWeek: load.get(c.id) ?? c.hoursScheduledThisWeek,
     }));
 
-    const decision = dispatch(job, { ...context, cleaners: roster });
+    const decision = dispatch(job, { ...context, cleaners: roster,
+      eligibilityFor: (cleaner, visit) => {
+        const saved = context.eligibilityFor?.(cleaner, visit) ?? {};
+        return { ...saved, busyWindows: [...(saved.busyWindows ?? []), ...(proposedWindows.get(cleaner.id) ?? [])] };
+      },
+    });
     entries.push({ job, decision });
 
     // Consume capacity so the next job sees a truthful roster.
@@ -534,6 +541,8 @@ export function dispatchBoard<J extends DispatchJob>(
       const drive = context.driveFor(decision.cleaner, job).minutes;
       const hours = (job.estimatedCleanMinutes + drive) / 60;
       load.set(id, (load.get(id) ?? 0) + hours);
+      const window = matchingWindow(job, context.eligibilityFor?.(decision.cleaner, job).jobDurationMinutes);
+      if (window) proposedWindows.set(id, [...(proposedWindows.get(id) ?? []), window]);
     }
   }
 

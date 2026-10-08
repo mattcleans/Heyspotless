@@ -33,7 +33,7 @@ const NEEDS_CLEANER = ["unscheduled", "scheduled", "dispatching"];
 
 const JOB_SELECT = `
   id, customer_id, property_id, status, service, freq,
-  scheduled_start, schedule_revision, price_cents, estimated_clean_minutes,
+  scheduled_start, scheduled_end, schedule_revision, price_cents, estimated_clean_minutes,
   customers ( first_name, last_name ),
   properties ( street, city, zip, bedrooms, bathrooms )
 `;

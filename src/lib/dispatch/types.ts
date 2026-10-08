@@ -70,6 +70,8 @@ export interface DispatchJob {
   estimatedCleanMinutes: number;
   zip: string;
   scheduledStart: Date | null;
+  /** A saved visit end, when present, defines its actual occupied window. */
+  scheduledEnd?: Date | null;
   /** Windows this job could occupy, used by the clustering pass. */
   customerPreferredWindow?: { start: Date; end: Date };
   /**

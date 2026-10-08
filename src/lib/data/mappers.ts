@@ -161,6 +161,7 @@ export function toJob(row: Row): Job {
     priceCents: num(row, "price_cents", 0),
     estimatedCleanMinutes: num(row, "estimated_clean_minutes", 0),
     scheduledStart: dateOrNull(row, "scheduled_start"),
+    ...(row.scheduled_end === undefined ? {} : { scheduledEnd: typeof row.scheduled_end === "string" ? new Date(row.scheduled_end) : null }),
     scheduleRevision: num(row, "schedule_revision", 1),
   };
 }
