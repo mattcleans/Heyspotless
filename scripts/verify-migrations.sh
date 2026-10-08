@@ -3208,5 +3208,8 @@ as_super bash scripts/verify-client-quote-races.sh "$DB"
 as_super $PSQL -d "$DB" -f scripts/verify-owned-client-booking.sql
 as_super bash scripts/verify-owned-booking-races.sh "$DB"
 
+# Appointment readiness is rechecked under the saved job lock.
+as_super $PSQL -d "$DB" -f scripts/verify-dispatch-appointments.sql
+
 # Cancellation/collection ordering and explicit fee checkout.
 as_super bash scripts/verify-cancellation-collection-races.sh "$DB"

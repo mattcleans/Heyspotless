@@ -73,6 +73,12 @@ export interface DispatchContext {
  */
 export type DispatchDecision =
   | {
+      kind: "needs_scheduling";
+      reason: "missing_time" | "invalid_time" | "past_time";
+      continuity: ContinuityOutcome;
+      rationale: string;
+    }
+  | {
       kind: "assign_guaranteed";
       cleaner: Cleaner;
       /** Always 0 — that is the point. */
@@ -146,6 +152,20 @@ export function isUrgent(job: DispatchJob, now: Date): boolean {
 
 export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDecision {
   const { now, cleaners, driveFor } = context;
+  const start = job.scheduledStart?.getTime();
+  if (start === undefined || !Number.isFinite(start) || start <= now.getTime()) {
+    const reason = start === undefined ? "missing_time" : !Number.isFinite(start) ? "invalid_time" : "past_time";
+    return {
+      kind: "needs_scheduling",
+      reason,
+      continuity: { status: "none", reason: "appointment_requires_review" },
+      rationale: reason === "past_time"
+        ? "The appointment time has passed. Review the visit with the Client and save a future appointment before matching."
+        : reason === "missing_time"
+          ? "Choose an appointment with the Client before matching this visit."
+          : "The appointment time is unavailable. Review and save a valid future appointment before matching.",
+    };
+  }
   const eligibilityFor = context.eligibilityFor ?? (() => ({}));
 
   const inputsFor = (cleaner: Cleaner) => ({

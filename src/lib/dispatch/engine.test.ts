@@ -276,3 +276,29 @@ describe("planning a whole board", () => {
     expect(dispatchBoard([], context([shonda()]))).toEqual([]);
   });
 });
+
+describe("appointment readiness before matching", () => {
+  it.each([null, new Date("invalid"), new Date(NOW.getTime() - 1), NOW])(
+    "does not offer or assign an unavailable appointment %s", (scheduledStart) => {
+      const ctx = context([shonda({ hoursScheduledThisWeek: 0 }), contractor()]);
+      ctx.driveFor = () => { throw new Error("Appointment must be checked before ranking"); };
+      const d = dispatch(job({ scheduledStart }), ctx);
+      expect(d.kind).toBe("needs_scheduling");
+      expect(d.continuity).toEqual({ status: "none", reason: "appointment_requires_review" });
+    },
+  );
+  it("leaves guaranteed capacity available for future visits and keeps blocked work on the board", () => {
+    const roster = [shonda({ hoursScheduledThisWeek: 39 })];
+    const ctx = context(roster, 0, 0);
+    const entries = dispatchBoard([
+      job({ id: "past", scheduledStart: new Date(NOW.getTime() - 1), estimatedCleanMinutes: 120 }),
+      job({ id: "future", estimatedCleanMinutes: 30 }),
+      job({ id: "missing", scheduledStart: null, estimatedCleanMinutes: 120 }),
+    ], ctx);
+    expect(entries.find(x => x.job.id === "past")?.decision.kind).toBe("needs_scheduling");
+    expect(entries.find(x => x.job.id === "missing")?.decision.kind).toBe("needs_scheduling");
+    expect(entries.find(x => x.job.id === "future")?.decision.kind).toBe("assign_guaranteed");
+    expect(residualGuaranteedHours(entries, ctx).get("shonda")).toBe(.5);
+    expect(roster[0].hoursScheduledThisWeek).toBe(39);
+  });
+});

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { DispatchRecommendation } from "./dispatch-recommendation";
 import type { DispatchDecision } from "@/lib/dispatch/engine";
@@ -7,7 +8,7 @@ import { contractor, iggy, shonda } from "@/lib/dispatch/fixtures";
 const now = new Date("2026-10-05T00:00:00Z");
 const none = { status: "none", reason: "no_relationship" } as const;
 const render = (decision: DispatchDecision) => renderToStaticMarkup(
-  <DispatchRecommendation decision={decision} priceCents={19900} now={now} />,
+  createElement(DispatchRecommendation, { decision, priceCents: 19900, now }),
 );
 describe("Management matching recommendations", () => {
   it("distinguishes zero additional employee cost from employee pay", () => {
@@ -59,5 +60,19 @@ describe("Management matching recommendations", () => {
     const html = render({ kind: "no_eligible_cleaner", continuity: none, rationale: "None" });
     expect(html).toContain("No eligible cleaner in this plan");
     expect(html).toContain("Review cleaner availability and requirements");
+  });
+});
+
+describe("appointment review guidance", () => {
+  it("does not label an overdue appointment as a Cleaner rejection or propose pay", () => {
+    const html = render({ kind: "needs_scheduling", reason: "past_time",
+      continuity: { status: "none", reason: "appointment_requires_review" },
+      rationale: "The appointment time has passed. Review the visit with the Client." });
+    expect(html).toContain("Review appointment");
+    expect(html).toContain("time has passed");
+    expect(html).not.toContain("No eligible cleaner");
+    expect(html).not.toContain("Proposed contractor pay");
+    expect(html).not.toContain("Estimated additional cost");
+    expect(html).not.toContain("usual cleaner did not meet");
   });
 });

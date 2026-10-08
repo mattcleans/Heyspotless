@@ -14,7 +14,13 @@ export function DispatchRecommendation({ decision, priceCents, now }: {
   return (
     <>
       <h4 className="mb-2 text-sm font-semibold text-navy">Suggested next step</h4>
-      {employee ? (
+      {decision.kind === "needs_scheduling" ? (
+        <>
+          <Pill tone="warn">Review appointment</Pill>
+          <p className="mt-2 text-sm text-ink-2">{decision.rationale}</p>
+          <p className="mt-2 text-xs text-ink-3">Matching has not evaluated Cleaner availability or proposed pay for this appointment.</p>
+        </>
+      ) : employee ? (
         <>
           <Pill tone="sky">Consider {decision.cleaner.name}</Pill>
           <p className="mt-2 text-sm text-ink-2">

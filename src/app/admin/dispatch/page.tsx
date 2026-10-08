@@ -166,6 +166,8 @@ export default async function DispatchPage() {
       )
     : null;
 
+  const needsScheduling = board.filter(e => e.decision.kind === "needs_scheduling").length;
+
   const needMarket = board.filter(
     (e) => e.decision.kind === "waterfall" || e.decision.kind === "open_board",
   ).length;
@@ -206,6 +208,12 @@ export default async function DispatchPage() {
         />
       </div>
 
+      {needsScheduling > 0 && <div className="mt-4">
+        <Callout tone="warn" label="Appointments need review">
+          {needsScheduling} visits need a valid future appointment before matching.
+          Review their saved visit status with the Client; they remain on the board below.
+        </Callout>
+      </div>}
       {guaranteed && idleHours > 0 ? (
         <div className="mt-4">
           <Callout tone="warn" label="Hours left after these recommendations">

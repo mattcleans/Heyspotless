@@ -142,6 +142,7 @@ export async function POST(request: NextRequest) {
     jobs: jobs.length,
     expiredOffers: expired,
     assigned: 0,
+    needsScheduling: 0,
     held: 0,
     offered: 0,
     notified: 0,
@@ -189,6 +190,7 @@ export async function POST(request: NextRequest) {
 }
 
 type Result = {
+  needsScheduling: number;
   assigned: number;
   held: number;
   offered: number;
@@ -250,6 +252,9 @@ async function act(
   const { store } = deps;
 
   switch (decision.kind) {
+    case "needs_scheduling":
+      result.needsScheduling += 1;
+      return;
     case "assign_guaranteed":
     case "assign_w2": {
       // An employee is scheduled, not asked — and scheduled work needs no
