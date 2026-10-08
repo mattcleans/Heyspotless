@@ -566,8 +566,8 @@ export function residualGuaranteedHours(
   );
 
   for (const { job, decision } of entries) {
-    if (job.scheduledStart && matchingWeek(job.scheduledStart) === week
-      && (decision.kind === "assign_guaranteed" || decision.kind === "assign_w2")) {
+    if ((decision.kind === "assign_guaranteed" || decision.kind === "assign_w2")
+      && job.scheduledStart && matchingWeek(job.scheduledStart) === week) {
       const drive = decision.cleaner.terms?.driveTimePaid ? context.driveFor(decision.cleaner, job).minutes : 0;
       load.set(
         decision.cleaner.id,

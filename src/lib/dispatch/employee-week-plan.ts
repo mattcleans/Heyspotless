@@ -11,8 +11,8 @@ export function employeeWeekPlan(entries: readonly BoardEntry[], context: Dispat
     week,
     employees: context.cleaners.filter(c => c.type === "w2_core" && c.terms).map(cleaner => {
       const priorHours = scheduledHoursInWeek(cleaner, week, context);
-      const proposed = entries.filter(e => e.job.scheduledStart && matchingWeek(e.job.scheduledStart) === week
-        && (e.decision.kind === "assign_guaranteed" || e.decision.kind === "assign_w2")
+      const proposed = entries.filter(e => (e.decision.kind === "assign_guaranteed" || e.decision.kind === "assign_w2")
+        && e.job.scheduledStart && matchingWeek(e.job.scheduledStart) === week
         && e.decision.cleaner.id === cleaner.id);
       return {
         cleaner, priorHours, proposedVisits: proposed.length,
