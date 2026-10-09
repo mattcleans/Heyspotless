@@ -1,12 +1,15 @@
-# Spotless Ops
+# Hey Spotless
 
-Hey Spotless field-service operations — booking, scheduling, dispatch, billing and
-communications. Replaces Housecall Pro Max at `app.heyspotless.com`.
+Hey Spotless connects Clients, Cleaners and Management through booking,
+scheduling, matching, service evidence, billing and communications.
 
-The full specification is [`docs/build-plan.md`](docs/build-plan.md). The centrepiece
-is a dispatch engine that spends guaranteed W-2 hours before buying any labour, then
-prices the remainder against the true marginal cost of each employee **for that
-specific job** — something no off-the-shelf field-service tool does.
+The product direction and acceptance contract are in
+[`docs/marketplace-experience.md`](docs/marketplace-experience.md): become the
+“Uber for Maids” with dependable, low-effort journeys for all three groups.
+[`docs/build-plan.md`](docs/build-plan.md) documents the engineering design,
+including dispatch that considers guaranteed employee hours and the estimated
+additional cost of each job. Implemented features still need the runtime and
+business acceptance in [`docs/release-readiness.md`](docs/release-readiness.md).
 
 ## Running it
 

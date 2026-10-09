@@ -4,6 +4,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { toCalendarDate, type CalendarDate } from "../time/zone";
 import type { Frequency } from "../pricing/price-book";
 import type { RecurringPlan } from "./schedule";
+import { isChoiceId } from "../customer/cleaner-choice/input";
+
+export interface RecurringGenerationPlan extends RecurringPlan {
+  scheduleRevision: number;
+}
 
 /**
  * Reading and materialising recurring plans.
@@ -24,12 +29,12 @@ export class RecurringStore {
    * Skips are fetched alongside rather than per-plan: the sweep runs over the
    * whole book, and one query beats N.
    */
-  async listActivePlans(limit = 500): Promise<RecurringPlan[]> {
+  async listActivePlans(limit = 500): Promise<RecurringGenerationPlan[]> {
     const { data, error } = await this.db
       .from("recurring_plans")
       .select(
         `id, customer_id, property_id, freq, anchor_date, start_time,
-         ends_on, paused_until, active, horizon_days`,
+         ends_on, paused_until, active, horizon_days, schedule_revision`,
       )
       .eq("active", true)
       .limit(limit);
@@ -41,7 +46,9 @@ export class RecurringStore {
     const planIds = rows.map((r) => String(r["id"]));
     const skipsByPlan = await this.skipsFor(planIds);
 
-    return rows.map((row) => toPlan(row, skipsByPlan.get(String(row["id"])) ?? []));
+    return rows.map((row) =>
+      toPlan(row, skipsByPlan.get(String(row["id"])) ?? []),
+    );
   }
 
   /** How far ahead each plan materialises. Per-plan, defaulted in the schema. */
@@ -56,7 +63,9 @@ export class RecurringStore {
     return typeof days === "number" ? days : 42;
   }
 
-  private async skipsFor(planIds: readonly string[]): Promise<Map<string, CalendarDate[]>> {
+  private async skipsFor(
+    planIds: readonly string[],
+  ): Promise<Map<string, CalendarDate[]>> {
     const { data, error } = await this.db
       .from("recurring_plan_skips")
       .select("plan_id, occurrence_date")
@@ -93,18 +102,32 @@ export class RecurringStore {
     planId: string,
     occurrenceDate: CalendarDate,
     startsAt: Date,
+    scheduleRevision: number,
   ): Promise<{ jobId: string | null; created: boolean }> {
-    const { data, error } = await this.db.rpc("materialise_recurring_job", {
-      p_plan_id: planId,
-      p_occurrence_date: occurrenceDate,
-      p_scheduled_start: startsAt.toISOString(),
-    });
+    if (!Number.isSafeInteger(scheduleRevision) || scheduleRevision < 1)
+      throw new Error("materialise: invalid schedule revision");
+    const { data, error } = await this.db.rpc(
+      "materialise_recurring_job_for_revision",
+      {
+        p_plan_id: planId,
+        p_occurrence_date: occurrenceDate,
+        p_scheduled_start: startsAt.toISOString(),
+        p_schedule_revision: scheduleRevision,
+      },
+    );
     if (error) throw new Error(`materialise: ${error.message}`);
 
     // A set-returning function comes back as an array of one row.
-    const row = (Array.isArray(data) ? data[0] : data) as Record<string, unknown> | null;
-    const jobId = row && typeof row["job_id"] === "string" ? (row["job_id"] as string) : null;
-    return { jobId, created: row?.["created"] === true };
+    const row = Array.isArray(data) && data.length === 1 ? data[0] : null;
+    if (
+      !row ||
+      typeof row !== "object" ||
+      (row.job_id !== null && !isChoiceId(row.job_id)) ||
+      typeof row.created !== "boolean" ||
+      (row.created && row.job_id === null)
+    )
+      throw new Error("materialise: invalid generation receipt");
+    return { jobId: row.job_id, created: row.created };
   }
 
   /** Call off one visit. The skip is a row; the job is cancelled, not deleted. */
@@ -134,26 +157,57 @@ export class RecurringStore {
   }
 }
 
-function toPlan(row: Record<string, unknown>, skips: CalendarDate[]): RecurringPlan {
+function toPlan(
+  row: Record<string, unknown>,
+  skips: CalendarDate[],
+): RecurringGenerationPlan {
   const anchor = toCalendarDate(row["anchor_date"]);
   if (!anchor) {
     // 0014 constrains an active plan to have one, so this is a corrupted row
     // rather than a state the schedule should try to guess at.
-    throw new Error(`recurring plan ${String(row["id"])} is active with no anchor date`);
+    throw new Error(
+      `recurring plan ${String(row["id"])} is active with no anchor date`,
+    );
   }
+  const revision = row.schedule_revision;
+  const frequency = row.freq;
+  const startTime = row.start_time;
+  if (
+    !isChoiceId(row.id) ||
+    !isChoiceId(row.customer_id) ||
+    !isChoiceId(row.property_id) ||
+    !["one_time", "weekly", "biweekly", "monthly"].includes(
+      String(frequency),
+    ) ||
+    typeof startTime !== "string" ||
+    !/^(?:[01]\d|2[0-3]):[0-5]\d:00$/.test(startTime) ||
+    typeof revision !== "number" ||
+    !Number.isSafeInteger(revision) ||
+    revision < 1 ||
+    typeof row.horizon_days !== "number" ||
+    !Number.isInteger(row.horizon_days) ||
+    row.horizon_days < 7 ||
+    row.horizon_days > 180 ||
+    (row.ends_on !== null && !toCalendarDate(row.ends_on)) ||
+    (row.paused_until !== null && !toCalendarDate(row.paused_until))
+  )
+    throw new Error(
+      `recurring plan ${String(row.id)} has invalid generation settings`,
+    );
 
   return {
     id: String(row["id"]),
     customerId: String(row["customer_id"]),
     propertyId: String(row["property_id"]),
-    frequency: String(row["freq"]) as Frequency,
+    frequency: frequency as Frequency,
     anchorDate: anchor,
     // Postgres `time` arrives as HH:MM:SS; the engine wants the wall clock.
-    startTime: String(row["start_time"] ?? "09:00").slice(0, 5),
+    startTime: startTime.slice(0, 5),
     endsOn: toCalendarDate(row["ends_on"]),
     pausedUntil: toCalendarDate(row["paused_until"]),
     active: row["active"] === true,
-    horizonDays: typeof row["horizon_days"] === "number" ? row["horizon_days"] : 42,
+    horizonDays: row.horizon_days,
+    scheduleRevision: revision,
     skips,
   };
 }

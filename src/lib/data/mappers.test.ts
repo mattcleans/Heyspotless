@@ -333,3 +333,15 @@ describe("billing mappers", () => {
     expect(customer.stripeCustomerId).toBeNull();
   });
 });
+
+describe("saved visit ends for matching", () => {
+  const row = { id: "end-fixture", customer_id: "client", property_id: "home", status: "scheduled",
+    service: "standard", freq: "one_time", scheduled_start: "2026-10-08T15:00:00Z",
+    scheduled_end: "2026-10-08T18:00:00Z", price_cents: 19900, estimated_clean_minutes: 30 };
+  it("retains the actual stored end even when it is longer than the clean estimate", () => {
+    expect(toJob(row).scheduledEnd?.toISOString()).toBe("2026-10-08T18:00:00.000Z");
+  });
+  it("keeps a malformed end visible to the time validator instead of calling it an absent estimate", () => {
+    expect(Number.isNaN(toJob({ ...row, scheduled_end: "infinity" }).scheduledEnd?.getTime())).toBe(true);
+  });
+});

@@ -56,8 +56,8 @@ describe("roomProgress", () => {
     expect(roomProgress(visit({ stage: "scheduled" }))).toBeNull();
   });
 
-  it("is full when she is finished", () => {
-    expect(roomProgress(visit({ stage: "done" }))).toBe(1);
+  it("keeps photo evidence separate from finished work", () => {
+    expect(roomProgress(visit({ stage: "done" }))).toBeCloseTo(4 / 9, 10);
   });
 
   it("never exceeds full, even with more photos than rooms", () => {

@@ -1,115 +1,75 @@
 import Link from "next/link";
 import { getRepository } from "@/lib/data";
-import { Pill } from "@/components/ui";
-import { formatDateTimeInZone } from "@/lib/time/zone";
-import { SERVICE_LABELS } from "@/lib/pricing/price-book";
-import { activeVisits } from "@/lib/experience/schedule";
-import { formatCents } from "@/lib/money";
+import type { VisitQuery } from "@/lib/experience/visit-filter";
+import { VisitSections } from "@/components/visit-sections";
 
-/**
- * The Visits tab — everything booked and everything done.
- *
- * Upcoming first, because that is what somebody opening this tab is checking.
- * A finished clean that has not been rated carries the prompt, since the
- * rating is what the eligibility gate runs on and the ask is easy to miss in
- * a text.
- */
 export const dynamic = "force-dynamic";
+export const metadata = { title: "Your visits | Hey Spotless" };
 
-export const metadata = { title: "Your visits" };
-
-export default async function VisitsPage() {
+export default async function VisitsPage({
+  searchParams,
+}: {
+  searchParams: Promise<VisitQuery>;
+}) {
+  const query = await searchParams;
   const repo = await getRepository();
   const profile = await repo.getCurrentProfile();
-  const customer = profile ? await repo.getCustomerByProfile(profile.id) : null;
-
-  const jobs = customer
-    ? await repo.listJobs({ customerId: customer.id, limit: 40 })
-    : [];
-
-  const upcoming = activeVisits(jobs);
-
-  const past = jobs
-    .filter((j) => j.status === "complete")
-    .sort(
-      (a, b) =>
-        (b.scheduledStart?.getTime() ?? 0) - (a.scheduledStart?.getTime() ?? 0),
-    );
-
+  const customer = profile
+    ? await repo.getCustomerByProfile(profile.id)
+    : repo.isDemo
+      ? await repo.getCustomerByProfile("demo")
+      : null;
+  const jobs = customer ? await repo.listJobs({ customerId: customer.id }) : [];
   return (
     <>
-      <h1 className="text-xl font-semibold tracking-tight text-navy">
-        Your visits
-      </h1>
-
-      {jobs.length === 0 ? (
-        <div className="card mt-4 p-6 text-center text-sm text-ink-3">
-          Nothing booked yet.{" "}
-          <Link href="/book" className="text-navy underline">
-            Book a clean
-          </Link>
-          .
-        </div>
-      ) : null}
-
-      {upcoming.length > 0 ? (
-        <section className="mt-4">
-          <p className="eyebrow mb-2">Coming up</p>
-          <ul className="space-y-2">
-            {upcoming.map((job) => (
-              <li key={job.id}>
-                <Link
-                  href={`/customer/visits/${job.id}`}
-                  className="card flex items-center justify-between gap-3 p-4 transition-colors hover:border-sky-deep"
-                >
-                  <div className="min-w-0">
-                    <p className="font-medium text-navy">
-                      {SERVICE_LABELS[job.service]}
-                    </p>
-                    <p className="mt-0.5 text-xs text-ink-3">
-                      {job.scheduledStart
-                        ? formatDateTimeInZone(job.scheduledStart)
-                        : "Time to be confirmed"}
-                    </p>
-                  </div>
-                  <Pill tone={job.status === "in_progress" ? "sky" : "neutral"}>
-                    {job.status === "in_progress" ? "In progress" : "Booked"}
-                  </Pill>
-                </Link>
-              </li>
-            ))}
-          </ul>
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <h1 className="welcome-title">Your visits</h1>
+        <Link href="/book" className="primary-action">
+          Request a clean
+        </Link>
+      </div>
+      <p className="mt-3 text-sm text-ink-2">
+        Visit times are shown in Dallas time. Open a visit for its latest
+        details.
+      </p>
+      {customer && (
+        <Link
+          href="/customer/schedules"
+          className="secondary-action mt-4 inline-flex"
+        >
+          Manage recurring schedule
+        </Link>
+      )}
+      {!customer && !repo.isDemo ? (
+        <section className="visit-feature mt-5">
+          <h2 className="font-semibold text-navy">
+            Let’s connect your account
+          </h2>
+          <p className="mt-2 text-sm text-ink-2">
+            Your account isn’t linked to a client profile yet.{" "}
+            <a href="tel:+14692800397" className="underline">
+              Call the office
+            </a>{" "}
+            to connect your existing visits.
+          </p>
         </section>
-      ) : null}
-
-      {past.length > 0 ? (
-        <section className="mt-6">
-          <p className="eyebrow mb-2">Done</p>
-          <ul className="space-y-2">
-            {past.map((job) => (
-              <li key={job.id}>
-                <Link
-                  href={`/customer/visits/${job.id}/rate`}
-                  className="card flex items-center justify-between gap-3 p-4 transition-colors hover:border-sky-deep"
-                >
-                  <div className="min-w-0">
-                    <p className="font-medium text-ink">
-                      {SERVICE_LABELS[job.service]}
-                    </p>
-                    <p className="mt-0.5 text-xs text-ink-3">
-                      {job.scheduledStart
-                        ? formatDateTimeInZone(job.scheduledStart)
-                        : ""}{" "}
-                      · {formatCents(job.priceCents)}
-                    </p>
-                  </div>
-                  <Pill>Rate</Pill>
-                </Link>
-              </li>
-            ))}
-          </ul>
+      ) : jobs.length === 0 ? (
+        <section className="visit-feature mt-5">
+          <h2 className="font-semibold text-navy">
+            Your next clean starts here
+          </h2>
+          <p className="mt-2 text-sm text-ink-2">
+            Request a clean above. We’ll confirm the time and cleaner with you.
+          </p>
         </section>
-      ) : null}
+      ) : (
+        <VisitSections
+          jobs={jobs}
+          area="customer"
+          now={new Date()}
+          query={query}
+        />
+      )}
     </>
   );
 }

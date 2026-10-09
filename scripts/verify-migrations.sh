@@ -6,6 +6,9 @@ set -euo pipefail
 
 DB="${1:-spotless_verify}"
 PSQL="psql -v ON_ERROR_STOP=1 -q"
+# Match hosted Supabase: extension functions live outside public, while SQL
+# sessions can resolve them. SECURITY DEFINER routines keep their own paths.
+export PGOPTIONS="${PGOPTIONS:+$PGOPTIONS }-c search_path=public,extensions"
 
 # Two ways to reach a superuser. On a developer machine Postgres runs locally
 # and the way in is the `postgres` system account. In CI it is a service
@@ -25,6 +28,9 @@ as_super createdb "$DB"
 # environment. This stub exists only for verification and is not a migration.
 as_super $PSQL -d "$DB" <<'SQL'
 create schema if not exists auth;
+create schema if not exists extensions;
+create extension if not exists "uuid-ossp" with schema extensions;
+set search_path=public,extensions;
 
 -- Exercise access controls with Supabase-like client and server roles. These
 -- are cluster roles, so a second verification run must reuse them.
@@ -40,6 +46,7 @@ begin
     create role service_role nologin bypassrls;
   end if;
 end $$;
+grant usage on schema extensions to anon,authenticated,service_role;
 
 -- Model both PUBLIC's default EXECUTE and explicit client-role defaults.
 -- Migration 0007 must revoke both sources of privilege.
@@ -65,6 +72,14 @@ for f in supabase/migrations/*.sql; do
   as_super $PSQL -d "$DB" -f "$f"
 done
 echo "  all migrations applied"
+
+# Explicit workflow conflicts must never masquerade as transaction retries.
+as_super $PSQL -d "$DB" -f scripts/verify-stale-review-conflicts.sql
+
+# Run the actual generated preview fixture against the still-empty verifier.
+# It checks prerequisites, role records and backup consent, then rolls back.
+node scripts/check-node.mjs
+node --experimental-strip-types scripts/verify-preview-setup.ts | as_super $PSQL -d "$DB"
 
 # --- golden check: quote_price() must reproduce the published pricelist ------
 echo "  checking quote_price() against the 9 Aug 2026 pricelist"
@@ -1447,7 +1462,7 @@ begin
   insert into jobs (customer_id, property_id, status, service, freq,
                     scheduled_start, price_cents, estimated_clean_minutes)
     values (v_cust, v_prop, 'scheduled', 'standard', 'biweekly',
-            now() + interval '9 days', 17000, 138)
+            now() + interval '10 days', 17000, 138)
     returning id into v_job;
   v_offer := record_offer(v_job, v_sarah, null, 'waterfall', 1, 0.33, 5610, 138,
                           now() + interval '20 minutes', false);
@@ -1623,9 +1638,23 @@ RACE_OFFER_B=$(as_super $PSQL -d "$DB" -tAc \
                        now() + interval '20 minutes', false)")
 
 as_super $PSQL -d "$DB" -tAc \
-  "select respond_to_offer('$RACE_OFFER_A', '$RACE_A_ID', true)" \
+  "begin; set local application_name='offer_same_job_winner';
+   select respond_to_offer('$RACE_OFFER_A', '$RACE_A_ID', true);
+   select pg_sleep(2); commit;" \
   > /tmp/spotless_accept_a.txt 2>&1 &
 ACCEPT_A=$!
+# Observe the accepted-but-uncommitted winner. The second caller reads its
+# still-sent offer, then waits on the SAME job lock, rather than arriving late.
+OFFER_BARRIER=0
+for _ in $(seq 1 100); do
+  OFFER_SEEN=$(as_super $PSQL -d "$DB" -tAc "select count(*) from pg_stat_activity where datname=current_database() and application_name='offer_same_job_winner' and wait_event='PgSleep'")
+  if [ "$OFFER_SEEN" = 1 ]; then OFFER_BARRIER=1; break; fi
+  sleep .05
+done
+if [ "$OFFER_BARRIER" != 1 ]; then
+  echo "same-job acceptance did not reach its lock barrier" >&2
+  exit 1
+fi
 as_super $PSQL -d "$DB" -tAc \
   "select respond_to_offer('$RACE_OFFER_B', '$RACE_B_ID', true)" \
   > /tmp/spotless_accept_b.txt 2>&1 &
@@ -3136,3 +3165,59 @@ echo "  client app verified"
 echo "  checking customer, cleaner and server access"
 as_super $PSQL -d "$DB" -f scripts/verify-access.sql
 echo "  access controls verified"
+echo "  checking cleaner availability saves"
+as_super $PSQL -d "$DB" -f scripts/verify-cleaner-availability.sql
+echo "  cleaner availability verified"
+echo "  checking customer home instruction saves"
+as_super $PSQL -d "$DB" -f scripts/verify-home-instructions.sql
+echo "  customer home instructions verified"
+
+echo "  checking client cleaner requests and backup approval"
+as_super $PSQL -d "$DB" -f scripts/verify-client-cleaner-choice.sql
+echo "  client cleaner choice verified"
+echo "  checking client cancellations and fee consent"
+as_super $PSQL -d "$DB" -f scripts/verify-visit-cancellations.sql
+echo "  visit cancellations verified"
+echo "  checking client rescheduling and assignment releases"
+as_super $PSQL -d "$DB" -f scripts/verify-visit-rescheduling.sql
+echo "  visit rescheduling verified"
+echo "  checking concurrent rescheduling, starts and stale dispatch"
+as_super bash scripts/verify-reschedule-races.sh "$DB"
+
+# Appointment-day fees and current-plan generation guards, isolated fixtures.
+as_super $PSQL -d "$DB" -f scripts/verify-reschedule-fees.sql
+as_super $PSQL -d "$DB" -f scripts/verify-recurring-generation.sql
+
+as_super $PSQL -d "$DB" -f scripts/verify-recurring-editor.sql
+as_super bash scripts/verify-recurring-races.sh "$DB"
+
+# Capacity across different visits: including crews and retained time edits.
+as_super $PSQL -d "$DB" -f scripts/verify-cleaner-capacity.sql
+as_super bash scripts/verify-cleaner-capacity-races.sh "$DB"
+
+# Replace one declined crew lead while preserving the other agreements.
+as_super $PSQL -d "$DB" -f scripts/verify-crew-lead-replacement.sql
+as_super bash scripts/verify-crew-lead-races.sh "$DB"
+
+# Exact client quote approval and office booking.
+as_super $PSQL -d "$DB" -f scripts/verify-client-quotes.sql
+
+as_super bash scripts/verify-client-quote-races.sh "$DB"
+
+# Owned-home Client requests: exact terms, ownership, saved retry and recurrence.
+as_super $PSQL -d "$DB" -f scripts/verify-owned-client-booking.sql
+as_super bash scripts/verify-owned-booking-races.sh "$DB"
+
+# Appointment readiness is rechecked under the saved job lock.
+as_super $PSQL -d "$DB" -f scripts/verify-dispatch-appointments.sql
+
+# Cancellation/collection ordering and explicit fee checkout.
+as_super bash scripts/verify-cancellation-collection-races.sh "$DB"
+
+# Dallas weeks, completed/canceled loads and invoker role isolation.
+as_super $PSQL -d "$DB" -f scripts/verify-dallas-weekly-matching.sql
+
+# First Client/home setup, access denial, retry and existing-record preservation.
+as_super $PSQL -d "$DB" -f scripts/verify-client-home-setup.sql
+as_super bash scripts/verify-client-home-setup-races.sh "$DB"
+as_super $PSQL -d "$DB" -f scripts/verify-client-booking-matching.sql

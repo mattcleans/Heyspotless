@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
         .eq("profile_id", user.id)
         .maybeSingle();
       if (linkError) return redirect("/login?error=service_unavailable");
-      if (!linked) return redirect("/account-setup");
+      if (!linked) return redirect(profile.role === "customer" ? "/customer/account/homes/new" : "/account-setup");
     }
     return redirect(destinationFor(profile.role, next));
   } catch {

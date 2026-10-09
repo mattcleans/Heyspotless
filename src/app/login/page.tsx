@@ -39,7 +39,7 @@ export default async function LoginPage({
       </Link>
       <h1 className="welcome-title mt-10">Welcome back.</h1>
       <p className="mt-3 mb-6 text-sm text-ink-2">
-        Sign in with your email. No password needed.
+        Sign in with your email and password.
       </p>
       {message && (
         <p
@@ -71,6 +71,7 @@ export default async function LoginPage({
       ) : (
         <LoginForm next={next} />
       )}
+      {!demo && <p className="mt-6 text-sm text-ink-2">New Client? <Link href="/signup" className="underline">Create your account</Link>.</p>}
       <p className="mt-6 text-sm text-ink-2">
         Need help? Call{" "}
         <a className="underline" href="tel:+14692800397">

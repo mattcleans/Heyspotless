@@ -11,6 +11,10 @@ import type { SupabaseClient } from "@supabase/supabase-js";
  * that the caller is the cleaner the job was assigned to rather than trusting
  * a client-supplied id.
  */
+export class BackupApprovalRequired extends Error {
+  constructor() { super("The client must approve this backup before work starts. Refresh this visit or contact the office."); }
+}
+
 export class ServiceStore {
   constructor(private readonly db: SupabaseClient) {}
 
@@ -20,6 +24,7 @@ export class ServiceStore {
       p_job_id: jobId,
       p_cleaner_id: cleanerId,
     });
+    if (error?.code === "PBC01") throw new BackupApprovalRequired();
     if (error) throw new Error(`start: ${error.message}`);
     return data === true;
   }
@@ -42,6 +47,7 @@ export class ServiceStore {
       p_lat: at?.lat ?? null,
       p_lng: at?.lng ?? null,
     });
+    if (error?.code === "PBC01") throw new BackupApprovalRequired();
     if (error) throw new Error(`complete: ${error.message}`);
     return data === true;
   }

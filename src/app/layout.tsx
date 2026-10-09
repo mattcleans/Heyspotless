@@ -3,11 +3,11 @@ import { CUSTOMER_BRAND } from "@/lib/brand";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Spotless Ops",
+  title: CUSTOMER_BRAND,
   description:
-    `${CUSTOMER_BRAND} operations — booking, scheduling, dispatch, billing and communications.`,
-  applicationName: "Spotless Ops",
-  appleWebApp: { capable: true, statusBarStyle: "default", title: "Spotless Ops" },
+    `Book and manage cleans, follow visits, and coordinate your team with ${CUSTOMER_BRAND}.`,
+  applicationName: CUSTOMER_BRAND,
+  appleWebApp: { capable: true, statusBarStyle: "default", title: CUSTOMER_BRAND },
 };
 
 export const viewport: Viewport = {

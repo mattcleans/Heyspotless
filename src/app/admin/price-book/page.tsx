@@ -10,7 +10,7 @@ import {
 } from "@/lib/pricing/price-book";
 import { formatCents, formatHours } from "@/lib/money";
 
-export const metadata = { title: "Price book — Spotless Ops" };
+export const metadata = { title: "Price book | Hey Spotless management" };
 
 export default function PriceBookPage() {
   return (

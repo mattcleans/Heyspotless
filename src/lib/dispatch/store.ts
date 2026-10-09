@@ -1,3 +1,4 @@
+import { toCalendarDate, type CalendarDate } from "../time/zone";
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -24,10 +25,17 @@ import type { DispatchChannel } from "./types";
 export type OfferResponse =
   | "accepted"
   | "declined"
+  | "conflict"
   | "taken"
   | "expired"
   | "superseded"
   | "not_found";
+
+export class OfferWriteConflict extends Error {
+  constructor() {
+    super("The schedule changed while answering the offer.");
+  }
+}
 
 export interface RecordedDecision {
   id: string;
@@ -35,6 +43,7 @@ export interface RecordedDecision {
 }
 
 export interface OfferToRecord {
+  scheduleRevision: number;
   jobId: string;
   cleanerId: string;
   decisionId: string | null;
@@ -74,12 +83,17 @@ export class DispatchStore {
         kind: decision.kind,
         cleaner_id: cleanerOf(decision),
         continuity_status: continuity.status,
-        continuity_basis: continuity.status === "none" ? null : continuity.basis,
-        continuity_reason: continuity.status === "none" ? continuity.reason : null,
+        continuity_basis:
+          continuity.status === "none" ? null : continuity.basis,
+        continuity_reason:
+          continuity.status === "none" ? continuity.reason : null,
         continuity_premium_cents:
-          continuity.status === "none" ? null : (continuity.premiumCents ?? null),
+          continuity.status === "none"
+            ? null
+            : (continuity.premiumCents ?? null),
         marginal_cents: marginalOf(decision),
-        w2_ceiling_cents: decision.kind === "waterfall" ? decision.w2CeilingCents : null,
+        w2_ceiling_cents:
+          decision.kind === "waterfall" ? decision.w2CeilingCents : null,
         rationale: decision.rationale,
         decided_by: decidedBy,
       })
@@ -97,7 +111,7 @@ export class DispatchStore {
    * sweep harmless rather than a second acceptable offer.
    */
   async recordOffer(offer: OfferToRecord): Promise<string | null> {
-    const { data, error } = await this.db.rpc("record_offer", {
+    const { data, error } = await this.db.rpc("record_offer_for_schedule", {
       p_job_id: offer.jobId,
       p_cleaner_id: offer.cleanerId,
       p_decision_id: offer.decisionId,
@@ -108,6 +122,7 @@ export class DispatchStore {
       p_estimated_minutes: offer.estimatedMinutes,
       p_expires_at: offer.expiresAt.toISOString(),
       p_is_exclusive: offer.isExclusive ?? false,
+      p_schedule_revision: offer.scheduleRevision,
     });
     if (error) throw new Error(`recordOffer: ${error.message}`);
     return typeof data === "string" ? data : null;
@@ -123,12 +138,17 @@ export class DispatchStore {
     accept: boolean,
     reason: string | null = null,
   ): Promise<OfferResponse> {
-    const { data, error } = await this.db.rpc("respond_to_offer", {
-      p_offer_id: offerId,
-      p_cleaner_id: cleanerId,
-      p_accept: accept,
-      p_reason: reason,
-    });
+    const { data, error } = await this.db.rpc(
+      "respond_to_offer_with_capacity",
+      {
+        p_offer_id: offerId,
+        p_cleaner_id: cleanerId,
+        p_accept: accept,
+        p_reason: reason,
+      },
+    );
+    if (error && ["40001", "40P01"].includes(error.code))
+      throw new OfferWriteConflict();
     if (error) throw new Error(`respond: ${error.message}`);
     return isOfferResponse(data) ? data : "not_found";
   }
@@ -149,19 +169,27 @@ export class DispatchStore {
     jobId: string,
     cleanerId: string,
     payoutCents: number,
+    scheduleRevision: number,
   ): Promise<boolean> {
-    const { data, error } = await this.db.rpc("assign_job_directly", {
-      p_job_id: jobId,
-      p_cleaner_id: cleanerId,
-      p_payout_cents: payoutCents,
-    });
+    const { data, error } = await this.db.rpc(
+      "assign_job_for_schedule_with_capacity",
+      {
+        p_job_id: jobId,
+        p_cleaner_id: cleanerId,
+        p_payout_cents: payoutCents,
+        p_schedule_revision: scheduleRevision,
+      },
+    );
+    if (error?.code === "PCP01") return false;
     if (error) throw new Error(`assignDirectly: ${error.message}`);
     return data === true;
   }
 
   /** Time out every countdown that has run down. Returns how many. */
-  async expireStaleOffers(): Promise<number> {
-    const { data, error } = await this.db.rpc("expire_stale_offers");
+  async expireStaleOffers(jobId?: string): Promise<number> {
+    const { data, error } = jobId
+      ? await this.db.rpc("expire_stale_offers_for_job", { p_job_id: jobId })
+      : await this.db.rpc("expire_stale_offers");
     if (error) throw new Error(`expireStaleOffers: ${error.message}`);
     return typeof data === "number" ? data : 0;
   }
@@ -191,6 +219,7 @@ function marginalOf(decision: DispatchDecision): number | null {
 const RESPONSES: readonly string[] = [
   "accepted",
   "declined",
+  "conflict",
   "taken",
   "expired",
   "superseded",
@@ -222,7 +251,10 @@ export async function continuityFor(
     .in("job_id", [...jobIds]);
   if (error) throw new Error(`continuityFor: ${error.message}`);
 
-  for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
+  for (const row of (Array.isArray(data) ? data : []) as Record<
+    string,
+    unknown
+  >[]) {
     const jobId = row["job_id"];
     if (typeof jobId !== "string") continue;
 
@@ -232,7 +264,8 @@ export async function continuityFor(
     byJob.set(jobId, {
       preferredCleanerId: typeof preferred === "string" ? preferred : null,
       incumbentCleanerId: typeof incumbent === "string" ? incumbent : null,
-      priorVisits: typeof row["prior_visits"] === "number" ? row["prior_visits"] : 0,
+      priorVisits:
+        typeof row["prior_visits"] === "number" ? row["prior_visits"] : 0,
       agreedPayoutShare: agreedShare == null ? null : Number(agreedShare),
     });
   }
@@ -242,6 +275,9 @@ export async function continuityFor(
 export interface TimeWindow {
   start: Date;
   end: Date;
+  /** Its appointment cannot be verified; never label this as free capacity. */
+  requiresReview?: boolean;
+  jobId?: string;
 }
 
 /**
@@ -262,40 +298,49 @@ export async function busyWindowsFor(
   from: Date,
   to: Date,
 ): Promise<Map<string, TimeWindow[]>> {
-  const { data, error } = await db
-    .from("job_assignments")
-    .select("cleaner_id, jobs!inner ( scheduled_start, scheduled_end, estimated_clean_minutes, status )")
-    .gte("jobs.scheduled_start", from.toISOString())
-    .lte("jobs.scheduled_start", to.toISOString())
-    .in("jobs.status", ["scheduled", "assigned", "in_progress"]);
-  if (error) throw new Error(`busyWindowsFor: ${error.message}`);
-
+  if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || to <= from)
+    throw new Error("Matching calendar range unavailable");
   const byCleaner = new Map<string, TimeWindow[]>();
-  for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
-    const cleanerId = row["cleaner_id"];
-    const job = (row["jobs"] ?? {}) as Record<string, unknown>;
-    if (typeof cleanerId !== "string") continue;
-
-    const start = toDate(job["scheduled_start"]);
-    if (!start) continue;
-
-    // An end time if the job has one, otherwise the estimate. A job with
-    // neither is treated as a point in time rather than skipped: it still
-    // means she is somewhere at that moment.
-    const minutes = typeof job["estimated_clean_minutes"] === "number"
-      ? job["estimated_clean_minutes"]
-      : 0;
-    const end = toDate(job["scheduled_end"]) ?? new Date(start.getTime() + minutes * 60_000);
-
-    const existing = byCleaner.get(cleanerId);
-    if (existing) existing.push({ start, end });
-    else byCleaner.set(cleanerId, [{ start, end }]);
+  let cursor: string | null = null;
+  for (;;) {
+    let query = db.from("job_assignments")
+      .select("id, job_id, cleaner_id, jobs!inner ( scheduled_start, scheduled_end, estimated_clean_minutes, status )")
+      .or(`scheduled_start.lte.${to.toISOString()},scheduled_start.is.null,scheduled_start.eq.infinity`, { referencedTable: "jobs" })
+      .in("jobs.status", ["scheduled", "assigned", "in_progress"])
+      .order("id", { ascending: true }).limit(200);
+    if (cursor) query = query.gt("id", cursor);
+    const { data, error } = await query;
+    if (error || !Array.isArray(data)) throw new Error("Matching assignment calendar unavailable");
+    if (data.length === 0) break;
+    const records = data as Record<string, unknown>[];
+    for (const row of records) {
+      const cleanerId = row.cleaner_id, job = row.jobs;
+      if (typeof cleanerId !== "string" || !job || typeof job !== "object" || Array.isArray(job))
+        throw new Error("Matching assignment calendar unavailable");
+      const visit = job as Record<string, unknown>;
+      const start = toDate(visit.scheduled_start), storedEnd = toDate(visit.scheduled_end);
+      const minutes = typeof visit.estimated_clean_minutes === "number" ? Math.max(visit.estimated_clean_minutes, 1) : 1;
+      const end = start ? storedEnd && storedEnd > start ? storedEnd : new Date(start.getTime() + minutes * 60_000) : null;
+      const requiresReview = !start || !end || !Number.isFinite(end.getTime())
+        || (visit.scheduled_end != null && !storedEnd);
+      if (!requiresReview && (end! <= from || start! >= to)) continue;
+      const jobId = typeof row.job_id === "string" ? row.job_id : undefined;
+      const window = requiresReview ? { start: from, end: to, requiresReview: true, jobId } : { start: start!, end: end!, jobId };
+      byCleaner.set(cleanerId, [...(byCleaner.get(cleanerId) ?? []), window]);
+    }
+    const next = records.at(-1)?.id;
+    if (typeof next !== "string" || !next || (cursor !== null && next <= cursor))
+      throw new Error("Matching calendar paging unavailable");
+    cursor = next;
   }
   return byCleaner;
 }
 
 /** A cleaner's declared working hours, by day of week (0 = Sunday). */
-export type WeeklyAvailability = Map<string, Map<number, { startsAt: string; endsAt: string }[]>>;
+export type WeeklyAvailability = Map<
+  string,
+  Map<number, { startsAt: string; endsAt: string }[]>
+>;
 
 /**
  * Declared availability for the whole roster.
@@ -306,14 +351,19 @@ export type WeeklyAvailability = Map<string, Map<number, { startsAt: string; end
  * check that read silence as refusal would empty the board on the day it
  * shipped.
  */
-export async function availabilityFor(db: SupabaseClient): Promise<WeeklyAvailability> {
+export async function availabilityFor(
+  db: SupabaseClient,
+): Promise<WeeklyAvailability> {
   const { data, error } = await db
     .from("cleaner_availability")
     .select("cleaner_id, day_of_week, starts_at, ends_at");
   if (error) throw new Error(`availabilityFor: ${error.message}`);
 
   const byCleaner: WeeklyAvailability = new Map();
-  for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
+  for (const row of (Array.isArray(data) ? data : []) as Record<
+    string,
+    unknown
+  >[]) {
     const cleanerId = row["cleaner_id"];
     const day = row["day_of_week"];
     const startsAt = row["starts_at"];
@@ -366,15 +416,20 @@ export async function passedOverFor(
   const byJob = new Map<string, PassedOver[]>();
   if (jobIds.length === 0) return byJob;
 
-
   const { data, error } = await db
     .from("offers")
-    .select("job_id, cleaner_id, payout_pct")
+    .select(
+      "job_id, cleaner_id, payout_pct, schedule_revision, jobs!inner(schedule_revision)",
+    )
     .in("job_id", [...jobIds])
     .in("status", ["declined", "expired"]);
   if (error) throw new Error(`passedOverFor: ${error.message}`);
 
-  for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
+  for (const row of (Array.isArray(data) ? data : []) as Record<
+    string,
+    unknown
+  >[]) {
+    if (!currentOfferRevision(row)) continue;
     const jobId = row["job_id"];
     const cleanerId = row["cleaner_id"];
     const share = row["payout_pct"];
@@ -404,15 +459,57 @@ export async function offeredUpToFor(
 
   const { data, error } = await db
     .from("offers")
-    .select("job_id, payout_pct")
+    .select(
+      "job_id, payout_pct, schedule_revision, jobs!inner(schedule_revision)",
+    )
     .in("job_id", [...jobIds]);
   if (error) throw new Error(`offeredUpToFor: ${error.message}`);
 
-  for (const row of (Array.isArray(data) ? data : []) as Record<string, unknown>[]) {
+  for (const row of (Array.isArray(data) ? data : []) as Record<
+    string,
+    unknown
+  >[]) {
+    if (!currentOfferRevision(row)) continue;
     const jobId = row["job_id"];
     const share = Number(row["payout_pct"] ?? NaN);
     if (typeof jobId !== "string" || !Number.isFinite(share)) continue;
     byJob.set(jobId, Math.max(byJob.get(jobId) ?? 0, share));
   }
   return byJob;
+}
+
+function currentOfferRevision(row: Record<string, unknown>) {
+  const job = row.jobs;
+  return (
+    !!job &&
+    typeof job === "object" &&
+    !Array.isArray(job) &&
+    typeof row.schedule_revision === "number" &&
+    row.schedule_revision === (job as Record<string, unknown>).schedule_revision
+  );
+}
+
+/** Complete paged aggregates from the caller-scoped Dallas weekly view. */
+export async function scheduledHoursByWeek(db: SupabaseClient, weeks: readonly CalendarDate[]) {
+  const hours = new Map<CalendarDate, Map<string, number>>();
+  if (weeks.length === 0) return hours;
+  let offset = 0;
+  for (;;) {
+    const { data, error } = await db.from("cleaner_week_load_by_week")
+      .select("cleaner_id,week_start,scheduled_clean_hours").in("week_start", [...weeks])
+      .order("week_start").order("cleaner_id").range(offset, offset + 199);
+    if (error || !Array.isArray(data)) throw new Error("Matching weekly load unavailable");
+    if (data.length === 0) break;
+    for (const row of data as Record<string, unknown>[]) {
+      const week = toCalendarDate(row.week_start), id = row.cleaner_id;
+      const value = typeof row.scheduled_clean_hours === "number" || typeof row.scheduled_clean_hours === "string"
+        ? Number(row.scheduled_clean_hours) : NaN;
+      if (!week || !weeks.includes(week) || typeof id !== "string" || !Number.isFinite(value) || value < 0)
+        throw new Error("Matching weekly load unavailable");
+      const cleaners = hours.get(week) ?? new Map<string, number>();
+      cleaners.set(id, value); hours.set(week, cleaners);
+    }
+    offset += data.length;
+  }
+  return hours;
 }

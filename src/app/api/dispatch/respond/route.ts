@@ -1,7 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getRepository } from "@/lib/data";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { DispatchStore, type OfferResponse } from "@/lib/dispatch/store";
+import {
+  DispatchStore,
+  OfferWriteConflict,
+  type OfferResponse,
+} from "@/lib/dispatch/store";
 
 /**
  * A cleaner answers an offer.
@@ -30,6 +34,8 @@ export const dynamic = "force-dynamic";
 const MESSAGES: Record<OfferResponse, string> = {
   accepted: "Booked. It's on your schedule.",
   declined: "Thanks — we'll find someone else for this one.",
+  conflict:
+    "This offer overlapped another accepted visit, so it was withdrawn. It won’t count against you.",
   taken: "Someone else took this one just now. It won't count against you.",
   expired: "This offer has expired.",
   superseded: "You've already answered this one.",
@@ -40,6 +46,7 @@ const MESSAGES: Record<OfferResponse, string> = {
 const STATUS: Record<OfferResponse, number> = {
   accepted: 200,
   declined: 200,
+  conflict: 409,
   taken: 409,
   expired: 410,
   superseded: 200,
@@ -58,17 +65,63 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const reason = typeof body["reason"] === "string" ? body["reason"].slice(0, 500) : null;
+  const reason =
+    typeof body["reason"] === "string" ? body["reason"].slice(0, 500) : null;
 
   const repo = await getRepository();
+  if (repo.isDemo)
+    return NextResponse.json(
+      {
+        preview: true,
+        error:
+          "Preview offers cannot be answered. Sign in to accept your own offers.",
+      },
+      { status: 409 },
+    );
   const profile = await repo.getCurrentProfile();
-  if (!profile) return NextResponse.json({ error: "not signed in" }, { status: 401 });
+  if (!profile)
+    return NextResponse.json({ error: "not signed in" }, { status: 401 });
 
+  if (profile.role !== "cleaner")
+    return NextResponse.json(
+      {
+        accountRequired: true,
+        error: "Use your cleaner account to answer an offer.",
+      },
+      { status: 403 },
+    );
   const cleaner = await repo.getCleanerByProfile(profile.id);
-  if (!cleaner) return NextResponse.json({ error: "no cleaner record" }, { status: 403 });
+  if (!cleaner)
+    return NextResponse.json(
+      {
+        linkRequired: true,
+        error: "Call the office to connect your cleaner account.",
+      },
+      { status: 403 },
+    );
 
   const store = new DispatchStore(createAdminClient());
-  const outcome = await store.respond(offerId, cleaner.id, accept, reason);
+  let outcome: OfferResponse;
+  try {
+    outcome = await store.respond(offerId, cleaner.id, accept, reason);
+  } catch (error) {
+    if (error instanceof OfferWriteConflict)
+      return NextResponse.json(
+        {
+          retryable: true,
+          error:
+            "Your schedule changed while answering. Try again to check the offer’s current result.",
+        },
+        { status: 409 },
+      );
+    return NextResponse.json(
+      {
+        error:
+          "We could not confirm your answer. Try again, or call the office.",
+      },
+      { status: 500 },
+    );
+  }
 
   return NextResponse.json(
     { outcome, message: MESSAGES[outcome] },
@@ -76,10 +129,14 @@ export async function POST(request: NextRequest) {
   );
 }
 
-async function readJson(request: NextRequest): Promise<Record<string, unknown>> {
+async function readJson(
+  request: NextRequest,
+): Promise<Record<string, unknown>> {
   try {
     const parsed: unknown = await request.json();
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+    return parsed && typeof parsed === "object"
+      ? (parsed as Record<string, unknown>)
+      : {};
   } catch {
     return {};
   }

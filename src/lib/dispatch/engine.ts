@@ -1,3 +1,6 @@
+import { matchingWindow } from "./window";
+import { matchingWeek } from "./week";
+import type { CalendarDate } from "../time/zone";
 /**
  * The dispatch engine.
  *
@@ -53,6 +56,8 @@ export interface DispatchContext {
   cleaners: readonly Cleaner[];
   /** Drive from wherever this cleaner's previous stop is to this job. */
   driveFor: (cleaner: Cleaner, job: DispatchJob) => DriveLeg;
+  /** Saved cleaning hours for the visit’s Dallas week. Missing weeks have no assignments. */
+  scheduledHoursFor?: (cleaner: Cleaner, week: CalendarDate) => number;
   eligibilityFor?: (cleaner: Cleaner, job: DispatchJob) => EligibilityContext;
   priorJobsFor?: (cleaner: Cleaner, job: DispatchJob) => number;
   /**
@@ -72,6 +77,12 @@ export interface DispatchContext {
  * are completely different facts about the business.
  */
 export type DispatchDecision =
+  | {
+      kind: "needs_scheduling";
+      reason: "missing_time" | "invalid_time" | "past_time";
+      continuity: ContinuityOutcome;
+      rationale: string;
+    }
   | {
       kind: "assign_guaranteed";
       cleaner: Cleaner;
@@ -145,7 +156,24 @@ export function isUrgent(job: DispatchJob, now: Date): boolean {
 }
 
 export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDecision {
-  const { now, cleaners, driveFor } = context;
+  const { now, driveFor } = context;
+  const start = job.scheduledStart?.getTime();
+  if (start === undefined || !Number.isFinite(start) || start <= now.getTime() || !matchingWindow(job)) {
+    const reason = start === undefined ? "missing_time" : !Number.isFinite(start) || !matchingWindow(job) ? "invalid_time" : "past_time";
+    return {
+      kind: "needs_scheduling",
+      reason,
+      continuity: { status: "none", reason: "appointment_requires_review" },
+      rationale: reason === "past_time"
+        ? "The appointment time has passed. Review the visit with the Client and save a future appointment before matching."
+        : reason === "missing_time"
+          ? "Choose an appointment with the Client before matching this visit."
+          : "The appointment time is unavailable. Review and save a valid future appointment before matching.",
+    };
+  }
+  const cleaners = context.cleaners.map(cleaner => ({
+    ...cleaner, hoursScheduledThisWeek: scheduledHoursInWeek(cleaner, matchingWeek(job.scheduledStart!), context),
+  }));
   const eligibilityFor = context.eligibilityFor ?? (() => ({}));
 
   const inputsFor = (cleaner: Cleaner) => ({
@@ -476,9 +504,7 @@ export function dispatchBoard<J extends DispatchJob>(
   jobs: readonly J[],
   context: DispatchContext,
 ): BoardEntry<J>[] {
-  const load = new Map<string, number>(
-    context.cleaners.map((c) => [c.id, c.hoursScheduledThisWeek]),
-  );
+  const load = new Map<string, Map<string, number>>();
 
   const order = [...jobs].sort((a, b) => {
     const at = a.scheduledStart?.getTime() ?? Number.POSITIVE_INFINITY;
@@ -487,14 +513,21 @@ export function dispatchBoard<J extends DispatchJob>(
   });
 
   const entries: BoardEntry<J>[] = [];
+  const proposedWindows = new Map<string, { start: Date; end: Date }[]>();
 
   for (const job of order) {
-    const roster = context.cleaners.map((c) => ({
-      ...c,
-      hoursScheduledThisWeek: load.get(c.id) ?? c.hoursScheduledThisWeek,
-    }));
-
-    const decision = dispatch(job, { ...context, cleaners: roster });
+    const week = job.scheduledStart && Number.isFinite(job.scheduledStart.getTime())
+      ? matchingWeek(job.scheduledStart) : matchingWeek(context.now);
+    const weeklyLoad = load.get(week) ?? new Map<string, number>();
+    load.set(week, weeklyLoad);
+    const decision = dispatch(job, { ...context,
+      scheduledHoursFor: (cleaner, targetWeek) => load.get(targetWeek)?.get(cleaner.id)
+        ?? scheduledHoursInWeek(cleaner, targetWeek, context),
+      eligibilityFor: (cleaner, visit) => {
+        const saved = context.eligibilityFor?.(cleaner, visit) ?? {};
+        return { ...saved, busyWindows: [...(saved.busyWindows ?? []), ...(proposedWindows.get(cleaner.id) ?? [])] };
+      },
+    });
     entries.push({ job, decision });
 
     // Consume capacity so the next job sees a truthful roster.
@@ -512,8 +545,10 @@ export function dispatchBoard<J extends DispatchJob>(
     ) {
       const id = decision.cleaner.id;
       const drive = context.driveFor(decision.cleaner, job).minutes;
-      const hours = (job.estimatedCleanMinutes + drive) / 60;
-      load.set(id, (load.get(id) ?? 0) + hours);
+      const hours = (job.estimatedCleanMinutes + (decision.cleaner.terms?.driveTimePaid ? drive : 0)) / 60;
+      weeklyLoad.set(id, (weeklyLoad.get(id) ?? scheduledHoursInWeek(decision.cleaner, week, context)) + hours);
+      const window = matchingWindow(job, context.eligibilityFor?.(decision.cleaner, job).jobDurationMinutes);
+      if (window) proposedWindows.set(id, [...(proposedWindows.get(id) ?? []), window]);
     }
   }
 
@@ -524,14 +559,16 @@ export function dispatchBoard<J extends DispatchJob>(
 export function residualGuaranteedHours(
   entries: readonly BoardEntry[],
   context: DispatchContext,
+  week = matchingWeek(context.now),
 ): Map<string, number> {
   const load = new Map<string, number>(
-    context.cleaners.map((c) => [c.id, c.hoursScheduledThisWeek]),
+    context.cleaners.map((c) => [c.id, scheduledHoursInWeek(c, week, context)]),
   );
 
   for (const { job, decision } of entries) {
-    if (decision.kind === "assign_guaranteed" || decision.kind === "assign_w2") {
-      const drive = context.driveFor(decision.cleaner, job).minutes;
+    if ((decision.kind === "assign_guaranteed" || decision.kind === "assign_w2")
+      && job.scheduledStart && matchingWeek(job.scheduledStart) === week) {
+      const drive = decision.cleaner.terms?.driveTimePaid ? context.driveFor(decision.cleaner, job).minutes : 0;
       load.set(
         decision.cleaner.id,
         (load.get(decision.cleaner.id) ?? 0) + (job.estimatedCleanMinutes + drive) / 60,
@@ -592,4 +629,12 @@ function formatHold(seconds: number): string {
     return `${Number.isInteger(hours) ? hours : hours.toFixed(1)}h`;
   }
   return `${Math.round(seconds / 60)}m`;
+}
+
+/** A current-week roster value cannot stand in for a future week’s saved load. */
+export function scheduledHoursInWeek(cleaner: Cleaner, week: CalendarDate, context: DispatchContext): number {
+  const hours = context.scheduledHoursFor?.(cleaner, week)
+    ?? (week === matchingWeek(context.now) ? cleaner.hoursScheduledThisWeek : 0);
+  if (!Number.isFinite(hours) || hours < 0) throw new Error("Matching weekly load unavailable");
+  return hours;
 }

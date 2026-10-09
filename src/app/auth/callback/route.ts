@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { safeNext, savedNext } from "@/lib/auth/navigation";
+import { callbackFailure, safeNext, savedNext } from "@/lib/auth/navigation";
 
 export async function GET(request: NextRequest) {
   const { searchParams, origin } = request.nextUrl;
@@ -14,13 +14,14 @@ export async function GET(request: NextRequest) {
     url.searchParams.set("next", next);
     return NextResponse.redirect(url);
   };
-  if (searchParams.has("error")) return fail("invalid_code");
+  if (searchParams.has("error"))
+    return fail(callbackFailure(searchParams.get("error_code")));
   const code = searchParams.get("code");
   if (!code) return fail("missing_code");
   try {
     const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
-    if (error) return fail("invalid_code");
+    if (error) return fail(callbackFailure(error));
   } catch {
     return fail("service_unavailable");
   }

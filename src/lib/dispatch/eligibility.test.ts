@@ -178,3 +178,21 @@ describe("declared working hours", () => {
     expect(result.reasons).not.toContain("outside_working_hours");
   });
 });
+
+describe("client backup refusal",()=>{
+  it("excludes a declined cleaner only from the specified visit",()=>{const c=contractor(),j=JOB;expect(checkEligibility(c,{...j,clientDeclinedCleanerIds:[c.id]}).reasons).toContain("client_declined");expect(checkEligibility(c,{...j,clientDeclinedCleanerIds:["someone-else"]}).reasons).not.toContain("client_declined");});
+});
+
+describe("saved calendar completeness and occupied end", () => {
+  it("holds only the Cleaner whose existing assignment time needs review", () => {
+    const blocked = checkEligibility(contractor(), JOB, { busyWindows: [{ start: new Date(), end: new Date(), requiresReview: true }] });
+    expect(blocked.reasons).toContain("assignment_time_unavailable");
+    expect(blocked.reasons).not.toContain("already_booked");
+    expect(checkEligibility(contractor(), JOB).eligible).toBe(true);
+  });
+  it("checks the stored visit end against booked and declared windows", () => {
+    const extended = { ...JOB, estimatedCleanMinutes: 30, scheduledEnd: new Date("2026-09-10T18:00:00Z") };
+    expect(checkEligibility(contractor(), extended, { busyWindows: [{ start: new Date("2026-09-10T17:00:00Z"), end: new Date("2026-09-10T19:00:00Z") }] }).reasons).toContain("already_booked");
+    expect(checkEligibility(contractor(), extended, { workingWindows: [{ start: new Date("2026-09-10T14:00:00Z"), end: new Date("2026-09-10T17:00:00Z") }] }).reasons).toContain("outside_working_hours");
+  });
+});

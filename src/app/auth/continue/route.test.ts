@@ -49,10 +49,10 @@ describe("post-login routing", () => {
       "https://app.example.test/customer",
     );
   });
-  it("explains a missing customer link rather than displaying empty data", async () => {
+  it("takes a new Client to self-service home setup", async () => {
     session("customer", false);
     expect((await GET(request())).headers.get("location")).toBe(
-      "https://app.example.test/account-setup",
+      "https://app.example.test/customer/account/homes/new",
     );
   });
   it("explains a missing cleaner link", async () => {

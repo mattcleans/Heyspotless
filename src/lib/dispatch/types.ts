@@ -61,6 +61,8 @@ export interface Cleaner {
 }
 
 export interface DispatchJob {
+  /** Database revision used to reject dispatch from a moved appointment. */
+  scheduleRevision?: number;
   id: string;
   /** Ticket price in cents. */
   priceCents: number;
@@ -68,6 +70,8 @@ export interface DispatchJob {
   estimatedCleanMinutes: number;
   zip: string;
   scheduledStart: Date | null;
+  /** A saved visit end, when present, defines its actual occupied window. */
+  scheduledEnd?: Date | null;
   /** Windows this job could occupy, used by the clustering pass. */
   customerPreferredWindow?: { start: Date; end: Date };
   /**
@@ -96,6 +100,8 @@ export interface DispatchJob {
    * who watches a stranger take her own customer at a price she was never
    * offered learns to stop answering honestly.
    */
+  /** Backups the client declined for this specific visit. */
+  clientDeclinedCleanerIds?: readonly string[];
   passedOver?: readonly { cleanerId: string; share: number }[];
   /**
    * The highest share of the ticket this job has already been offered at.

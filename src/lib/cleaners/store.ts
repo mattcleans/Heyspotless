@@ -54,34 +54,15 @@ export class CleanerDirectory {
     return profile ?? null;
   }
 
-  /**
-   * Who serves this postcode.
-   *
-   * NOT A PICK LIST. The engine decides who cleans a given house — see `0028`
-   * and the dispatch rules it points at. This is the answer to "who are these
-   * people", which a customer is entitled to ask before letting one of them in,
-   * and it carries no rates and no book button for exactly that reason.
-   *
-   * A cleaner with no declared zips serves everywhere, which is the same
-   * reading the eligibility gate in `0003` takes.
-   */
+  /** Published profiles in the home's ZIP, filtered before the bounded read. */
   async servingZip(zip: string | null, limit = 12): Promise<CleanerProfile[]> {
-    const { data, error } = await this.db
-      .from("cleaner_profiles")
-      .select("*")
-      .order("completed_cleans", { ascending: false })
-      .limit(limit);
-
-    if (error) throw new Error(`cleaner_profiles: ${error.message}`);
-
-    const rows = (Array.isArray(data) ? data : []) as unknown as Record<string, unknown>[];
-    const profiles = rows.map(toProfile);
-
-    const matching = zip
-      ? profiles.filter((c) => c.serviceZips.length === 0 || c.serviceZips.includes(zip))
-      : profiles;
-
-    return this.withPhotos(matching);
+    if (zip !== null && !/^\d{5}(?:-\d{4})?$/.test(zip)) throw new Error("Check your home's ZIP code with the office before choosing a cleaner.");
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error("Invalid cleaner profile limit.");
+    let query = this.db.from("cleaner_profiles").select("*");
+    if (zip) query = query.or(`service_zips.eq.{},service_zips.cs.{${zip}}`);
+    const {data,error} = await query.order("completed_cleans",{ascending:false}).order("id",{ascending:true}).limit(limit);
+    if (error || !Array.isArray(data)) throw new Error("Cleaner profiles could not be loaded. Please refresh.");
+    return this.withPhotos((data as Record<string,unknown>[]).map(toProfile));
   }
 
   /**

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type HTMLInputTypeAttribute } from "react";
 import {
   FREQUENCY_LABELS,
   SERVICE_LABELS,
@@ -75,6 +75,12 @@ export function BookingWidget({
 
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const stepHeading = useRef<HTMLElement | null>(null);
+  const previousStage = useRef(stage);
+  useEffect(() => {
+    if (previousStage.current !== stage) stepHeading.current?.focus();
+    previousStage.current = stage;
+  }, [stage]);
 
   const available = frequenciesForService(service);
 
@@ -167,21 +173,24 @@ export function BookingWidget({
   if (stage === "sent") {
     return (
       <div className="card p-6 text-center">
-        <p className="text-lg font-semibold text-navy">
-          Got it, {firstName || "thanks"}.
+        <p ref={(node) => { stepHeading.current = node; }} tabIndex={-1} className="text-lg font-semibold text-navy">
+          Request received{firstName.trim() ? `, ${firstName.trim()}` : ""}.
         </p>
         <p className="mt-2 text-sm text-ink-2">
           Somebody will confirm your {SERVICE_LABELS[service].toLowerCase()} and
           the exact price with you. Your visit is not booked until we confirm
           the date, time, and price.
         </p>
-        <p className="mt-4 nums text-2xl font-semibold text-navy">
+        <p className="mt-4 text-xs text-ink-3">Your requested estimate</p>
+        <p className="mt-1 nums text-2xl font-semibold text-navy">
           {quote ? formatCents(quote.totalCents) : ""}
         </p>
         <p className="mt-1 text-xs text-ink-3">
           {FREQUENCY_LABELS[frequency]} · {rooms.bedrooms} bed ·{" "}
           {rooms.bathrooms} bath
         </p>
+        <p className="mt-4 text-sm text-ink-2">We received your contact details and home notes with this request. No payment was taken.</p>
+        <a href="tel:+14692800397" className="secondary-action mt-5 inline-flex">Call about my request</a>
       </div>
     );
   }
@@ -190,7 +199,7 @@ export function BookingWidget({
     return (
       <section className="visit-feature" aria-labelledby="review-title">
         <p className="text-sm text-ink-2">Step 3 of 3</p>
-        <h2 id="review-title" className="mt-2 text-xl font-semibold text-navy">
+        <h2 ref={(node) => { stepHeading.current = node; }} tabIndex={-1} id="review-title" className="mt-2 text-xl font-semibold text-navy">
           Review your request
         </h2>
         <dl className="mt-5 space-y-4 text-sm">
@@ -246,6 +255,7 @@ export function BookingWidget({
         {error && (
           <p role="alert" className="mt-4 text-sm text-bad">
             {error}
+            {" "}<a href="tel:+14692800397" className="underline">Call Hey Spotless for help</a>.
           </p>
         )}
         <button
@@ -271,13 +281,14 @@ export function BookingWidget({
         >
           Edit my details
         </button>
+        <button type="button" disabled={sending} onClick={() => { setStage("quote"); setError(null); }} className="secondary-action mt-3 w-full">Edit my clean</button>
       </section>
     );
   }
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-ink-2">
+      <p ref={(node) => { stepHeading.current = node; }} tabIndex={-1} className="text-sm text-ink-2">
         {stage === "quote"
           ? "Step 1 of 3: Your home & service"
           : "Step 2 of 3: Your details"}
@@ -386,8 +397,9 @@ export function BookingWidget({
           Continue to my details
         </button>
       ) : (
-        <div className="card space-y-3 p-5">
-          <p className="eyebrow">Where, and who</p>
+        <form onSubmit={(event) => { event.preventDefault(); setStage("review"); }} className="card space-y-3 p-5">
+          <p className="eyebrow">Your contact and home</p>
+          <p className="text-sm text-ink-2">Fields marked * are required. Your details stay here while you review or edit your request.</p>
 
           <div className="grid gap-3 sm:grid-cols-2">
             <Input
@@ -395,8 +407,10 @@ export function BookingWidget({
               value={firstName}
               onChange={setFirstName}
               required
+              autoComplete="given-name"
+              maxLength={80}
             />
-            <Input label="Last name" value={lastName} onChange={setLastName} />
+            <Input label="Last name" value={lastName} onChange={setLastName} autoComplete="family-name" maxLength={80} />
           </div>
 
           <Input
@@ -405,20 +419,23 @@ export function BookingWidget({
             onChange={setPhone}
             type="tel"
             required
+            autoComplete="tel"
+            maxLength={40}
           />
-          <Input label="Email" value={email} onChange={setEmail} type="email" />
+          <Input label="Email" value={email} onChange={setEmail} type="email" autoComplete="email" maxLength={200} />
           <Input
             label="Address"
             value={address}
             onChange={setAddress}
             required
+            autoComplete="street-address"
+            maxLength={300}
           />
-          <Input label="ZIP" value={zip} onChange={setZip} required />
-          <Input
-            label="Anything we should know?"
-            value={note}
-            onChange={setNote}
-          />
+          <Input label="ZIP" value={zip} onChange={setZip} required autoComplete="postal-code" inputMode="numeric" pattern="[0-9]{5}" maxLength={5} hint="Enter your 5-digit ZIP code." />
+          <label className="block">
+            <span className="text-xs text-ink-2">Anything we should know?</span>
+            <textarea rows={3} maxLength={2000} value={note} onChange={(event) => setNote(event.target.value)} className="mt-1 w-full rounded-lg border border-line bg-surface-2 px-3 py-3 text-base sm:text-sm" />
+          </label>
 
           {/* Customers explicitly choose whether to receive text updates. */}
           <label className="flex items-start gap-2 text-xs text-ink-2">
@@ -434,24 +451,18 @@ export function BookingWidget({
           {error ? <p className="text-sm text-bad">{error}</p> : null}
 
           <button
-            type="button"
-            disabled={
-              !firstName.trim() ||
-              !phone.trim() ||
-              !address.trim() ||
-              !/^\d{5}$/.test(zip.trim())
-            }
-            onClick={() => setStage("review")}
+            type="submit"
             className="w-full rounded-lg bg-navy px-4 py-3 text-sm font-semibold text-white disabled:opacity-40"
           >
             Review my request
           </button>
+          <button type="button" onClick={() => setStage("quote")} className="secondary-action w-full">Back to my estimate</button>
 
           <p className="text-center text-[11px] text-ink-3">
             {CUSTOMER_BRAND} will confirm before anything is charged. Nothing is
             taken now.
           </p>
-        </div>
+        </form>
       )}
     </div>
   );
@@ -473,8 +484,9 @@ function Stepper({
       <button
         type="button"
         aria-label={`One fewer ${label}`}
+        disabled={value === 0}
         onClick={() => onChange(Math.max(0, value - 1))}
-        className="h-11 w-11 rounded-lg border border-line bg-surface-2 text-lg leading-none"
+        className="h-11 w-11 rounded-lg border border-line bg-surface-2 text-lg leading-none disabled:opacity-40"
       >
         −
       </button>
@@ -484,8 +496,9 @@ function Stepper({
       <button
         type="button"
         aria-label={`One more ${label}`}
+        disabled={value === max}
         onClick={() => onChange(Math.min(max, value + 1))}
-        className="h-11 w-11 rounded-lg border border-line bg-surface-2 text-lg leading-none"
+        className="h-11 w-11 rounded-lg border border-line bg-surface-2 text-lg leading-none disabled:opacity-40"
       >
         +
       </button>
@@ -499,14 +512,26 @@ function Input({
   onChange,
   type = "text",
   required = false,
+  autoComplete,
+  maxLength,
+  inputMode,
+  pattern,
+  hint,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
-  type?: string;
+  type?: HTMLInputTypeAttribute;
   required?: boolean;
+  autoComplete?: string;
+  maxLength?: number;
+  inputMode?: "numeric";
+  pattern?: string;
+  hint?: string;
 }) {
+  const hintId = useId();
   return (
+    <div>
     <label className="block">
       <span className="text-xs text-ink-2">
         {label}
@@ -515,10 +540,18 @@ function Input({
       <input
         type={type}
         required={required}
+        autoComplete={autoComplete}
+        maxLength={maxLength}
+        inputMode={inputMode}
+        pattern={pattern ?? (required ? ".*\\S.*" : undefined)}
+        title={hint}
+        aria-describedby={hint ? hintId : undefined}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="mt-1 w-full rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm"
+        className="mt-1 min-h-11 w-full rounded-lg border border-line bg-surface-2 px-3 py-3 text-base sm:text-sm"
       />
     </label>
+      {hint && <span id={hintId} className="mt-1 block text-xs text-ink-2">{hint}</span>}
+    </div>
   );
 }
