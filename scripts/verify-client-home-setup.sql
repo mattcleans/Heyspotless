@@ -1,5 +1,6 @@
 -- Disposable verification database only. All actors and outcomes roll back.
 begin;
+alter table auth.users add column if not exists email_confirmed_at timestamptz;
 grant usage on schema public,auth to authenticated;
 grant execute on function auth.uid() to authenticated;
 grant select on profiles,customers,properties,jobs to authenticated;

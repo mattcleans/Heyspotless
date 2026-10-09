@@ -15,6 +15,7 @@ home_barrier() {
  echo "Client home race missed observed lock: $home_app" >&2; return 1
 }
 home_sql <<'SQL'
+alter table auth.users add column if not exists email_confirmed_at timestamptz;
 insert into auth.users(id,email,email_confirmed_at) values('d9500000-0000-4000-8000-000000000001','home-race@example.test',now());
 SQL
 cat >"$HOME_SETUP_TMP/save.sql" <<'SQL'
