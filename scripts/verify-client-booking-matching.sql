@@ -18,9 +18,12 @@ set local role service_role;
 do $$ begin
  if expire_stale_offers_for_job('e1400000-0000-4000-8000-000000000001')<>1 then raise exception 'Scoped expiration count wrong';end if;
  if expire_stale_offers_for_job('e1400000-0000-4000-8000-000000000001')<>0 then raise exception 'Expiration retry changed result';end if;
- if (select status from offers where id='e1500000-0000-4000-8000-000000000002')<>'sent' then raise exception 'Foreign visit expired';end if;
- if (select status from offers where id='e1500000-0000-4000-8000-000000000003')<>'accepted' or (select payout_cents from offers where id='e1500000-0000-4000-8000-000000000003')<>6000 then raise exception 'Historical acceptance/pay changed';end if;
  begin perform expire_stale_offers_for_job(null);raise exception 'Missing visit accepted';exception when sqlstate '22023' then null;end;
  raise notice 'Client booking matching: scoped expiration, retry, accepted pay and access passed';
+end $$;
+reset role;
+do $$ begin
+ if (select status from offers where id='e1500000-0000-4000-8000-000000000002')<>'sent' then raise exception 'Foreign visit expired';end if;
+ if (select status from offers where id='e1500000-0000-4000-8000-000000000003')<>'accepted' or (select payout_cents from offers where id='e1500000-0000-4000-8000-000000000003')<>6000 then raise exception 'Historical acceptance/pay changed';end if;
 end $$;
 rollback;

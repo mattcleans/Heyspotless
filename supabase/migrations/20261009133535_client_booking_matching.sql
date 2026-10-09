@@ -1,7 +1,8 @@
 -- A Client booking kickoff expires only offers on its owned visit. The
--- invoker keeps existing server privileges; no Client/anonymous write grant.
+-- restricted server function follows the existing dispatch write boundary;
+-- no Client/anonymous execute grant or broader table-write grant is added.
 create function public.expire_stale_offers_for_job(p_job_id uuid) returns integer
-language plpgsql security invoker set search_path=public,pg_temp as $$
+language plpgsql security definer set search_path=public,pg_temp as $$
 declare v_count integer;
 begin
   if p_job_id is null then raise exception 'visit required' using errcode='22023';end if;
