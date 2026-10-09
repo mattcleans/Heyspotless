@@ -32,7 +32,7 @@ do $$ declare h jsonb; r jsonb; b jsonb; v_customer uuid; v_property uuid; begin
  begin perform save_my_home('d9300000-0000-4000-8000-000000000003',h||'{"bathrooms":1.5}',null);raise exception 'Fractional rooms accepted';exception when sqlstate '22023' then null;end;
  begin perform save_my_home('d9300000-0000-4000-8000-000000000003',h||'{"customerId":"foreign"}',null);raise exception 'Caller identity accepted';exception when sqlstate '22023' then null;end;
  -- A first home can immediately reach the existing exact-price booking path.
- b:=review_my_booking('d9400000-0000-4000-8000-000000000001',v_property,'standard','one_time',now()+interval '30 days',false,'[]','Synthetic setup booking');
+ b:=review_my_booking('d9400000-0000-4000-8000-000000000001',v_property,'standard','one_time',date_trunc('day',now()+interval '30 days')+interval '15 hours',false,'[]','Synthetic setup booking');
  if (b->>'totalCents')::integer is distinct from 19900 then raise exception 'First-home price wrong: %',b;end if;
  perform confirm_my_booking('d9400000-0000-4000-8000-000000000001');
  if (select count(*) from jobs where property_id=v_property)<>1 then raise exception 'First-home booking unavailable';end if;
