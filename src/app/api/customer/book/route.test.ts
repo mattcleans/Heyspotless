@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-const m = vi.hoisted(() => ({ repo: vi.fn(), client: vi.fn(), rpc: vi.fn() }));
+const m = vi.hoisted(() => ({ repo: vi.fn(), client: vi.fn(), rpc: vi.fn(), after: vi.fn(), matching: vi.fn() }));
+vi.mock("next/server", async original => ({ ...await original<typeof import("next/server")>(), after: m.after }));
+vi.mock("@/lib/dispatch/run", () => ({ runDispatch: m.matching }));
 vi.mock("server-only", () => ({}));
 vi.mock("@/lib/data", () => ({ getRepository: m.repo }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: m.client }));
@@ -9,7 +11,7 @@ import { bookingFixture } from "@/lib/booking/test-fixtures";
 const id = bookingFixture.id;
 function account(role: string | null, isDemo = false) { m.repo.mockResolvedValue({ isDemo, getCurrentProfile: async () => role ? { id, role } : null }); }
 function post(body: unknown = { action: "confirm", id }) { return POST(new NextRequest("https://example.test/api/customer/book", { method: "POST", body: JSON.stringify(body) })); }
-beforeEach(() => { vi.clearAllMocks(); account("customer"); m.client.mockResolvedValue({ rpc: m.rpc }); m.rpc.mockResolvedValue({ data: { ...bookingFixture, state: "requested", jobId: id }, error: null }); });
+beforeEach(() => { vi.clearAllMocks(); m.after.mockReset(); m.matching.mockReset(); account("customer"); m.client.mockResolvedValue({ rpc: m.rpc }); m.rpc.mockResolvedValue({ data: { ...bookingFixture, state: "requested", jobId: id }, error: null }); });
 describe("Client booking endpoint", () => {
   it.each([[null, 401], ["admin", 403], ["cleaner", 403]])("denies %s before database access", async (role, status) => {
     account(role as string | null); expect((await post()).status).toBe(status); expect(m.client).not.toHaveBeenCalled();
@@ -37,4 +39,17 @@ describe("Client booking endpoint", () => {
     "does not claim success from an invalid or mismatched receipt", async data => { m.rpc.mockResolvedValue({ data, error: null }); expect((await post()).status).toBe(503); },
   );
   it("returns a recoverable failure when the database response is lost", async () => { m.rpc.mockRejectedValue(new Error("synthetic timeout")); expect((await post()).status).toBe(503); });
+  it("starts owned matching only after returning the saved request", async () => {
+    expect((await post()).status).toBe(200); expect(m.after).toHaveBeenCalledOnce(); expect(m.matching).not.toHaveBeenCalled();
+    await m.after.mock.calls[0]![0]();
+    expect(m.matching).toHaveBeenCalledWith("https://example.test", { jobId: id, customerProfileId: id });
+  });
+  it("preserves the durable receipt when background matching is unavailable", async () => {
+    const log = vi.spyOn(console,"error").mockImplementation(() => {}); m.matching.mockRejectedValue(new Error("synthetic matcher outage"));
+    expect((await post()).status).toBe(200); await expect(m.after.mock.calls[0]![0]()).resolves.toBeUndefined(); log.mockRestore();
+  });
+  it("never starts matching after a refused or malformed confirmation", async () => {
+    m.rpc.mockResolvedValue({ data: null, error: { code: "PT409" } }); expect((await post()).status).toBe(409); expect(m.after).not.toHaveBeenCalled();
+    m.rpc.mockResolvedValue({ data: null, error: null }); expect((await post()).status).toBe(503); expect(m.after).not.toHaveBeenCalled();
+  });
 });

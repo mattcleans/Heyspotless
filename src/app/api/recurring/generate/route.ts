@@ -109,3 +109,6 @@ function messageOf(error: unknown): string {
     ? error.message.slice(0, 500)
     : "generation failed";
 }
+
+/** Scheduled Vercel invocations use GET and the same secret/feature gates. */
+export const GET = POST;

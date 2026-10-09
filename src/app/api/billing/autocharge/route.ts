@@ -251,3 +251,6 @@ function messageOf(error: unknown): string {
   }
   return "charge failed";
 }
+
+/** Scheduled Vercel invocations use GET and the same secret/feature gates. */
+export const GET = POST;

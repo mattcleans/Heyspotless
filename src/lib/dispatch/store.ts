@@ -186,8 +186,10 @@ export class DispatchStore {
   }
 
   /** Time out every countdown that has run down. Returns how many. */
-  async expireStaleOffers(): Promise<number> {
-    const { data, error } = await this.db.rpc("expire_stale_offers");
+  async expireStaleOffers(jobId?: string): Promise<number> {
+    const { data, error } = jobId
+      ? await this.db.rpc("expire_stale_offers_for_job", { p_job_id: jobId })
+      : await this.db.rpc("expire_stale_offers");
     if (error) throw new Error(`expireStaleOffers: ${error.message}`);
     return typeof data === "number" ? data : 0;
   }

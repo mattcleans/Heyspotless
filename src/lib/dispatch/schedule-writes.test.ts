@@ -9,6 +9,10 @@ beforeEach(() => {
   rpc.mockResolvedValue({ data: null, error: null });
 });
 describe("dispatch appointment revisions", () => {
+  it("expires only the requested visit during owned matching", async () => {
+    rpc.mockResolvedValue({ data: 1, error: null }); expect(await new DispatchStore(db).expireStaleOffers("own-job")).toBe(1);
+    expect(rpc).toHaveBeenCalledWith("expire_stale_offers_for_job", { p_job_id: "own-job" });
+  });
   it("sends the loaded schedule revision with an offer", async () => {
     await new DispatchStore(db).recordOffer({
       jobId: "job",

@@ -1,11 +1,9 @@
 # Setup checklist
 
-About an hour of your time in total. Items 1 and 3–5 are done: the A2P campaign
-cleared on 14 September 2026, the Supabase project is live, and the app is
-deployed at `app.heyspotless.com` with the hourly sweeps running green against
-it. What remains is Stripe (item 2 — billing is switched OFF in production
-today), the customer book (item 6), and the items nobody can do for you: 7, 9
-and 10.
+Use this checklist with the current deployment and [release gates](release-readiness.md).
+Historical provider approval and configured variables do not prove successful
+messages, charges or scheduled execution. Verify those operations separately
+before treating the application as ready for customers.
 
 `GET /api/health` with the cron secret answers which of these are actually
 wired, without anybody having to guess:
@@ -417,3 +415,26 @@ environment variables. Use the [official Supabase integration guide](https://res
 Verify a delivered recovery email and the complete user-owned password setup and
 password sign-in before declaring access ready. Keep database and provider plan
 changes separate; custom SMTP does not require upgrading the preview database.
+
+## Automatic matching and scheduled execution
+
+A successful Client confirmation in this branch saves its receipt first, then
+starts matching after the HTTP response. The shared matcher rechecks the saved
+Client role and customer link and processes only that owned visit. It expires
+only that visit's old offers, reloads current relationships/revision and keeps
+canceled, started and already assigned work out of the kickoff. A matcher outage
+does not erase the booking; saved pending visits remain available to a later sweep.
+
+The dispatch, recurring and billing endpoints accept both GET and POST under the
+same CRON_SECRET gate. Billing keeps its feature/consent/provider gates. This
+supports [Vercel cron's GET invocations](https://vercel.com/docs/cron-jobs), while
+manual operator calls may keep using POST. Preview deployments do not receive
+Vercel cron invocations automatically.
+
+Continuous matching retry scheduling remains a release gate: the current
+vercel.json has daily recurring and billing entries and no matching trigger.
+[Vercel Hobby limits](https://vercel.com/docs/cron-jobs/usage-and-pricing) allow
+each cron only once daily; that cannot maintain offer deadlines measured in
+minutes. Select and verify a free Supabase scheduled worker or an existing
+minute-capable Vercel plan before claiming continuous automatic matching. Do not
+replace this gate with a once-daily matching job or enable paid hosting silently.

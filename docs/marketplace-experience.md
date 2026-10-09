@@ -15,7 +15,7 @@ and [three-role audit](ux-review/completion-audit.md) continue to apply. Histori
 ## Problem and intended outcome
 
 The app already contains pricing, quotes, recurrence, eligibility, offers,
-assignment, service evidence and payment recovery. New-home requests use public estimates and lead submission. Returning Clients
+assignment, service evidence and payment recovery. Guest new-home requests use public estimates and lead submission. New Clients can create a password account, confirm their email and review/save their own home before using exact-price booking; imported accounts still need Office linking. Returning Clients
 now request directly from their saved home with exact priced terms and receipt
 recovery. Office-reviewed quotes still require Office booking. Matching
 recommendations remain separate from saved offers. Users need a coherent path with a clear next action, visible saved
@@ -93,9 +93,9 @@ P0 reliability, privacy, payment or representative-usability gates.
 
 | Surface | Current evidence | Work needed |
 |---|---|---|
-| [Public booking](../src/app/book/booking-widget.tsx) and [lead intake](../src/app/api/leads/route.ts) | Estimate plus contact/home inquiry; server recomputes price. | Establish new-Client account/home intake; capacity-backed confirmation remains open. Returning Clients now have an owned booking path. |
+| [Public booking](../src/app/book/booking-widget.tsx), [Client signup](../src/app/signup/page.tsx) and [home setup](../src/app/customer/account/homes/new/page.tsx) | Guest inquiry remains available. Verified Clients can review/save an owned home and enter exact-price booking; existing contact data and imported-account links are preserved. | Earn human new-Client signup/email confirmation and deployed home review/save. Capacity-backed confirmation remains open. |
 | [Client workspace](../src/app/customer/page.tsx) and [quotes](../src/components/quotes/quote-card.tsx) | Saved terms, decisions, booking links and guarded changes exist; many synthetic role journeys verified. | Returning Client password sign-in, one-time and biweekly self-service requests and reload recovery earned in the isolated preview. Original receipt details and Office inspection added for verification; capacity, new-Client and device gates remain. |
-| [Matching](../src/app/admin/dispatch/page.tsx) and [dispatch sweep](../src/app/api/dispatch/run/route.ts) | Recommendations and persisted dispatch are separate implementations. Preference and eligibility logic exist. | Earn deployed saved dispatch, offer delivery/acceptance and no-supply recovery; measure latency and Office intervention before making a service promise. |
+| [Matching](../src/app/admin/dispatch/page.tsx) and [dispatch sweep](../src/app/api/dispatch/run/route.ts) | Recommendations use the engine and saved calendar inputs. A shared executor persists protected sweeps and immediate matching after a Client confirmation; an owned kickoff expires/reloads only that visit. | Finish continuous retry scheduling, deployed saved dispatch, offer delivery/acceptance and no-supply recovery; measure latency and Office intervention before making a service promise. |
 | [Crew review](../src/app/admin/visits/[id]/replace-lead/replacement-form.tsx) | Contractor replacement and exact Client approval earned in the isolated preview; reopened history correction under verification. | Verify corrected history, employee/restoration/outgoing-Cleaner cases and capacity races in the actual role workspaces. |
 | [Cleaner earnings](../src/app/cleaner/earnings/page.tsx) and service capture | Agreed pay and payment records are separated; synthetic uploads/completion earned. | Provider-confirmed payment journey and physical-phone recovery remain open. |
 | [Automation](../src/app/admin/automation/page.tsx) | Health/exception surfaces exist in code. | Earn protected deployment/provider checks and make every unresolved service outcome actionable. |
