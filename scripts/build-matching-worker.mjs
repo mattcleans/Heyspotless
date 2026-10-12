@@ -53,17 +53,22 @@ export async function buildMatchingWorker({ root, output, projectRef, appOrigin,
       const offset = match.getStart(ast)+1;
       content = content.slice(0, offset) + rewritten + content.slice(match.getEnd()-1);
     }
-    if (/\bprocess\.env\b/.test(content)) content = 'import process from "node:process";\n' + content;
+    if (/\bprocess\.env\b/.test(content)) {
+      let adapter=posix.relative(posix.dirname(name),'runtime/environment.js');
+      if(!adapter.startsWith('.')) adapter=`./${adapter}`;
+      content = `import process from ${JSON.stringify(adapter)};\n` + content;
+    }
     if (/\bBuffer\b/.test(content)) content = 'import { Buffer } from "node:buffer";\n' + content;
     files.push({ name, content });
   }
   await visit('src/lib/dispatch/run.ts');
   sources.sort((a,b) => a.path.localeCompare(b.path));
   const templates=[];
-  for(const filename of ['index.js','handler.js']) templates.push({name:filename,sha256:createHash('sha256').update(await readFile(resolve(root,'supabase/functions/matching-worker',filename),'utf8')).digest('hex')});
+  for(const filename of ['index.js','handler.js','environment.js']) templates.push({name:filename,sha256:createHash('sha256').update(await readFile(resolve(root,'supabase/functions/matching-worker',filename),'utf8')).digest('hex')});
   const sourceDigest = createHash('sha256').update(JSON.stringify({sources,templates,sdkVersion:version})).digest('hex');
   const config = { projectRef, appOrigin, sourceVersion, sourceDigest, preview: Boolean(preview), sdkVersion: version };
-  for (const filename of ['index.js', 'handler.js']) files.push({ name: filename, content: await readFile(resolve(root, 'supabase/functions/matching-worker', filename), 'utf8') });
+  for (const filename of ['index.js', 'handler.js', 'environment.js']) files.push({ name: filename, content: await readFile(resolve(root, 'supabase/functions/matching-worker', filename), 'utf8') });
+  files.push({name:'runtime/environment.js',content:'import config from "../config.js";\nimport { createWorkerEnvironment } from "../environment.js";\nexport default Object.freeze({env:createWorkerEnvironment(config,key=>Deno.env.get(key))});\n'});
   files.push({ name: 'config.js', content: `export default ${JSON.stringify(config)};\n` });
   files.push({ name: 'runtime/server-only.ts', content: '// This deployment runs only in the authenticated Edge server runtime.\nexport {};\n' });
   files.push({ name: 'deno.json', content: JSON.stringify({ compilerOptions: { lib: ['deno.ns', 'deno.window', 'dom', 'esnext'] } }) });

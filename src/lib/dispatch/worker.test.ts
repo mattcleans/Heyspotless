@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // The actual Edge HTTP boundary is plain JavaScript so both runtimes test it.
 // @ts-expect-error The deployment JavaScript is checked by Deno in CI.
 import { createWorkerHandler, workerToken } from "../../../supabase/functions/matching-worker/handler.js";
+// @ts-expect-error The deployment JavaScript is checked by Deno in CI.
+import { createWorkerEnvironment } from "../../../supabase/functions/matching-worker/environment.js";
 const config={projectRef:"abcdefghijklmnopqrst",appOrigin:"https://preview.example.test",sourceVersion:"a".repeat(40),sourceDigest:"b".repeat(64),preview:true};
 const service="test-worker-service-key",env=(key:string)=>key==="SUPABASE_SERVICE_ROLE_KEY"?service:key==="SUPABASE_URL"?"https://abcdefghijklmnopqrst.supabase.co":null;
 const summary={jobs:1,expiredOffers:0,assigned:0,needsScheduling:0,held:0,offered:1,notified:0,deferred:0,unreachable:0,refused:0,unfilled:0,pushed:0,failed:0};
@@ -10,6 +12,9 @@ const handler=(getEnv:(key:string)=>string|null=env)=>createWorkerHandler({confi
 async function request(method="POST",token?:string){return new Request("https://functions.example.test/matching-worker",{method,headers:token?{"x-heyspotless-worker-token":token}:{}});}
 beforeEach(()=>{vi.clearAllMocks();m.run.mockResolvedValue(summary);m.claim.mockResolvedValue(true);m.finish.mockResolvedValue(true);});
 describe("matching worker boundary",()=>{
+ it("maps server configuration without writing to hosted environment variables",()=>{const getEnv=vi.fn((key:string)=>(({SUPABASE_URL:"https://project.example",SUPABASE_ANON_KEY:"public-key",SUPABASE_SERVICE_ROLE_KEY:"private-key"} as Record<string,string>)[key]));const environment=createWorkerEnvironment(config,getEnv);expect(environment.NEXT_PUBLIC_SUPABASE_URL).toBe("https://project.example");expect(environment.NEXT_PUBLIC_SUPABASE_ANON_KEY).toBe("public-key");expect(environment.SUPABASE_SERVICE_ROLE_KEY).toBe("private-key");expect(environment.DEMO_MODE).toBe("0");expect(Reflect.set(environment,"DEMO_MODE","1")).toBe(false);});
+ it("keeps every provider disabled in preview even when hosted flags enable it",()=>{const environment=createWorkerEnvironment(config,()=>"1");for(const key of ["MESSAGING_ENABLED","PUSH_ENABLED","BILLING_ENABLED"])expect(environment[key]).toBe("0");});
+ it("preserves configured provider flags outside preview",()=>{const environment=createWorkerEnvironment({...config,preview:false},()=>"1");expect(environment.MESSAGING_ENABLED).toBe("1");});
  it("denies a public key or ordinary account without the scoped token",async()=>{expect((await handler()(await request())).status).toBe(401);expect(m.claim).not.toHaveBeenCalled();expect(m.run).not.toHaveBeenCalled();});
  it("binds the scoped token to one project rather than reusing the service key",async()=>{const token=await workerToken(service,config.projectRef);expect(token).not.toBe(service);expect(token).not.toBe(await workerToken(service,"other-project"));expect((await handler()(await request("POST",service))).status).toBe(401);});
  it("reports authenticated startup without claiming a database health pass",async()=>{const r=await handler()(await request("GET",await workerToken(service,config.projectRef)));expect(r.status).toBe(200);expect(await r.json()).toMatchObject({databaseChecked:false,providerMessagesAllowed:false,sourceVersion:config.sourceVersion});expect(m.claim).not.toHaveBeenCalled();});

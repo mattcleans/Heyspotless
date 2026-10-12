@@ -1,14 +1,9 @@
-import process from 'node:process';
 import config from './config.js';
 import { createWorkerHandler } from './handler.js';
 
 // The deployment artifact includes the actual app libraries. Configuration is
-// mapped before their dynamic import; no credentials are embedded in files.
-process.env.NEXT_PUBLIC_SUPABASE_URL=Deno.env.get('SUPABASE_URL');
-process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY=Deno.env.get('SUPABASE_ANON_KEY');
-process.env.SUPABASE_SERVICE_ROLE_KEY=Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
-process.env.DEMO_MODE='0';
-if(config.preview) { process.env.MESSAGING_ENABLED='0';process.env.PUSH_ENABLED='0';process.env.BILLING_ENABLED='0'; }
+// read through the generated adapter; hosted runtimes prohibit env mutation.
+// No credentials are embedded in deployment files.
 const { createAdminClient }=await import('./source/src/lib/supabase/admin.ts');
 const { runDispatch }=await import('./source/src/lib/dispatch/run.ts');
 const db=createAdminClient();
