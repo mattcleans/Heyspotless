@@ -4,6 +4,8 @@ import { isDemoMode } from "@/lib/supabase/env";
 import { isBillingEnabled } from "@/lib/stripe/env";
 import { isMessagingEnabled } from "@/lib/messaging/env";
 import { formatDateTimeInZone } from "@/lib/time/zone";
+import {readMatchingHealth,type MatchingHealth} from "@/lib/operations/matching-health";
+import {MatchingHealthSection} from "@/components/operations/matching-health";
 import {
   automationState,
   type AutomationRecord,
@@ -23,9 +25,10 @@ export default async function AutomationPage() {
     decided_by: string | null;
   }[] = [];
   let unavailable = false;
+  let workerHealth: MatchingHealth | null = null;
   if (!demo) {
     const db = await createClient();
-    const [messages, matching] = await Promise.all([
+    const [messages, matching, worker] = await Promise.all([
       db
         .from("automations")
         .select("id, outcome, error, fired_at, scheduled_for")
@@ -38,7 +41,9 @@ export default async function AutomationPage() {
         .gte("decided_at", since)
         .order("decided_at", { ascending: false })
         .limit(500),
+      db.rpc("office_matching_worker_health"),
     ]);
+    if (!worker.error) workerHealth=readMatchingHealth(worker.data);
     unavailable = Boolean(messages.error || matching.error);
     if (!unavailable) {
       records = (messages.data ?? []) as AutomationRecord[];
@@ -57,6 +62,7 @@ export default async function AutomationPage() {
         Matching, reminders, and follow-ups should run in the background. This
         view surfaces the work that may need a person.
       </p>
+      {!demo && <MatchingHealthSection health={workerHealth} now={now} />}
       {demo ? (
         <p className="preview-note mt-6 rounded-xl">
           Live activity is not available in preview. No automation has been run
@@ -159,13 +165,13 @@ export default async function AutomationPage() {
         </section>
         <section className="card p-6">
           <h2 className="text-lg font-semibold text-navy">
-            The remaining booking gap
+            Client booking and inquiries
           </h2>
           <p className="mt-3 text-sm leading-relaxed text-ink-2">
-            The public form currently records an inquiry. It still needs
-            confirmed availability and a reservation flow before a new customer
-            can move straight into automatic matching without the office
-            creating a job.
+            Clients with a verified account and saved home can review the exact
+            price and request a clean directly. Guest inquiries still need
+            Office follow-up. A saved request does not promise a Cleaner or
+            appointment availability.
           </p>
           <Link href="/admin/leads" className="secondary-action mt-5">
             Review current inquiries

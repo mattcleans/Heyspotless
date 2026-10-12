@@ -46,6 +46,14 @@ Partial or unknown matching failures return an error and leave durable pending
 visits available to a later run. Existing offer/capacity/write guards also protect
 overlap with a Client kickoff or a manual operator sweep.
 
+Management's Automation page reads saved worker and scheduler outcomes through
+the Office-only health function. A successful manual run cannot establish that
+the scheduler is working. Paused, missing, changed/duplicate schedules, failed
+attempts, expired leases and overdue completion require distinct recovery states.
+The read exposes only status/times and selected numeric counts, and never enables
+matching, sends a message or makes a charge. Client/Cleaner/anonymous callers are
+denied; the function rechecks the saved Office role for every read.
+
 Preview artifacts force messaging, push and billing flags off. An actual worker
 can still record offers, assignments and review decisions in its isolated database;
 those intentional outcomes must be inspected before enabling recurring execution.
