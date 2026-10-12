@@ -2,13 +2,9 @@
 -- The project URL is supplied as spotless.matching_worker_url. No key belongs
 -- in this script, its migration history or cron command text.
 create extension if not exists pg_cron;
-create extension if not exists pg_net with schema extensions;
--- pg_net defaults can expose queued HTTP headers to database client roles.
--- Only the postgres operator/Cron needs its transport in this installation.
-revoke all on all tables in schema net from public,anon,authenticated,service_role;
-revoke all on all sequences in schema net from public,anon,authenticated,service_role;
-revoke all on all functions in schema net from public,anon,authenticated,service_role;
-revoke all on schema net from public,anon,authenticated,service_role;
+-- A private synchronous transport keeps credential-bearing requests out of
+-- pg_net's admin-owned queue tables. Cron waits for the bounded worker result.
+create extension if not exists http with schema spotless_private;
 create table spotless_private.matching_worker_destination (
   id boolean primary key default true check(id),
   project_url text not null check(project_url ~ '^https://[a-z0-9]{20}\.supabase\.co$')
@@ -37,17 +33,27 @@ end $$;
 revoke all on function public.configure_matching_worker_credentials(text,text,text) from public,anon,authenticated,service_role;
 grant execute on function public.configure_matching_worker_credentials(text,text,text) to service_role;
 
-create function spotless_private.invoke_matching_worker() returns bigint
+create or replace function spotless_private.invoke_matching_worker() returns bigint
 language plpgsql security definer set search_path=public,pg_temp as $$
-declare v_url text;v_anon text;v_token text;v_id bigint;
+declare v_url text;v_anon text;v_token text;v_status integer;
 begin
  select decrypted_secret into v_url from vault.decrypted_secrets where name='heyspotless_matching_project_url';
  select decrypted_secret into v_anon from vault.decrypted_secrets where name='heyspotless_matching_anon_key';
  select decrypted_secret into v_token from vault.decrypted_secrets where name='heyspotless_matching_worker_token';
  if v_url is null or v_anon is null or v_token is null or v_url !~ '^https://[a-z0-9]{20}\.supabase\.co$'
  or v_url is distinct from (select project_url from spotless_private.matching_worker_destination where id) then raise exception 'worker configuration missing';end if;
- select net.http_post(url:=v_url||'/functions/v1/matching-worker',headers:=jsonb_build_object('Content-Type','application/json','Authorization','Bearer '||v_anon,'apikey',v_anon,'x-heyspotless-worker-token',v_token),body:='{}'::jsonb,timeout_milliseconds:=90000) into v_id;
- return v_id;
+ perform spotless_private.http_reset_curlopt();
+ perform spotless_private.http_set_curlopt('CURLOPT_CONNECTTIMEOUT_MS','10000');
+ perform spotless_private.http_set_curlopt('CURLOPT_TIMEOUT_MS','90000');
+ select response.status into v_status from spotless_private.http((
+  'POST',v_url||'/functions/v1/matching-worker',
+  array[row('Authorization','Bearer '||v_anon)::spotless_private.http_header,
+        row('apikey',v_anon)::spotless_private.http_header,
+        row('x-heyspotless-worker-token',v_token)::spotless_private.http_header],
+  'application/json','{}'
+ )::spotless_private.http_request) response;
+ if v_status is null or v_status not in (200,202) then raise exception 'Matching worker returned HTTP %',v_status;end if;
+ return v_status;
 end $$;
 revoke all on function spotless_private.invoke_matching_worker() from public,anon,authenticated,service_role;
 -- Scheduling is intentionally a separate operator step after the first actual

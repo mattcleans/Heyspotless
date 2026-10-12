@@ -28,7 +28,9 @@ The database retains its SHA-256 hash; the operator stores the token in Vault.
 The operator can derive it by HMAC from a private service key, but the runtime
 does not assume that its injected API-key string is identical. The cron uses
 the public anonymous JWT plus that scoped token; the service key is not stored in
-cron text or HTTP queues. Neither ordinary signed-in accounts nor a public key
+cron text or HTTP queues. The private HTTP extension sends the request directly
+and bounds it to 90 seconds; Cron reports failure if the worker refuses or fails.
+No credential-bearing pg_net queue is used. Neither ordinary signed-in accounts nor a public key
 alone may run the worker.
 
 Apply the lease/auth migrations and the hosted operator script in
