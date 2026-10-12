@@ -3,6 +3,14 @@
 -- in this script, its migration history or cron command text.
 create extension if not exists pg_cron;
 create extension if not exists pg_net with schema extensions;
+create table spotless_private.matching_worker_destination (
+  id boolean primary key default true check(id),
+  project_url text not null check(project_url ~ '^https://[a-z0-9]{20}\.supabase\.co$')
+);
+alter table spotless_private.matching_worker_destination enable row level security;
+revoke all on spotless_private.matching_worker_destination from public,anon,authenticated,service_role;
+insert into spotless_private.matching_worker_destination(id,project_url)
+ values(true,current_setting('spotless.matching_worker_url'));
 
 create function public.configure_matching_worker_credentials(p_project_url text,p_anon_key text,p_token text)
 returns boolean language plpgsql security definer set search_path=public,pg_temp as $$
@@ -10,6 +18,7 @@ begin
  if p_project_url !~ '^https://[a-z0-9]{20}\.supabase\.co$' or p_project_url is null
  or p_anon_key is null or p_anon_key not like 'eyJ%' or char_length(p_anon_key)>2000
  or p_token is null or p_token !~ '^[a-f0-9]{64}$' then raise exception 'invalid worker credentials' using errcode='22023';end if;
+ if p_project_url is distinct from (select project_url from spotless_private.matching_worker_destination where id) then raise exception 'configured project required' using errcode='42501';end if;
  if exists(select 1 from vault.secrets where name in ('heyspotless_matching_project_url','heyspotless_matching_anon_key','heyspotless_matching_worker_token')) then
    raise exception 'worker credentials already configured; review rotation separately' using errcode='PT409';
  end if;
