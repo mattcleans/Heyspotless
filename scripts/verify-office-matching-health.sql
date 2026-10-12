@@ -6,7 +6,7 @@ insert into auth.users(id,email,raw_user_meta_data) values
  ('e9100000-0000-4000-8000-000000000003','health-cleaner@example.test','{}'),
  ('e9100000-0000-4000-8000-000000000004','health-client@example.test','{"role":"admin"}');
 update public.profiles set role='admin' where id='e9100000-0000-4000-8000-000000000001';
-update public.profiles set role='manager' where id='e9100000-0000-4000-8000-000000000002';
+update public.profiles set role='admin' where id='e9100000-0000-4000-8000-000000000002';
 update public.profiles set role='cleaner' where id='e9100000-0000-4000-8000-000000000003';
 select set_config('request.jwt.claim.sub','e9100000-0000-4000-8000-000000000001',true);
 set local role authenticated;

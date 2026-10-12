@@ -4,7 +4,7 @@ language plpgsql security definer set search_path='' as $$
 declare v_worker jsonb;v_count integer:=0;v_enabled boolean:=false;v_expected boolean:=false;
  v_job bigint;v_scheduler_status text;v_scheduler_start timestamptz;v_scheduler_end timestamptz;
 begin
- if auth.uid() is null or not exists(select 1 from public.profiles p where p.id=auth.uid() and p.role in ('admin','manager'))
+ if auth.uid() is null or not exists(select 1 from public.profiles p where p.id=auth.uid() and p.role='admin')
  then raise exception 'Office access required' using errcode='42501';end if;
  select to_jsonb(s) into v_worker from spotless_private.matching_worker_state s where s.id;
  if to_regclass('cron.job') is not null then
