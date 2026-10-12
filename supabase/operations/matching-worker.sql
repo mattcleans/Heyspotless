@@ -3,6 +3,12 @@
 -- in this script, its migration history or cron command text.
 create extension if not exists pg_cron;
 create extension if not exists pg_net with schema extensions;
+-- pg_net defaults can expose queued HTTP headers to database client roles.
+-- Only the postgres operator/Cron needs its transport in this installation.
+revoke all on all tables in schema net from public,anon,authenticated,service_role;
+revoke all on all sequences in schema net from public,anon,authenticated,service_role;
+revoke all on all functions in schema net from public,anon,authenticated,service_role;
+revoke all on schema net from public,anon,authenticated,service_role;
 create table spotless_private.matching_worker_destination (
   id boolean primary key default true check(id),
   project_url text not null check(project_url ~ '^https://[a-z0-9]{20}\.supabase\.co$')
