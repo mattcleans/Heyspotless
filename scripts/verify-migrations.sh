@@ -3222,3 +3222,4 @@ as_super $PSQL -d "$DB" -f scripts/verify-client-home-setup.sql
 as_super bash scripts/verify-client-home-setup-races.sh "$DB"
 as_super $PSQL -d "$DB" -f scripts/verify-client-booking-matching.sql
 as_super $PSQL -d "$DB" -f scripts/verify-matching-worker.sql
+as_super bash scripts/verify-matching-worker-races.sh "$DB"

@@ -6,7 +6,7 @@ const config={projectRef:"abcdefghijklmnopqrst",appOrigin:"https://preview.examp
 const service="test-worker-service-key",env=(key:string)=>key==="SUPABASE_SERVICE_ROLE_KEY"?service:key==="SUPABASE_URL"?"https://abcdefghijklmnopqrst.supabase.co":null;
 const summary={jobs:1,expiredOffers:0,assigned:0,needsScheduling:0,held:0,offered:1,notified:0,deferred:0,unreachable:0,refused:0,unfilled:0,pushed:0,failed:0};
 const m={run:vi.fn(),claim:vi.fn(),finish:vi.fn()};
-const handler=(getEnv=env)=>createWorkerHandler({config,getEnv,...m});
+const handler=(getEnv:(key:string)=>string|null=env)=>createWorkerHandler({config,getEnv,...m});
 async function request(method="POST",token?:string){return new Request("https://functions.example.test/matching-worker",{method,headers:token?{"x-heyspotless-worker-token":token}:{}});}
 beforeEach(()=>{vi.clearAllMocks();m.run.mockResolvedValue(summary);m.claim.mockResolvedValue(true);m.finish.mockResolvedValue(true);});
 describe("matching worker boundary",()=>{
