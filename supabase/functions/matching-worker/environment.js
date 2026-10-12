@@ -1,4 +1,9 @@
-/** Read-only app configuration without mutating the hosted Deno environment. */
+/**
+ * Read-only app configuration without mutating the hosted Deno environment.
+ * @param {{preview:boolean}} config
+ * @param {(key:string)=>string|undefined} getEnv
+ * @returns {Readonly<Record<string,string|undefined>>}
+ */
 export function createWorkerEnvironment(config,getEnv) {
   const overrides=Object.freeze({
     NEXT_PUBLIC_SUPABASE_URL:getEnv('SUPABASE_URL'),
