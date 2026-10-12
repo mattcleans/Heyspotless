@@ -1,5 +1,20 @@
 begin;
 do $$ begin
+ if has_function_privilege('anon','public.configure_matching_worker_token(text)','execute')
+ or has_function_privilege('authenticated','public.verify_matching_worker_token(text)','execute')
+ or has_table_privilege('service_role','spotless_private.matching_worker_auth','select') then raise exception 'Worker authentication exposed';end if;
+end $$;
+set local role service_role;
+do $$ begin
+ if verify_matching_worker_token(repeat('a',64)) then raise exception 'Unconfigured token accepted';end if;
+ begin perform configure_matching_worker_token('bad');raise exception 'Malformed token configured';exception when sqlstate '22023' then null;end;
+ if not configure_matching_worker_token(repeat('a',64)) then raise exception 'Token setup refused';end if;
+ if not verify_matching_worker_token(repeat('a',64)) or verify_matching_worker_token(repeat('b',64)) or verify_matching_worker_token(null) then raise exception 'Token verification failed';end if;
+ begin perform configure_matching_worker_token(repeat('b',64));raise exception 'Implicit token rotation accepted';exception when sqlstate 'PT409' then null;end;
+ if not verify_matching_worker_token(repeat('a',64)) then raise exception 'Original token changed';end if;
+end $$;
+reset role;
+do $$ begin
  if has_function_privilege('anon','public.claim_matching_worker(uuid,integer)','execute') or has_function_privilege('authenticated','public.finish_matching_worker(uuid,text,jsonb)','execute')
  or has_table_privilege('authenticated','spotless_private.matching_worker_state','select') then raise exception 'Worker control exposed';end if;
 end $$;

@@ -4,18 +4,15 @@ export async function workerToken(serviceKey, projectRef) {
   const bytes = new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(`heyspotless:matching-worker:v1:${projectRef}`)));
   return Array.from(bytes, n => n.toString(16).padStart(2,'0')).join('');
 }
-function equal(a,b) {
-  if (!a || !b || a.length !== b.length) return false;
-  let diff=0; for(let i=0;i<a.length;i++) diff|=a.charCodeAt(i)^b.charCodeAt(i); return diff===0;
-}
 function json(body,status=200) { return new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}}); }
-export function createWorkerHandler({ config, getEnv, run, claim, finish }) {
+export function createWorkerHandler({ config, getEnv, verifyToken, run, claim, finish }) {
   return async request => {
-    const serviceKey=getEnv('SUPABASE_SERVICE_ROLE_KEY');
     const presented=request.headers.get('x-heyspotless-worker-token');
-    if (!serviceKey || !equal(presented,await workerToken(serviceKey,config.projectRef))) return json({error:'unauthorized'},401);
+    if (!presented || !/^[a-f0-9]{64}$/.test(presented)) return json({error:'unauthorized'},401);
     if (getEnv('SUPABASE_URL')?.replace(/\/$/,'') !== `https://${config.projectRef}.supabase.co`) return json({error:'Worker project configuration mismatch.'},503);
-    if (request.method==='GET') return json({ready:true,databaseChecked:false,sourceVersion:config.sourceVersion,sourceDigest:config.sourceDigest,projectRef:config.projectRef,preview:config.preview,providerMessagesAllowed:!config.preview});
+    try { if (!await verifyToken(presented)) return json({error:'unauthorized'},401); }
+    catch { return json({error:'Worker authentication unavailable.'},503); }
+    if (request.method==='GET') return json({ready:true,credentialChecked:true,databaseChecked:false,sourceVersion:config.sourceVersion,sourceDigest:config.sourceDigest,projectRef:config.projectRef,preview:config.preview,providerMessagesAllowed:!config.preview});
     if (request.method!=='POST') return json({error:'Use POST to run matching.'},405);
     const id=crypto.randomUUID(); let claimed=false;
     try {

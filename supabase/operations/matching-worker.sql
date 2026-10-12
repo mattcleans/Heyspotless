@@ -18,13 +18,14 @@ begin
  if p_project_url !~ '^https://[a-z0-9]{20}\.supabase\.co$' or p_project_url is null
  or p_anon_key is null or p_anon_key not like 'eyJ%' or char_length(p_anon_key)>2000
  or p_token is null or p_token !~ '^[a-f0-9]{64}$' then raise exception 'invalid worker credentials' using errcode='22023';end if;
- if p_project_url is distinct from (select project_url from spotless_private.matching_worker_destination where id) then raise exception 'configured project required' using errcode='42501';end if;
+ if p_project_url is distinct from (select project_url from spotless_private.matching_worker_destination where id for update) then raise exception 'configured project required' using errcode='42501';end if;
  if exists(select 1 from vault.secrets where name in ('heyspotless_matching_project_url','heyspotless_matching_anon_key','heyspotless_matching_worker_token')) then
    raise exception 'worker credentials already configured; review rotation separately' using errcode='PT409';
  end if;
  perform vault.create_secret(p_project_url,'heyspotless_matching_project_url');
  perform vault.create_secret(p_anon_key,'heyspotless_matching_anon_key');
  perform vault.create_secret(p_token,'heyspotless_matching_worker_token');
+ perform public.configure_matching_worker_token(p_token);
  return true;
 end $$;
 revoke all on function public.configure_matching_worker_credentials(text,text,text) from public,anon,authenticated,service_role;
@@ -37,7 +38,8 @@ begin
  select decrypted_secret into v_url from vault.decrypted_secrets where name='heyspotless_matching_project_url';
  select decrypted_secret into v_anon from vault.decrypted_secrets where name='heyspotless_matching_anon_key';
  select decrypted_secret into v_token from vault.decrypted_secrets where name='heyspotless_matching_worker_token';
- if v_url is null or v_anon is null or v_token is null or v_url !~ '^https://[a-z0-9]{20}\.supabase\.co$' then raise exception 'worker configuration missing';end if;
+ if v_url is null or v_anon is null or v_token is null or v_url !~ '^https://[a-z0-9]{20}\.supabase\.co$'
+ or v_url is distinct from (select project_url from spotless_private.matching_worker_destination where id) then raise exception 'worker configuration missing';end if;
  select net.http_post(url:=v_url||'/functions/v1/matching-worker',headers:=jsonb_build_object('Content-Type','application/json','Authorization','Bearer '||v_anon,'apikey',v_anon,'x-heyspotless-worker-token',v_token),body:='{}'::jsonb,timeout_milliseconds:=90000) into v_id;
  return v_id;
 end $$;

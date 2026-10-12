@@ -23,12 +23,15 @@ node scripts/build-matching-worker.mjs \
 
 Deploy the generated entrypoint and all generated files with JWT verification
 enabled. The gateway requires a valid JWT, and the handler additionally requires
-a project-bound token derived by HMAC from the server's service key. The cron uses
+a configured project-bound token, verified by a service-only database function.
+The database retains its SHA-256 hash; the operator stores the token in Vault.
+The operator can derive it by HMAC from a private service key, but the runtime
+does not assume that its injected API-key string is identical. The cron uses
 the public anonymous JWT plus that scoped token; the service key is not stored in
 cron text or HTTP queues. Neither ordinary signed-in accounts nor a public key
 alone may run the worker.
 
-Apply the lease migration and the hosted operator script in
+Apply the lease/auth migrations and the hosted operator script in
 supabase/operations/matching-worker.sql. Store configuration through the restricted
 credential RPC from a private server tool; never put keys in chat, Git or command
 arguments. It refuses implicit replacement of existing credentials. Validate a
