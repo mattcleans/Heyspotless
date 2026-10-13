@@ -17,6 +17,7 @@ export async function POST(request: NextRequest) {
       const code = result.error.code;
       const [status, error] = code === "42501" ? [403, "Confirm your email and sign in with your Client account before saving."]
         : code === "PHC01" ? [409, "Your email already has a Client record. Call 469-280-0397 so the office can connect your existing visits and home."]
+        : code === "PHC02" ? [409, "This address is already in Your homes with different room counts. Book it from Your homes, or call 469-280-0397 to update its rooms."]
         : code === "PT409" ? [409, "This saved home or review changed. Open Your homes to check the latest details before starting again."]
         : code === "22023" ? [400, "Check the address, room counts and contact details."]
         : [503, "We could not confirm the save. Retry Save home with these same reviewed details."];

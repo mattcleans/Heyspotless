@@ -80,4 +80,17 @@ do $$ declare h jsonb;begin
  begin perform save_my_home(gen_random_uuid(),h,null);raise exception 'Management saved Client home through self-service';exception when insufficient_privilege then null;end;
  raise notice 'Client home setup: verified bootstrap, retry, first booking, isolation and preservation passed';
 end $$;
+reset role;
+-- An address already on file is matched as loosely as it is looked up: stored
+-- spacing or capitals still save, while different room counts say so plainly.
+update properties set street='100  synthetic setup WAY ',city=' dallas' where id=(select (result->>'id')::uuid from home_setup_results);
+select set_config('request.jwt.claim.sub','d9100000-0000-4000-8000-000000000001',true);
+set local role authenticated;
+do $$ declare h jsonb; r jsonb; begin
+ select result into r from home_setup_results;h:=r->'home';
+ if save_my_home('d9300000-0000-4000-8000-000000000005',h,null)->>'id'<>r->>'id' then raise exception 'Existing address not reused';end if;
+ begin perform save_my_home('d9300000-0000-4000-8000-000000000006',h||'{"bedrooms":3}',null);raise exception 'Different rooms accepted';exception when sqlstate 'PHC02' then null;end;
+ if (select bedrooms from properties where id=(r->>'id')::uuid)<>2 then raise exception 'Saved rooms overwritten';end if;
+ raise notice 'Client home setup: existing address spacing and different rooms passed';
+end $$;
 rollback;

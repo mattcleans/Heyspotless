@@ -99,4 +99,23 @@ describe("recurring generation versions", () => {
       store({ ...row, ...invalid }).listActivePlans(),
     ).rejects.toThrow("invalid generation settings");
   });
+  it("reports an invalid plan without dropping the valid ones", async () => {
+    const q = {
+      select: () => q,
+      eq: () => q,
+      limit: async () => ({
+        data: [{ ...row, id: "b9000000-0000-0000-0000-000000000002", start_time: "09:30:15" }, row],
+        error: null,
+      }),
+      in: async () => ({ data: [], error: null }),
+    };
+    const s = new RecurringStore({ from: () => q, rpc } as unknown as SupabaseClient);
+    const invalid = vi.fn();
+    const plans = await s.listActivePlans(500, invalid);
+    expect(plans.map((p) => p.id)).toEqual([id]);
+    expect(invalid).toHaveBeenCalledWith(
+      "b9000000-0000-0000-0000-000000000002",
+      expect.objectContaining({ message: expect.stringContaining("invalid generation settings") }),
+    );
+  });
 });

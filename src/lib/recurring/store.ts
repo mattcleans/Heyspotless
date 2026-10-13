@@ -28,8 +28,15 @@ export class RecurringStore {
    *
    * Skips are fetched alongside rather than per-plan: the sweep runs over the
    * whole book, and one query beats N.
+   *
+   * With `onInvalid`, a plan whose saved settings fail validation is reported
+   * and left out, so one bad row cannot stop every other customer's visits.
+   * Without it, an invalid plan throws.
    */
-  async listActivePlans(limit = 500): Promise<RecurringGenerationPlan[]> {
+  async listActivePlans(
+    limit = 500,
+    onInvalid?: (planId: string, error: unknown) => void,
+  ): Promise<RecurringGenerationPlan[]> {
     const { data, error } = await this.db
       .from("recurring_plans")
       .select(
@@ -46,9 +53,15 @@ export class RecurringStore {
     const planIds = rows.map((r) => String(r["id"]));
     const skipsByPlan = await this.skipsFor(planIds);
 
-    return rows.map((row) =>
-      toPlan(row, skipsByPlan.get(String(row["id"])) ?? []),
-    );
+    return rows.flatMap((row) => {
+      try {
+        return [toPlan(row, skipsByPlan.get(String(row["id"])) ?? [])];
+      } catch (error) {
+        if (!onInvalid) throw error;
+        onInvalid(String(row["id"]), error);
+        return [];
+      }
+    });
   }
 
   /** How far ahead each plan materialises. Per-plan, defaulted in the schema. */

@@ -40,7 +40,13 @@ export async function POST(request: NextRequest) {
   }
 
   const store = new RecurringStore(createAdminClient());
-  const plans = await store.listActivePlans();
+  // A plan with unusable saved settings is a data problem for a person; it is
+  // reported below rather than stopping every other customer's visits.
+  const invalid: { planId: string; error: string }[] = [];
+  const plans = await store.listActivePlans(undefined, (planId, error) => {
+    invalid.push({ planId, error: messageOf(error) });
+    console.error(`recurring generation skipped invalid plan ${planId}`, error);
+  });
 
   // Today where the business is, not where the server is. A sweep running at
   // 01:00 UTC is still "yesterday" in Dallas, and generating from the wrong
@@ -48,14 +54,14 @@ export async function POST(request: NextRequest) {
   const today = todayIn();
 
   const result = {
-    plans: plans.length,
+    plans: plans.length + invalid.length,
     created: 0,
     existing: 0,
     skipped: 0,
     shifted: 0,
-    failed: 0,
+    failed: invalid.length,
   };
-  const problems: { planId: string; error: string }[] = [];
+  const problems: { planId: string; error: string }[] = [...invalid];
 
   for (const plan of plans) {
     try {
