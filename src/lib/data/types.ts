@@ -101,6 +101,7 @@ export type { Cleaner };
  */
 export interface Invoice {
   id: string;
+  kind?: "service" | "reschedule_fee";
   customerId: string;
   jobId: string | null;
   status: InvoiceStatus;

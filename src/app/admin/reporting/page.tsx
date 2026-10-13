@@ -1,3 +1,5 @@
+import Link from "next/link";
+import { SERVICE_LABELS, type ServiceType } from "@/lib/pricing/price-book";
 import { PageHeader, Pill, Stat } from "@/components/ui";
 import { getRepository } from "@/lib/data";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -26,7 +28,7 @@ import { formatDateInZone } from "@/lib/time/zone";
  */
 export const dynamic = "force-dynamic";
 
-export const metadata = { title: "Reporting — Spotless Ops" };
+export const metadata = { title: "Reporting | Hey Spotless management" };
 
 interface MarginRow {
   jobId: string;
@@ -102,6 +104,8 @@ export default async function ReportingPage() {
         board where the week is visible.
       </PageHeader>
 
+      <p className="mb-4 text-sm text-ink-2">Totals cover completed visits within the latest 200 costing records, ordered by finish date. They exclude overhead and weekly overtime. Dates use Dallas time.</p>
+
       <div className="mb-6 grid gap-3 sm:grid-cols-4">
         <Stat label="Revenue" value={formatCents(revenue)} note={`${completed.length} completed cleans`} />
         <Stat label="Labour + mileage" value={formatCents(cost)} />
@@ -109,7 +113,7 @@ export default async function ReportingPage() {
           label="Margin"
           value={formatCents(margin)}
           note={revenue > 0 ? formatPct(margin / revenue, 1) : undefined}
-          tone={margin > 0 ? "good" : "bad"}
+          tone={margin > 0 ? "good" : margin < 0 ? "bad" : "default"}
         />
         <Stat
           label="Over estimate"
@@ -123,12 +127,12 @@ export default async function ReportingPage() {
         <p className="eyebrow mb-2">Recent cleans</p>
         {completed.length === 0 ? (
           <div className="card p-8 text-center text-sm text-ink-3">
-            No completed cleans with a clock-in yet. Costing needs a real time entry — until a
-            cleaner clocks in and out, the only labour number available is the estimate.
+            No completed visits in the latest costing records. Actual labour costs become available as cleaners record their time.
           </div>
         ) : (
           <div className="card overflow-x-auto">
             <table className="w-full text-sm">
+              <caption className="sr-only">Completed visit costing from the latest 200 records. Dates use Dallas time.</caption>
               <thead>
                 <tr className="border-b border-line text-left">
                   <Th>Finished</Th>
@@ -141,7 +145,7 @@ export default async function ReportingPage() {
                 </tr>
               </thead>
               <tbody>
-                {completed.slice(0, 50).map((row) => (
+                {completed.map((row) => (
                   <tr key={row.jobId} className="border-b border-line last:border-0">
                     <Td>{row.completedAt ? formatDateInZone(row.completedAt) : "—"}</Td>
                     <Td>
@@ -152,7 +156,7 @@ export default async function ReportingPage() {
                         <Pill tone="sky">W-2</Pill>
                       ) : null}
                     </Td>
-                    <Td>{row.service}</Td>
+                    <Td>{SERVICE_LABELS[row.service as ServiceType] ?? row.service}</Td>
                     <Td right>{formatCents(row.revenueCents)}</Td>
                     <Td right>{formatCents(row.costCents)}</Td>
                     <Td right>
@@ -181,22 +185,19 @@ export default async function ReportingPage() {
       <section>
         <p className="eyebrow mb-2">At risk</p>
         <p className="mb-3 max-w-2xl text-sm text-ink-2">
-          Nobody cancels a cleaning service. They skip one, then another, and six weeks later
-          they have somebody else. These are recurring customers past one and a half times their
-          agreed cadence with nothing on the calendar.
+          Recurring customers past one and a half times their agreed cadence with nothing on the calendar. Showing up to 50 customers, longest overdue first. Open a customer record to review their plan and arrange a follow-up.
         </p>
 
         {risks.length === 0 ? (
           <div className="card p-8 text-center text-sm text-ink-3">
-            Nobody is overdue. This will stay empty until there are recurring plans with
-            completed visits behind them.
+            No recurring customers meet the overdue criteria. This check requires an active recurring plan and a completed visit.
           </div>
         ) : (
           <ul className="space-y-2">
             {risks.map((row) => (
-              <li key={row.customerId} className="card flex items-center justify-between gap-4 p-4">
+              <li key={row.customerId} className="card flex flex-wrap items-center justify-between gap-4 p-4">
                 <div>
-                  <p className="font-medium text-ink">{row.name}</p>
+                  <Link href={`/admin/customers/${row.customerId}`} className="font-medium text-navy underline">{row.name}</Link>
                   <p className="mt-0.5 text-sm text-ink-3">
                     Last clean{" "}
                     {row.lastCompletedAt ? formatDateInZone(row.lastCompletedAt) : "never"} ·

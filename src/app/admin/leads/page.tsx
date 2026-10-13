@@ -29,7 +29,7 @@ import { LeadStatus } from "./lead-status";
  */
 export const dynamic = "force-dynamic";
 
-export const metadata = { title: "Leads — Spotless Ops" };
+export const metadata = { title: "Leads | Hey Spotless management" };
 
 export default async function LeadsPage() {
   if (isDemoMode()) {

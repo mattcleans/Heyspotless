@@ -150,7 +150,9 @@ export function BookingForm({
         </div>
       ) : (
         <p className="rounded-lg border border-line-soft bg-surface-2 px-3 py-2 text-xs text-ink-3">
-          {SERVICE_LABELS[service]} is sold one-time only, so this books a single visit.
+          {frequencies.length === 1
+            ? `${SERVICE_LABELS[service]} is sold one-time only, so this books a single visit.`
+            : "This books a single visit at the one-time rate. Choose a recurring rate and turn on Repeat this automatically to start a schedule."}
         </p>
       )}
 

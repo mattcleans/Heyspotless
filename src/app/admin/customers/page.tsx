@@ -4,7 +4,7 @@ import { getRepository } from "@/lib/data";
 import { formatCents } from "@/lib/money";
 import { formatPhone } from "@/lib/format";
 
-export const metadata = { title: "Customers — Spotless Ops" };
+export const metadata = { title: "Customers | Hey Spotless management" };
 
 export default async function CustomersPage() {
   const repo = await getRepository();

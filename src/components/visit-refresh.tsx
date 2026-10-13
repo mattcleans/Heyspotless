@@ -3,7 +3,7 @@ import { useEffect, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 /** Pause background refresh when the customer is not looking at the visit. */
-export function VisitRefresh() {
+export function VisitRefresh({ label = "Refresh visit" }: { label?: string } = {}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   useEffect(() => {
@@ -21,7 +21,7 @@ export function VisitRefresh() {
     <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
       <p className="text-xs text-ink-2">Checks for updates every 30 seconds while open.</p>
       <button type="button" disabled={pending} onClick={() => startTransition(() => router.refresh())} className="secondary-action">
-        {pending ? "Updating…" : "Refresh visit"}
+        {pending ? "Updating…" : label}
       </button>
     </div>
   );

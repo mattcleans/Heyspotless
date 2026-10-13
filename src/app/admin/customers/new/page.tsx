@@ -2,7 +2,7 @@ import Link from "next/link";
 import { PageHeader } from "@/components/ui";
 import { CustomerForm } from "../customer-form";
 
-export const metadata = { title: "New customer — Spotless Ops" };
+export const metadata = { title: "New customer | Hey Spotless management" };
 
 export default function NewCustomerPage() {
   return (

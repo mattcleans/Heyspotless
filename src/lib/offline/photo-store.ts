@@ -14,9 +14,11 @@
  */
 
 import type { QueueItem } from "./queue-policy";
+import {
+  openPhotoDatabase,
+  markWorkPhotoConfirmed,
+} from "../../../public/offline-work.js";
 
-const DB_NAME = "spotless-photos";
-const DB_VERSION = 1;
 const STORE = "queue";
 
 export interface StoredPhoto extends QueueItem {
@@ -25,21 +27,7 @@ export interface StoredPhoto extends QueueItem {
 
 export class QuotaExceeded extends Error {}
 
-function open(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(STORE)) {
-        const store = db.createObjectStore(STORE, { keyPath: "id" });
-        store.createIndex("byJob", "jobId");
-        store.createIndex("byState", "state");
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error ?? new Error("indexeddb unavailable"));
-  });
-}
+const open = openPhotoDatabase;
 
 function run<T>(
   db: IDBDatabase,
@@ -49,14 +37,21 @@ function run<T>(
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, mode);
     const request = work(tx.objectStore(STORE));
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => {
-      const error = request.error;
-      // A full disk is not a transient failure and must not be retried
-      // silently — she needs to be told before she takes twenty more.
-      reject(error?.name === "QuotaExceededError" ? new QuotaExceeded(error.message) : error);
+    let result: T;
+    request.onsuccess = () => {
+      result = request.result;
     };
+    // Request success is not a committed write. An abort after that success
+    // must reject before the caller shows a saved tick or starts an upload.
+    tx.oncomplete = () => resolve(result);
+    tx.onabort = () => reject(storageError(tx.error ?? request.error));
   });
+}
+
+function storageError(error: DOMException | null): Error {
+  return error?.name === "QuotaExceededError"
+    ? new QuotaExceeded(error.message)
+    : (error ?? new Error("Photo storage transaction was aborted"));
 }
 
 /**
@@ -69,19 +64,52 @@ function run<T>(
 export async function enqueue(photo: StoredPhoto): Promise<void> {
   const db = await open();
   try {
-    await run(db, "readwrite", (store) => store.put(photo));
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      const store = tx.objectStore(STORE);
+      const previous = store.get(photo.id);
+      let conflict = false;
+      previous.onsuccess = () => {
+        if (
+          previous.result?.ownerId &&
+          previous.result.ownerId !== photo.ownerId
+        ) {
+          conflict = true;
+          tx.abort();
+          return;
+        }
+        store.put(photo);
+      };
+      tx.oncomplete = () => resolve();
+      tx.onabort = () =>
+        reject(
+          conflict
+            ? new Error(
+                "A photo from another sign-in is still saved. Reconnect or call the office before replacing it.",
+              )
+            : storageError(tx.error),
+        );
+    });
   } finally {
     db.close();
   }
 }
 
-export async function listForJob(jobId: string): Promise<StoredPhoto[]> {
+export async function listForJob(
+  jobId: string,
+  ownerId?: string | null,
+): Promise<StoredPhoto[]> {
   const db = await open();
   try {
-    const all = await run<StoredPhoto[]>(db, "readonly", (store) =>
-      store.index("byJob").getAll(jobId) as IDBRequest<StoredPhoto[]>,
+    const all = await run<StoredPhoto[]>(
+      db,
+      "readonly",
+      (store) =>
+        store.index("byJob").getAll(jobId) as IDBRequest<StoredPhoto[]>,
     );
-    return all;
+    return ownerId === undefined
+      ? all
+      : all.filter((p) => !p.ownerId || p.ownerId === ownerId);
   } finally {
     db.close();
   }
@@ -91,23 +119,67 @@ export async function listForJob(jobId: string): Promise<StoredPhoto[]> {
 export async function listOutstanding(): Promise<StoredPhoto[]> {
   const db = await open();
   try {
-    const all = await run<StoredPhoto[]>(db, "readonly", (store) =>
-      store.getAll() as IDBRequest<StoredPhoto[]>,
-    );
-    return all.filter((p) => p.state !== "done");
+    return await new Promise<StoredPhoto[]>((resolve, reject) => {
+      const tx = db.transaction([STORE, "device"], "readonly");
+      const owner = tx.objectStore("device").get("owner");
+      const photos = tx.objectStore(STORE).getAll() as IDBRequest<
+        StoredPhoto[]
+      >;
+      tx.oncomplete = () =>
+        resolve(
+          photos.result.filter(
+            (p) =>
+              p.state !== "done" &&
+              (!p.ownerId || p.ownerId === owner.result?.ownerId),
+          ),
+        );
+      tx.onabort = () => reject(storageError(tx.error));
+    });
   } finally {
     db.close();
   }
 }
 
-export async function update(item: QueueItem): Promise<void> {
+export async function update(item: QueueItem): Promise<boolean> {
+  return changeIfCurrent(item, false);
+}
+
+/** A retake has a new revision even if both shutters share a millisecond. */
+export function samePhoto(a: QueueItem, b: QueueItem): boolean {
+  return (
+    a.id === b.id &&
+    a.jobId === b.jobId &&
+    (a.revision ?? a.takenAt) === (b.revision ?? b.takenAt)
+  );
+}
+
+async function changeIfCurrent(
+  item: QueueItem,
+  remove: boolean,
+): Promise<boolean> {
   const db = await open();
   try {
-    const existing = await run<StoredPhoto | undefined>(db, "readonly", (store) =>
-      store.get(item.id) as IDBRequest<StoredPhoto | undefined>,
-    );
-    if (!existing) return;
-    await run(db, "readwrite", (store) => store.put({ ...existing, ...item }));
+    return await new Promise<boolean>((resolve, reject) => {
+      // Read and conditional mutation share one transaction. A new capture
+      // cannot be overwritten or deleted by an older upload's settlement.
+      const tx = db.transaction([STORE, "work"], "readwrite");
+      const objectStore = tx.objectStore(STORE);
+      const request = objectStore.get(item.id) as IDBRequest<
+        StoredPhoto | undefined
+      >;
+      let changed = false;
+      request.onsuccess = () => {
+        const existing = request.result;
+        if (!existing || !samePhoto(existing, item)) return;
+        if (remove) {
+          objectStore.delete(item.id);
+          markWorkPhotoConfirmed(tx, item);
+        } else objectStore.put({ ...existing, ...item });
+        changed = true;
+      };
+      tx.oncomplete = () => resolve(changed);
+      tx.onabort = () => reject(storageError(tx.error ?? request.error));
+    });
   } finally {
     db.close();
   }
@@ -119,13 +191,8 @@ export async function update(item: QueueItem): Promise<void> {
  * Not on error, not on timeout, not on a 500, and not when the queue looks
  * long. The single caller is the success path of the drain loop.
  */
-export async function forget(id: string): Promise<void> {
-  const db = await open();
-  try {
-    await run(db, "readwrite", (store) => store.delete(id));
-  } finally {
-    db.close();
-  }
+export async function forget(photo: QueueItem): Promise<boolean> {
+  return changeIfCurrent(photo, true);
 }
 
 /** Is durable storage available at all? A private window may say no. */

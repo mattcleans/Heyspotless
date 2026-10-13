@@ -6,10 +6,11 @@ import { getRepository } from "@/lib/data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ServiceStore } from "@/lib/service/store";
 import { roomsFor } from "@/lib/service/rooms";
-import { isDemoMode } from "@/lib/supabase/env";
 import { createClient } from "@/lib/supabase/server";
 import { formatCents, formatHours } from "@/lib/money";
 import { formatDateTimeInZone } from "@/lib/time/zone";
+import { JOB_LABELS } from "@/lib/experience/schedule";
+import { OfflineWorkRecovery } from "@/components/offline-work-recovery";
 
 export const metadata = { title: "Visit | Hey Spotless" };
 export const dynamic = "force-dynamic";
@@ -41,31 +42,80 @@ export default async function CleanerJobPage({
       ? await repo.getCleanerByProfile("demo")
       : null;
 
+  if (!repo.isDemo && (profile?.role !== "cleaner" || !cleaner))
+    return (
+      <section className="visit-feature">
+        <h1 className="welcome-title">Sign in as your assigned cleaner</h1>
+        <Link
+          className="secondary-action mt-4 inline-flex"
+          href={`/login?next=${encodeURIComponent(`/cleaner/job/${id}`)}`}
+        >
+          Sign in
+        </Link>
+      </section>
+    );
+  let payout: number | null = null;
+  let backupBlocked = false;
+  if (!repo.isDemo && cleaner) {
+    if (
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        id,
+      )
+    )
+      notFound();
+    const db = await createClient();
+    const assignment = await db
+      .from("job_assignments")
+      .select("id,payout_cents")
+      .eq("job_id", id)
+      .eq("cleaner_id", cleaner.id)
+      .maybeSingle();
+    if (assignment.error)
+      throw new Error(
+        "Unable to verify your assignment. Refresh or contact the office.",
+      );
+    if (!assignment.data) notFound();
+    if (cleaner.type !== "w2_core")
+      payout =
+        assignment.data.payout_cents == null
+          ? null
+          : Number(assignment.data.payout_cents);
+    const approval = await db
+      .from("visit_backup_status")
+      .select("approved,unambiguous")
+      .eq("job_id", id)
+      .limit(2);
+    if (approval.error || !Array.isArray(approval.data))
+      throw new Error(
+        "Unable to check client approval. Refresh or contact the office.",
+      );
+    backupBlocked =
+      approval.data.length > 1 ||
+      approval.data.some((a) => a.approved !== true || a.unambiguous !== true);
+  }
   const job = await repo.getJob(id);
   if (!job) notFound();
 
   const property = await repo.getProperty(job.propertyId);
-  const rooms = roomsFor(property?.rooms ?? { bedrooms: job.bedrooms, bathrooms: job.bathrooms });
+  const rooms = roomsFor(
+    property?.rooms ?? { bedrooms: job.bedrooms, bathrooms: job.bathrooms },
+  );
 
   // What the server already has. A reinstalled app, or a second phone, must
   // not ask her to reshoot rooms that are already in.
   // A photo with no room attached satisfies no room, so it is not "already
   // done" for anything and is dropped here rather than confusing the screen.
-  const alreadyDone = isDemoMode()
+  const alreadyDone = repo.isDemo
     ? []
-    : (await new ServiceStore(createAdminClient()).photosFor(id)).flatMap((photo) =>
-        photo.roomKey ? [{ roomKey: photo.roomKey, kind: photo.kind }] : [],
+    : (await new ServiceStore(createAdminClient()).photosFor(id)).flatMap(
+        (photo) =>
+          photo.roomKey ? [{ roomKey: photo.roomKey, kind: photo.kind }] : [],
       );
 
   const status = toFlowStatus(job.status);
-  let payout: number | null = null;
-  if (cleaner && !repo.isDemo && cleaner.type !== "w2_core") {
-    const db = await createClient();
-    const { data, error } = await db.from("job_assignments")
-      .select("payout_cents").eq("job_id", id).eq("cleaner_id", cleaner.id).maybeSingle();
-    if (error) throw new Error("Unable to load your agreed pay. Please try again.");
-    payout = data?.payout_cents == null ? null : Number(data.payout_cents);
-  }
+  // This force-dynamic server observation follows the own-assignment/photo reads.
+  // eslint-disable-next-line react-hooks/purity
+  const checkedAt = Date.now();
   const directions = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${job.street}, ${job.city}`)}`;
 
   return (
@@ -76,46 +126,93 @@ export default async function CleanerJobPage({
 
       <p className="mt-3 flex flex-wrap items-center gap-2">
         <Pill tone={status === "complete" ? "good" : "sky"}>
-          {status === "assigned" ? "Not started" : status === "in_progress" ? "In progress" : "Done"}
+          {JOB_LABELS[job.status] ?? "Check visit details"}
         </Pill>
-        <span className="nums text-sm text-navy">{cleaner?.type === "w2_core"
-          ? "Paid under your hourly terms"
-          : payout !== null ? `${formatCents(payout)} agreed pay` : "Pay details with the office"}</span>
+        <span className="nums text-sm text-navy">
+          {cleaner?.type === "w2_core"
+            ? "Paid under your hourly terms"
+            : payout !== null
+              ? `${formatCents(payout)} agreed pay`
+              : "Pay details with the office"}
+        </span>
         <span className="text-xs text-ink-3">
-          {job.scheduledStart ? formatDateTimeInZone(job.scheduledStart) : "Unscheduled"} ·{" "}
-          about {formatHours(job.estimatedCleanMinutes)}
+          {job.scheduledStart
+            ? formatDateTimeInZone(job.scheduledStart)
+            : "Unscheduled"}{" "}
+          · about {formatHours(job.estimatedCleanMinutes)}
         </span>
       </p>
 
       <div className="mt-4 flex flex-wrap gap-3">
-        <a href={directions} target="_blank" rel="noopener noreferrer" className="secondary-action">Open directions</a>
-        <a href="tel:+14692800397" className="secondary-action">Call the office</a>
+        <a
+          href={directions}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="secondary-action"
+        >
+          Open directions
+        </a>
+        <a href="tel:+14692800397" className="secondary-action">
+          Call the office
+        </a>
       </div>
 
       {/* Everything nobody remembers to ask on the doorstep. */}
-      {property && (property.gateCode || property.accessNotes || property.parkingNotes || property.pets) && (
-        <dl className="card mt-4 space-y-2 p-4 text-sm">
-          {property.gateCode && <Detail term="Gate code" value={property.gateCode} />}
-          {property.parkingNotes && <Detail term="Parking" value={property.parkingNotes} />}
-          {property.accessNotes && <Detail term="Getting in" value={property.accessNotes} />}
-          {property.pets && <Detail term="Pets" value={property.pets} />}
-        </dl>
-      )}
+      {property &&
+        (property.gateCode ||
+          property.accessNotes ||
+          property.parkingNotes ||
+          property.pets) && (
+          <dl className="card mt-4 space-y-2 p-4 text-sm">
+            {property.gateCode && (
+              <Detail term="Gate code" value={property.gateCode} />
+            )}
+            {property.parkingNotes && (
+              <Detail term="Parking" value={property.parkingNotes} />
+            )}
+            {property.accessNotes && (
+              <Detail term="Getting in" value={property.accessNotes} />
+            )}
+            {property.pets && <Detail term="Pets" value={property.pets} />}
+          </dl>
+        )}
 
-      {cleaner ? (
+      {job.status === "canceled" ? (
+        <>
+          <OfflineWorkRecovery
+            work={null}
+            ownerId={
+              !repo.isDemo && profile?.role === "cleaner" ? profile.id : null
+            }
+            jobId={id}
+            checkedAt={checkedAt}
+          />
+          <p className="visit-feature mt-5">
+            This visit was canceled. You do not need to start it. Call the
+            office if you have questions.
+          </p>
+        </>
+      ) : cleaner ? (
         <>
           {repo.isDemo && (
             <p className="mt-4 rounded-lg border border-line bg-surface-2 p-3 text-xs text-ink-2">
-              Demo mode. The room list and the photo queue are real — photos are saved to this
-              browser before anything touches the network — but starting and finishing a job
-              needs a live database.
+              Demo mode. The room list and the photo queue are real — photos are
+              saved to this browser before anything touches the network — but
+              starting and finishing a job needs a live database.
             </p>
           )}
           <JobFlow
+            key={`${id}-${status}-${backupBlocked}`}
             jobId={id}
             initialStatus={status}
+            backupBlocked={backupBlocked}
             rooms={rooms}
             alreadyDone={alreadyDone}
+            ownerId={
+              !repo.isDemo && profile?.role === "cleaner" ? profile.id : null
+            }
+            checkedAt={checkedAt}
+            scheduledAt={job.scheduledStart?.toISOString() ?? null}
           />
         </>
       ) : (

@@ -16,7 +16,8 @@
     "test:zones": "TZ=UTC vitest run && TZ=America/Chicago vitest run",
     "test:watch": "vitest",
     "import:hcp": "node scripts/check-node.mjs && node --experimental-strip-types scripts/import-hcp.ts",
-    "push:keys": "node scripts/check-node.mjs && node --experimental-strip-types scripts/generate-vapid-keys.ts"
+    "push:keys": "node scripts/check-node.mjs && node --experimental-strip-types scripts/generate-vapid-keys.ts",
+    "preview:prepare": "node scripts/check-node.mjs && node --experimental-strip-types scripts/prepare-preview.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.5",
@@ -34,6 +35,7 @@
     "@types/react-dom": "^19.2.0",
     "eslint": "^9.0.0",
     "eslint-config-next": "^16.3.4",
+    "fake-indexeddb": "6.2.5",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.9.0",
     "vitest": "^5.0.0"

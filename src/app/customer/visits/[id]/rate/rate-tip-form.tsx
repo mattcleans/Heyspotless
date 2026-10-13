@@ -28,24 +28,36 @@ const HIGHLIGHTS = [
 
 const TIP_PERCENTAGES = [0.15, 0.2, 0.25] as const;
 
+export interface SavedRating {
+  score: number;
+  highlights: string[];
+  privateNote: string | null;
+}
+
 export function RateTipForm({
   jobId,
   cleanerFirstName,
   cleanPriceCents,
+  tipsEnabled,
+  initialRating = null,
 }: {
   jobId: string;
   cleanerFirstName: string;
   cleanPriceCents: number;
+  tipsEnabled: boolean;
+  initialRating?: SavedRating | null;
 }) {
   const router = useRouter();
-  const [score, setScore] = useState<number | null>(null);
-  const [chosen, setChosen] = useState<string[]>([]);
+  const [score, setScore] = useState<number | null>(initialRating?.score ?? null);
+  const [chosen, setChosen] = useState<string[]>(initialRating?.highlights ?? []);
   const [tipCents, setTipCents] = useState(0);
   const [customTip, setCustomTip] = useState("");
-  const [note, setNote] = useState("");
+  const [note, setNote] = useState(initialRating?.privateNote ?? "");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [tipAddedCents, setTipAddedCents] = useState<number | null>(null);
+  const [receiptNotice, setReceiptNotice] = useState<string | null>(null);
 
   const split = tipCents > 0 ? tipPassThrough(tipCents) : null;
 
@@ -67,22 +79,39 @@ export function RateTipForm({
           score,
           highlights: chosen,
           privateNote: note.trim() || null,
-          tipCents,
+          tipCents: tipsEnabled ? tipCents : 0,
         }),
       });
 
       const payload: unknown = await response.json().catch(() => ({}));
-      const data = (payload ?? {}) as { recorded?: unknown; error?: unknown };
+      const data = (payload ?? {}) as {
+        recorded?: unknown;
+        error?: unknown;
+        warning?: unknown;
+        tip?: { tipCents?: unknown } | null;
+      };
 
-      if (!response.ok && data.recorded !== true) {
+      if (data.recorded !== true) {
         setError(typeof data.error === "string" ? data.error : "That did not save.");
         return;
       }
 
+      setTipAddedCents(
+        typeof data.tip?.tipCents === "number" && data.tip.tipCents > 0
+          ? data.tip.tipCents
+          : null,
+      );
+      setReceiptNotice(
+        typeof data.error === "string"
+          ? data.error
+          : typeof data.warning === "string"
+            ? data.warning
+            : null,
+      );
       setDone(true);
       router.refresh();
     } catch {
-      setError("No connection. Nothing was sent — try again.");
+      setError("We could not confirm whether your rating saved. Check your connection and try again.");
     } finally {
       setSending(false);
     }
@@ -90,19 +119,15 @@ export function RateTipForm({
 
   if (done) {
     return (
-      <div className="card p-6 text-center">
-        <p className="text-lg font-semibold text-navy">Thank you.</p>
-        <p className="mt-2 text-sm text-ink-2">
-          {split
-            ? `${cleanerFirstName} will get ${formatCents(split.netCents)} of your ${formatCents(split.tipCents)} tip — the rest is the card fee.`
-            : `${cleanerFirstName} will see your rating.`}
-        </p>
-      </div>
+      <RatingReceipt tipAddedCents={tipAddedCents} notice={receiptNotice} />
     );
   }
 
   return (
     <div className="space-y-4">
+      {initialRating && <p className="text-sm text-ink-2">
+        Saved rating: {initialRating.score} out of 5. You can update it below.
+      </p>}
       <div className="card p-5">
         <p className="text-center text-sm text-ink-2">How did {cleanerFirstName} do?</p>
 
@@ -112,6 +137,7 @@ export function RateTipForm({
               key={n}
               type="button"
               aria-label={`${n} out of 5`}
+              aria-pressed={score === n}
               onClick={() => setScore(n)}
               className={`flex-1 rounded-lg border py-4 text-2xl transition-colors ${
                 score !== null && n <= score
@@ -135,6 +161,7 @@ export function RateTipForm({
                   key={h.key}
                   type="button"
                   onClick={() => toggle(h.key)}
+                  aria-pressed={chosen.includes(h.key)}
                   className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
                     chosen.includes(h.key)
                       ? "border-sky-deep bg-sky/20 text-navy"
@@ -147,7 +174,7 @@ export function RateTipForm({
             </div>
           </div>
 
-          <div className="card p-5">
+          {tipsEnabled ? <div className="card p-5">
             <div className="flex items-baseline justify-between">
               <p className="eyebrow">Add a tip</p>
               <p className="text-[11px] text-ink-3">
@@ -199,7 +226,7 @@ export function RateTipForm({
                 {split.feeCents > 0 ? ` · card fee ${formatCents(split.feeCents)}` : ""}
               </p>
             ) : null}
-          </div>
+          </div> : <p className="text-sm text-ink-2">Online tipping is unavailable. You can still save your rating.</p>}
 
           <div className="card p-5">
             <p className="eyebrow">Private note</p>
@@ -228,10 +255,23 @@ export function RateTipForm({
               ? "Sending…"
               : tipCents > 0
                 ? `Submit and tip ${formatCents(tipCents)}`
-                : "Submit"}
+                : initialRating ? "Update rating" : "Submit"}
           </button>
         </>
       ) : null}
     </div>
   );
+}
+
+export function RatingReceipt({ tipAddedCents, notice }: {
+  tipAddedCents: number | null;
+  notice: string | null;
+}) {
+  return <div className="card p-6 text-center">
+    <p className="text-lg font-semibold text-navy">Thank you. Your rating is saved.</p>
+    {tipAddedCents !== null && <p className="mt-2 text-sm text-ink-2">
+      Your {formatCents(tipAddedCents)} tip was added to your bill. Check Account for the payment status.
+    </p>}
+    {notice && <p className="mt-2 text-sm text-bad" role="status">{notice}</p>}
+  </div>;
 }

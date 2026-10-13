@@ -2,16 +2,20 @@ import type { Job } from "@/lib/data/types";
 import { BUSINESS_TIME_ZONE, todayIn } from "@/lib/time/zone";
 
 const CLOSED = new Set(["complete", "canceled"]);
-/**
- * Open visits still ahead of the customer. A clean under way counts: its start
- * time has passed, but the cleaner is in the house and the visit is not over.
- */
+/** Keep unresolved past visits visible without presenting them as future bookings. */
+export function visitSections(jobs: readonly Job[], now: Date) {
+  const active = activeVisits(jobs);
+  return {
+    ongoing: active.filter((job) => job.status === "in_progress"),
+    upcoming: active.filter((job) => job.status !== "in_progress" && job.scheduledStart && job.scheduledStart >= now),
+    awaitingTime: active.filter((job) => job.status !== "in_progress" && !job.scheduledStart),
+    unresolved: active.filter((job) => job.status !== "in_progress" && job.scheduledStart && job.scheduledStart < now),
+    history: jobs.filter((job) => CLOSED.has(job.status)).sort((a, b) => (b.scheduledStart?.getTime() ?? 0) - (a.scheduledStart?.getTime() ?? 0)),
+  };
+}
 export function upcomingVisits(jobs: readonly Job[], now: Date): Job[] {
   return activeVisits(jobs).filter(
-    (job) =>
-      job.status === "in_progress" ||
-      !job.scheduledStart ||
-      job.scheduledStart >= now,
+    (job) => job.status === "in_progress" || !job.scheduledStart || job.scheduledStart >= now,
   );
 }
 export function activeVisits(jobs: readonly Job[]): Job[] {

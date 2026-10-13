@@ -149,7 +149,8 @@ export type ContinuityMissReason =
   | "too_few_visits"
   | "incumbent_ineligible"
   | "incumbent_passed"
-  | "no_lead_time";
+  | "no_lead_time"
+  | "appointment_requires_review";
 
 export interface ContinuityMiss {
   held: false;

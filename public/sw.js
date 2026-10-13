@@ -1,11 +1,9 @@
 /**
  * The service worker.
  *
- * Its whole job is the push notification. There is no offline caching here on
- * purpose: the offline story in this app is the photo queue, which lives in the
- * page and writes to IndexedDB before anything touches the network, and a cache
- * that serves a stale dispatch board to a cleaner standing on a doorstep would
- * be worse than no cache at all.
+ * Push plus a static device-recovery screen. Live pages, API responses and
+ * dispatch boards are NEVER cached. Only failed cleaner navigations fall back
+ * to the minimal local checklist, labeled as earlier work.
  *
  * THE PUSH CARRIES NO DATA. It is a tickle — see src/lib/push/vapid.ts. When it
  * arrives this asks our own API what is waiting, so the notification says what
@@ -14,7 +12,18 @@
  * is worse than none.
  */
 
-self.addEventListener("install", () => {
+// Bump this when recovery assets change so an updated install replaces them.
+const WORK_CACHE = "spotless-work-shell-20261003-2";
+const WORK_ASSETS = [
+  "/offline-cleaner.html",
+  "/offline-cleaner.js",
+  "/offline-work.js",
+];
+
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(WORK_CACHE).then((cache) => cache.addAll(WORK_ASSETS)),
+  );
   // Take over immediately rather than waiting for every tab to close. A cleaner
   // who just enabled notifications should get the next offer, not the one after
   // she next quits the app.
@@ -22,7 +31,116 @@ self.addEventListener("install", () => {
 });
 
 self.addEventListener("activate", (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(
+    (async () => {
+      for (const key of await caches.keys()) {
+        if (key.startsWith("spotless-work-shell-") && key !== WORK_CACHE)
+          await caches.delete(key);
+      }
+      await self.clients.claim();
+    })(),
+  );
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data === "offline-work-ready")
+    event.ports[0]?.postMessage("offline-work-ready");
+});
+
+async function clearSavedWork() {
+  await new Promise((resolve, reject) => {
+    const request = indexedDB.open("spotless-photos");
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const db = request.result;
+      if (
+        !db.objectStoreNames.contains("work") ||
+        !db.objectStoreNames.contains("device")
+      ) {
+        db.close();
+        resolve();
+        return;
+      }
+      const tx = db.transaction(["work", "device"], "readwrite");
+      tx.objectStore("work").clear();
+      tx.objectStore("device").put({ key: "owner", ownerId: null });
+      tx.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      tx.onabort = () => {
+        db.close();
+        reject(tx.error);
+      };
+    };
+  });
+  if (typeof BroadcastChannel !== "undefined") {
+    const channel = new BroadcastChannel("spotless-work");
+    channel.postMessage("signed-out");
+    channel.close();
+  }
+}
+
+self.addEventListener("fetch", (event) => {
+  const request = event.request;
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin) return;
+  if (request.method === "POST" && url.pathname === "/auth/sign-out") {
+    event.respondWith(
+      (async () => {
+        try {
+          await clearSavedWork();
+        } catch {
+          return new Response(
+            "Could not clear saved checklist access. Close other Spotless tabs and try signing out again.",
+            { status: 503 },
+          );
+        }
+        return fetch(request);
+      })(),
+    );
+    return;
+  }
+  if (request.method !== "GET") return;
+  if (WORK_ASSETS.includes(url.pathname)) {
+    event.respondWith(
+      (async () => {
+        try {
+          return await fetch(request);
+        } catch {
+          return (await caches.open(WORK_CACHE))
+            .match(url.pathname)
+            .then((response) => response ?? Response.error());
+        }
+      })(),
+    );
+    return;
+  }
+  // The installed PWA starts at /; it needs the same recovery after a restart.
+  if (
+    request.mode === "navigate" &&
+    (url.pathname === "/" || /^\/cleaner(?:\/|$)/.test(url.pathname))
+  ) {
+    event.respondWith(
+      (async () => {
+        let response;
+        try {
+          response = await fetch(request);
+        } catch {
+          return (await caches.open(WORK_CACHE))
+            .match("/offline-cleaner.html")
+            .then((response) => response ?? Response.error());
+        }
+        if (
+          response.status === 401 ||
+          response.status === 403 ||
+          new URL(response.url || request.url).pathname === "/login"
+        )
+          await clearSavedWork().catch(() => {});
+        return response;
+      })(),
+    );
+  }
 });
 
 self.addEventListener("push", (event) => {
@@ -75,7 +193,8 @@ async function showWhatIsWaiting() {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
 
-  const url = (event.notification.data && event.notification.data.url) || "/cleaner";
+  const url =
+    (event.notification.data && event.notification.data.url) || "/cleaner";
 
   event.waitUntil(
     (async () => {

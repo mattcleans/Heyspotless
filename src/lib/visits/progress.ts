@@ -15,24 +15,25 @@
  * Pure, so the stage rules can be asserted without a database.
  */
 
-export type VisitStage = "scheduled" | "accepted" | "cleaning" | "done";
+export type VisitStage = "scheduled" | "accepted" | "cleaning" | "done" | "canceled";
 
 export const STAGES: readonly VisitStage[] = ["scheduled", "accepted", "cleaning", "done"];
 
 /** What each stage is called on the tracker, in the customer's language. */
 export const STAGE_LABELS: Record<VisitStage, string> = {
-  scheduled: "Booked",
+  scheduled: "Matching cleaner",
   accepted: "Cleaner assigned",
   cleaning: "Cleaning",
   done: "Done",
+  canceled: "Canceled",
 };
 
 export function stageIndex(stage: VisitStage): number {
-  return Math.max(0, STAGES.indexOf(stage));
+  return STAGES.indexOf(stage);
 }
 
 export function isStageReached(stage: VisitStage, current: VisitStage): boolean {
-  return stageIndex(stage) <= stageIndex(current);
+  return current !== "canceled" && stage !== "canceled" && stageIndex(stage) <= stageIndex(current);
 }
 
 export interface VisitSummary {
@@ -56,6 +57,8 @@ export function visitHeadline(visit: VisitSummary, cleanerFirstName: string | nu
   const who = cleanerFirstName ?? "Your cleaner";
 
   switch (visit.stage) {
+    case "canceled":
+      return "This visit was canceled";
     case "done":
       return `${who} has finished`;
     case "cleaning":
@@ -72,13 +75,26 @@ export function visitHeadline(visit: VisitSummary, cleanerFirstName: string | nu
  *
  * Rooms rather than elapsed time. A clock-based bar claims to know how long
  * this house takes, and the estimate is ours — a bar at 90% while she is still
- * on the second bathroom is worse than no bar. Rooms are counted from
- * photographic evidence, which is the same number the invoice gate reads.
+ * on the second bathroom is worse than no bar. Rooms are counted from required before/after server photo pairs.
+ * Finished work can still have photos waiting to upload.
  */
 export function roomProgress(visit: VisitSummary): number | null {
-  if (visit.stage === "done") return 1;
-  if (visit.stage !== "cleaning") return null;
+  if (visit.stage !== "cleaning" && visit.stage !== "done") return null;
   if (visit.roomsTotal <= 0) return null;
 
+  if (!Number.isSafeInteger(visit.roomsDone) || visit.roomsDone < 0 || !Number.isSafeInteger(visit.roomsTotal)) return null;
   return Math.min(1, visit.roomsDone / visit.roomsTotal);
+}
+
+/** Cancellation and completion take precedence over historical timestamps. */
+export function visitStage(status: string, startedAt: Date | null, hasAssignment: boolean): VisitStage {
+  if (!["unscheduled", "scheduled", "dispatching", "assigned", "in_progress", "complete", "canceled"].includes(status)) {
+    throw new Error("Your visit status could not be verified. Please refresh.");
+  }
+  if (status === "canceled") return "canceled";
+  if (status === "complete") return "done";
+  if (status === "in_progress" || startedAt) return "cleaning";
+  if (hasAssignment || status === "assigned") return "accepted";
+  if (["unscheduled", "scheduled", "dispatching"].includes(status)) return "scheduled";
+  throw new Error("Your visit status could not be verified. Please refresh.");
 }

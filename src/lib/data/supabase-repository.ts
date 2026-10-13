@@ -33,7 +33,7 @@ const NEEDS_CLEANER = ["unscheduled", "scheduled", "dispatching"];
 
 const JOB_SELECT = `
   id, customer_id, property_id, status, service, freq,
-  scheduled_start, price_cents, estimated_clean_minutes,
+  scheduled_start, scheduled_end, schedule_revision, price_cents, estimated_clean_minutes,
   customers ( first_name, last_name ),
   properties ( street, city, zip, bedrooms, bathrooms )
 `;
@@ -65,7 +65,7 @@ const CUSTOMER_SELECT = `
 
 /** `balance_cents` is generated in the database; it is selected, never computed. */
 const INVOICE_SELECT = `
-  id, customer_id, job_id, status, subtotal_cents, tip_cents, total_cents,
+  id, customer_id, job_id, kind, status, subtotal_cents, tip_cents, total_cents,
   amount_paid_cents, refunded_cents, credit_cents, balance_cents, due_on,
   issued_at, voided_at, attempt_count, next_attempt_at, last_error,
   autocharge_paused_at, autocharge_paused_reason, created_at
@@ -137,17 +137,20 @@ export class SupabaseRepository implements Repository {
     if (jobs.length === 0) return jobs;
 
     const ids = jobs.map((j) => j.id);
-    const [continuity, passedOver, offeredUpTo] = await Promise.all([
+    const [continuity, passedOver, offeredUpTo, exclusions] = await Promise.all([
       continuityFor(this.db, ids),
       passedOverFor(this.db, ids),
       offeredUpToFor(this.db, ids),
+      this.db.from("visit_cleaner_exclusions").select("job_id,cleaner_id").in("job_id",ids),
     ]);
 
+    if (exclusions.error && !["42P01","PGRST205"].includes(exclusions.error.code)) throw new Error("Unable to load client matching preferences.");
     return jobs.map((job) => ({
       ...job,
       continuity: continuity.get(job.id),
       passedOver: passedOver.get(job.id),
       offeredUpToShare: offeredUpTo.get(job.id),
+      clientDeclinedCleanerIds: (exclusions.data ?? []).filter(x=>x.job_id===job.id).map(x=>String(x.cleaner_id)),
     }));
   }
 

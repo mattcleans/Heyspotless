@@ -11,8 +11,12 @@ const groups: {
     label: "Run the day",
     items: [
       { href: "/admin", label: "Overview", icon: "home" },
+      { href: "/admin/schedule", label: "Schedule", icon: "calendar" },
+      { href: "/admin/review", label: "Visit review", icon: "calendar" },
       { href: "/admin/automation", label: "Automation", icon: "sparkle" },
       { href: "/admin/dispatch", label: "Matching", icon: "people" },
+      { href: "/admin/cleaner-requests", label: "Cleaner requests", icon: "people" },
+      { href: "/admin/cancellations", label: "Cancellations", icon: "calendar" },
       { href: "/admin/inbox", label: "Inbox", icon: "message" },
     ],
   },
@@ -73,7 +77,8 @@ export function ManagementNavigation() {
                   item.href === "/admin"
                     ? pathname === item.href
                     : pathname === item.href ||
-                      pathname.startsWith(`${item.href}/`);
+                      pathname.startsWith(`${item.href}/`) ||
+                      (item.href === "/admin/review" && pathname.startsWith("/admin/visits/"));
                 return (
                   <li key={item.href}>
                     <Link

@@ -33,6 +33,8 @@ function context(cleaners: Cleaner[], driveMinutes = 20, driveMiles = 12) {
   return {
     now: NOW,
     cleaners,
+    // These money fixtures deliberately provide the saved load for their appointment week.
+    scheduledHoursFor: (cleaner: Cleaner) => cleaner.hoursScheduledThisWeek,
     driveFor: (c: Cleaner, j: DispatchJob) => estimate(c.lastStopZip ?? "75034", j.zip),
     rng: () => 0.5,
   };

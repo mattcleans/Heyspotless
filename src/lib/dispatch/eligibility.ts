@@ -1,3 +1,4 @@
+import { matchingWindow } from "./window";
 /**
  * The gate nobody crosses.
  *
@@ -15,6 +16,7 @@ import type { Cleaner, DispatchJob } from "./types";
 export const MINIMUM_RATING = 3.9;
 
 export type IneligibilityReason =
+  | "client_declined"
   | "not_active"
   | "below_rating_floor"
   | "unrated"
@@ -22,6 +24,7 @@ export type IneligibilityReason =
   | "insurance_expired"
   | "outside_service_zone"
   | "already_booked"
+  | "assignment_time_unavailable"
   | "outside_working_hours";
 
 export interface EligibilityResult {
@@ -31,7 +34,7 @@ export interface EligibilityResult {
 
 export interface EligibilityContext {
   /** Windows this cleaner is already committed to. */
-  busyWindows?: readonly { start: Date; end: Date }[];
+  busyWindows?: readonly { start: Date; end: Date; requiresReview?: boolean; jobId?: string }[];
   /** Duration of the job being offered, for the overlap check. */
   jobDurationMinutes?: number;
   /**
@@ -58,6 +61,7 @@ export function checkEligibility(
   context: EligibilityContext = {},
 ): EligibilityResult {
   const reasons: IneligibilityReason[] = [];
+  if (job.clientDeclinedCleanerIds?.includes(cleaner.id)) reasons.push("client_declined");
 
   if (cleaner.status !== "active") reasons.push("not_active");
 
@@ -82,11 +86,11 @@ export function checkEligibility(
     reasons.push("outside_service_zone");
   }
 
-  const durationMs = (context.jobDurationMinutes ?? job.estimatedCleanMinutes) * 60_000;
-  const jobEnd = jobDate ? new Date(jobDate.getTime() + durationMs) : null;
+  const jobEnd = matchingWindow(job, context.jobDurationMinutes ?? job.estimatedCleanMinutes)?.end ?? null;
+  if (context.busyWindows?.some(w => w.requiresReview)) reasons.push("assignment_time_unavailable");
 
   if (jobDate && jobEnd && context.busyWindows?.length) {
-    const overlaps = context.busyWindows.some((w) => w.start < jobEnd && jobDate < w.end);
+    const overlaps = context.busyWindows.some((w) => !w.requiresReview && w.start < jobEnd && jobDate < w.end);
     if (overlaps) reasons.push("already_booked");
   }
 
@@ -109,6 +113,7 @@ export function eligibleCleaners(
 }
 
 export const REASON_LABELS: Record<IneligibilityReason, string> = {
+  client_declined: "Client requested a different cleaner for this visit",
   not_active: "Not an active cleaner",
   below_rating_floor: `Rating below the ${MINIMUM_RATING} floor`,
   unrated: "No rating on file",
@@ -116,5 +121,6 @@ export const REASON_LABELS: Record<IneligibilityReason, string> = {
   insurance_expired: "Insurance lapsed before this job date",
   outside_service_zone: "Outside their service zone",
   already_booked: "Already booked in this window",
+  assignment_time_unavailable: "Existing assignment time needs review",
   outside_working_hours: "Outside the hours they work",
 };

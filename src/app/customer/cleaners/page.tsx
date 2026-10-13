@@ -5,21 +5,7 @@ import { CleanerDirectory } from "@/lib/cleaners/store";
 import { CleanerCard } from "@/components/cleaner-card";
 import { Callout } from "@/components/ui";
 
-/**
- * Screen 2 — the people who clean here.
- *
- * THE DESIGN CALLED THIS "CLEANERS NEAR YOU" AND GAVE EACH ONE A RATE AND A
- * BOOK BUTTON. That is a marketplace, and it is not this business: the
- * dispatch engine decides who cleans a given house, spending guaranteed hours
- * before buying any, holding a home for the cleaner who already knows it, and
- * never paying more than its own cheapest option. A customer picking from a
- * list bypasses all of it, and a rate on a card makes the cleaner a
- * price-setter.
- *
- * So the screen answers the question the design was really reaching for —
- * "who are these people, and should I let one into my house?" — and leaves the
- * matching where it belongs. No rates, no book buttons, no choosing.
- */
+/** Published profiles introduce the team; preferences are requests for an own visit. */
 export const dynamic = "force-dynamic";
 
 export const metadata = { title: "Your cleaners" };
@@ -92,14 +78,12 @@ export default async function CleanersPage() {
             />
           ))}
           <p className="px-1 text-xs text-ink-3">
-            We keep sending the same cleaner back. You will only see somebody new if she is
-            unavailable, or if you ask.
+            We aim to keep a familiar cleaner. Request a preferred cleaner from their profile; the office confirms eligibility and matching. Any backup for a preferred cleaner needs your approval before work starts.
           </p>
         </section>
       ) : (
         <Callout tone="good" label="How matching works">
-          We match a cleaner to your home rather than asking you to choose one — and once
-          somebody has cleaned for you, that home is held for her before anyone else sees it.
+          You can request a preferred cleaner for an upcoming visit. A request is reviewed by the office and does not guarantee availability or acceptance.
         </Callout>
       )}
 

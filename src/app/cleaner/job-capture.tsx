@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { compress } from "@/lib/offline/compress";
 import * as store from "@/lib/offline/photo-store";
 import { drain } from "@/lib/offline/drain";
@@ -18,7 +19,8 @@ import type { Room } from "@/lib/service/rooms";
  *
  * Uploading is the queue's problem and it happens in the background, retrying
  * for as long as it takes. She can close the app, drive home and open it on
- * her own wifi, and the photos are still there.
+ * her own wifi, and the photos are still there. Reopening the visit resumes
+ * uploads; the browser need not keep running after it is closed.
  */
 
 type Kind = "before" | "after";
@@ -28,15 +30,28 @@ export interface JobCaptureProps {
   rooms: Room[];
   /** Rooms already photographed on the server, so a reinstall does not start over. */
   alreadyDone: { roomKey: string; kind: string }[];
+  ownerId?: string | null;
 }
 
-export function JobCapture({ jobId, rooms, alreadyDone }: JobCaptureProps) {
+export function JobCapture({
+  jobId,
+  rooms,
+  alreadyDone,
+  ownerId = null,
+}: JobCaptureProps) {
   const [taken, setTaken] = useState<Set<string>>(
     () => new Set(alreadyDone.map((p) => `${p.roomKey}:${p.kind}`)),
   );
-  const [queue, setQueue] = useState<QueueSummary>({ outstanding: 0, struggling: 0, busy: false });
+  const [queue, setQueue] = useState<QueueSummary>({
+    outstanding: 0,
+    struggling: 0,
+    busy: false,
+  });
   const [durable, setDurable] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [saving, setSaving] = useState(false);
   const pending = useRef<{ roomKey: string; kind: Kind } | null>(null);
   const input = useRef<HTMLInputElement>(null);
 
@@ -46,40 +61,65 @@ export function JobCapture({ jobId, rooms, alreadyDone }: JobCaptureProps) {
     let cancelled = false;
 
     void (async () => {
-      if (!(await store.isAvailable())) {
+      try {
+        if (!(await store.isAvailable()))
+          throw new Error("storage unavailable");
+        const queued = await store.listForJob(jobId, ownerId);
+        if (cancelled) return;
+        setTaken((current) => {
+          const next = new Set(current);
+          for (const photo of queued)
+            next.add(`${photo.roomKey}:${photo.kind}`);
+          return next;
+        });
+        setQueue(summarise(queued));
+      } catch {
         if (!cancelled) setDurable(false);
-        return;
       }
-      const queued = await store.listForJob(jobId);
-      if (cancelled) return;
-
-      setTaken((current) => {
-        const next = new Set(current);
-        for (const photo of queued) next.add(`${photo.roomKey}:${photo.kind}`);
-        return next;
-      });
-      setQueue(summarise(queued));
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [jobId]);
+  }, [jobId, ownerId]);
 
   // Drain now, whenever the connection comes back, and on a slow tick for the
   // case where `online` lies — which on a phone moving between cells it often
   // does.
   useEffect(() => {
-    const tick = () => void drain(setQueue);
+    let cancelled = false;
+    const tick = () => {
+      void drain((summary) => {
+        if (!cancelled) {
+          setQueue(summary);
+          setUploadError(false);
+        }
+      }, jobId).catch(() => {
+        if (!cancelled) setUploadError(true);
+      });
+    };
     tick();
 
     const interval = setInterval(tick, 20_000);
     window.addEventListener("online", tick);
     return () => {
+      cancelled = true;
       clearInterval(interval);
       window.removeEventListener("online", tick);
     };
-  }, []);
+  }, [jobId]);
+
+  async function retryUploads() {
+    setRetrying(true);
+    try {
+      await drain(setQueue, jobId, true);
+      setUploadError(false);
+    } catch {
+      setUploadError(true);
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   const capture = useCallback((roomKey: string, kind: Kind) => {
     pending.current = { roomKey, kind };
@@ -93,6 +133,7 @@ export function JobCapture({ jobId, rooms, alreadyDone }: JobCaptureProps) {
       pending.current = null;
       if (!file || !target) return;
 
+      setSaving(true);
       try {
         const blob = await compress(file);
 
@@ -100,17 +141,26 @@ export function JobCapture({ jobId, rooms, alreadyDone }: JobCaptureProps) {
         await store.enqueue({
           id: `${jobId}:${target.roomKey}:${target.kind}`,
           jobId,
+          ownerId: ownerId ?? undefined,
           roomKey: target.roomKey,
           kind: target.kind,
           takenAt: Date.now(),
+          revision: crypto.randomUUID(),
           state: "pending",
           attempts: 0,
           nextAttemptAt: Date.now(),
           blob,
         });
 
-        setTaken((current) => new Set(current).add(`${target.roomKey}:${target.kind}`));
-        void drain(setQueue);
+        setTaken((current) =>
+          new Set(current).add(`${target.roomKey}:${target.kind}`),
+        );
+        setDurable(true);
+        void store
+          .listForJob(jobId, ownerId)
+          .then((photos) => setQueue(summarise(photos)))
+          .catch(() => setUploadError(true));
+        void drain(setQueue, jobId).catch(() => setUploadError(true));
       } catch (caught) {
         // Never a silent failure. If it is not saved she has to know NOW,
         // while she is still standing in the room.
@@ -119,14 +169,18 @@ export function JobCapture({ jobId, rooms, alreadyDone }: JobCaptureProps) {
             ? "No space left on this phone to save the photo. Free some up and take it again."
             : "That photo did not save. Take it again.",
         );
+      } finally {
+        setSaving(false);
       }
     },
-    [jobId],
+    [jobId, ownerId],
   );
 
   const outstanding = rooms.reduce(
     (count, room) =>
-      count + (taken.has(`${room.key}:before`) ? 0 : 1) + (taken.has(`${room.key}:after`) ? 0 : 1),
+      count +
+      (taken.has(`${room.key}:before`) ? 0 : 1) +
+      (taken.has(`${room.key}:after`) ? 0 : 1),
     0,
   );
 
@@ -154,20 +208,33 @@ export function JobCapture({ jobId, rooms, alreadyDone }: JobCaptureProps) {
 
       {!durable && (
         <p className="mt-2 rounded-lg border border-line bg-surface-2 p-3 text-xs text-ink-2">
-          This browser will not let the app save photos offline, so they have to upload as you
-          take them. On a weak signal, use Safari or Chrome rather than a private window.
+          Photo storage could not be opened. A photo is marked saved only after
+          it is stored on this device. Try Safari or Chrome outside a private
+          window. Call the office if you cannot save your photos.
         </p>
       )}
 
       {error && (
-        <p className="mt-2 rounded-lg border border-line bg-surface-2 p-3 text-sm text-ink" role="alert">
+        <p
+          className="mt-2 rounded-lg border border-line bg-surface-2 p-3 text-sm text-ink"
+          role="alert"
+        >
           {error}
+        </p>
+      )}
+
+      {saving && (
+        <p className="mt-2 text-xs text-ink-2" role="status">
+          Saving photo on this device…
         </p>
       )}
 
       <ul className="mt-3 space-y-2">
         {rooms.map((room) => (
-          <li key={room.key} className="card flex items-center justify-between gap-3 p-3">
+          <li
+            key={room.key}
+            className="card flex items-center justify-between gap-3 p-3"
+          >
             <span className="text-sm text-ink">{room.label}</span>
             <span className="flex gap-2">
               {(["before", "after"] as const).map((kind) => {
@@ -177,7 +244,9 @@ export function JobCapture({ jobId, rooms, alreadyDone }: JobCaptureProps) {
                     key={kind}
                     type="button"
                     onClick={() => capture(room.key, kind)}
-                    className={`rounded-lg px-3 py-2 text-xs font-semibold ${
+                    disabled={saving}
+                    aria-label={`${done ? "Retake" : "Take"} ${kind} photo for ${room.label}`}
+                    className={`min-h-11 min-w-11 rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-60 ${
                       done
                         ? "border border-line bg-surface-2 text-ink-3"
                         : "bg-navy text-white"
@@ -194,22 +263,60 @@ export function JobCapture({ jobId, rooms, alreadyDone }: JobCaptureProps) {
 
       {/*
         Said plainly rather than hidden behind a spinner. A tick means the
-        photo is safe on this phone; the queue is what gets it to us, and she
-        can close the app while it does.
+        photo is saved on this phone; reopening this visit resumes the queue.
       */}
       {queue.outstanding > 0 && (
-        <p className="mt-3 text-xs text-ink-3">
-          {queue.outstanding} photo{queue.outstanding === 1 ? "" : "s"} saved on this phone,
-          uploading in the background. You can close the app — they will keep trying.
-          {queue.struggling > 0 && (
-            <>
-              {" "}
-              <strong className="text-ink-2">
-                {queue.struggling} {queue.struggling === 1 ? "is" : "are"} having trouble
-              </strong>{" "}
-              — they are not lost, but they need a better signal.
-            </>
+        <div className="card mt-3 p-3" role="status">
+          <p className="text-xs text-ink-2">
+            {queue.outstanding} photo{queue.outstanding === 1 ? "" : "s"} saved
+            on this phone, waiting to upload for this visit. Keep this visit
+            open while they upload. If you close the app, reopen this visit to
+            resume.
+            {queue.struggling > 0 && (
+              <>
+                {" "}
+                <strong className="text-ink-2">
+                  {queue.struggling} {queue.struggling === 1 ? "is" : "are"}{" "}
+                  having trouble
+                </strong>
+                . The photos remain saved on this device.
+              </>
+            )}
+          </p>
+          {queue.authRequired && (
+            <p className="mt-2 text-xs text-ink-2">
+              Sign in again to finish uploading. Your saved photos remain on
+              this device.{" "}
+              <Link
+                className="underline"
+                href={`/login?next=${encodeURIComponent(`/cleaner/job/${jobId}`)}`}
+              >
+                Sign in
+              </Link>
+            </p>
           )}
+          <button
+            type="button"
+            onClick={() => void retryUploads()}
+            disabled={retrying}
+            className="mt-2 min-h-11 rounded-lg border border-line px-3 text-xs font-semibold text-navy disabled:opacity-60"
+          >
+            {retrying ? "Checking uploads…" : "Retry uploads"}
+          </button>
+        </div>
+      )}
+      {uploadError && (
+        <p className="mt-3 text-sm text-ink-2" role="alert">
+          Upload status could not be checked. Keep this visit open and try
+          again.{" "}
+          <button
+            type="button"
+            className="min-h-11 px-2 font-semibold underline"
+            onClick={() => void retryUploads()}
+            disabled={retrying}
+          >
+            Retry
+          </button>
         </p>
       )}
     </section>

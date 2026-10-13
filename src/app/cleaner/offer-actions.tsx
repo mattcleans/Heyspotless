@@ -3,6 +3,10 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import {
+  offerAnswerState,
+  type OfferAnswerState,
+} from "@/lib/dispatch/offer-answer";
 
 /**
  * Accept or decline, from the cleaner's phone.
@@ -22,8 +26,7 @@ import Link from "next/link";
 type State =
   | { status: "idle" }
   | { status: "working"; accepting: boolean }
-  | { status: "error"; message: string; signIn?: boolean }
-  | { status: "settled"; tone: "good" | "plain"; message: string };
+  | OfferAnswerState;
 
 export function OfferActions({ offerId }: { offerId: string }) {
   const router = useRouter();
@@ -40,27 +43,9 @@ export function OfferActions({ offerId }: { offerId: string }) {
       });
 
       const payload: unknown = await response.json().catch(() => ({}));
-      const data = (payload ?? {}) as { outcome?: unknown; message?: unknown; error?: unknown };
-
-      if (typeof data.outcome !== "string" || !["accepted", "declined", "taken", "expired", "superseded", "not_found"].includes(data.outcome)) {
-        setState({ status: "error", signIn: response.status === 401, message: response.status === 401
-          ? "Your session has ended. Sign in again to answer this offer."
-          : "We couldn’t confirm your answer. Try again, or call the office for help." });
-        return;
-      }
-
-      const message =
-        typeof data.message === "string"
-          ? data.message
-          : typeof data.error === "string"
-            ? data.error
-            : "Something went wrong. Try again.";
-
-      setState({
-        status: "settled",
-        tone: data.outcome === "accepted" ? "good" : "plain",
-        message,
-      });
+      const result = offerAnswerState(response.status, payload);
+      setState(result);
+      if (result.status !== "settled") return;
       router.refresh();
     } catch {
       // A cleaner is often standing in someone's kitchen with one bar of
@@ -68,7 +53,8 @@ export function OfferActions({ offerId }: { offerId: string }) {
       // neither.
       setState({
         status: "error",
-        message: "We couldn’t confirm your answer. Check your connection and try again.",
+        message:
+          "We couldn’t confirm your answer. Check your connection and try again.",
       });
     }
   }
@@ -88,25 +74,33 @@ export function OfferActions({ offerId }: { offerId: string }) {
 
   return (
     <div className="mt-3">
-      {state.status === "error" && <p role="alert" className="mb-3 text-sm text-ink-2">{state.message}</p>}
-      {state.status === "error" && state.signIn && <Link href="/login?next=%2Fcleaner" className="secondary-action mb-3">Sign in again</Link>}
+      {state.status === "error" && (
+        <p role="alert" className="mb-3 text-sm text-ink-2">
+          {state.message}
+        </p>
+      )}
+      {state.status === "error" && state.signIn && (
+        <Link href="/login?next=%2Fcleaner" className="secondary-action mb-3">
+          Sign in again
+        </Link>
+      )}
       <div className="flex gap-2">
-      <button
-        type="button"
-        onClick={() => void respond(true)}
-        disabled={working}
-        className="flex-1 rounded-lg bg-navy px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
-      >
-        {working && state.accepting ? "Booking…" : "Accept"}
-      </button>
-      <button
-        type="button"
-        onClick={() => void respond(false)}
-        disabled={working}
-        className="rounded-lg border border-line px-4 py-2.5 text-sm text-ink-2 disabled:opacity-60"
-      >
-        {working && !state.accepting ? "…" : "Pass"}
-      </button>
+        <button
+          type="button"
+          onClick={() => void respond(true)}
+          disabled={working}
+          className="flex-1 rounded-lg bg-navy px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+        >
+          {working && state.accepting ? "Booking…" : "Accept"}
+        </button>
+        <button
+          type="button"
+          onClick={() => void respond(false)}
+          disabled={working}
+          className="rounded-lg border border-line px-4 py-2.5 text-sm text-ink-2 disabled:opacity-60"
+        >
+          {working && !state.accepting ? "…" : "Pass"}
+        </button>
       </div>
     </div>
   );

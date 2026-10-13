@@ -1,0 +1,454 @@
+import "server-only";
+import { SupabaseRepository } from "@/lib/data/supabase-repository";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { DispatchStore } from "@/lib/dispatch/store";
+import { matchingCalendarInputs } from "@/lib/dispatch/calendar-context";
+import {
+  MessagingStore,
+  OFFER_SENT,
+  reachabilityOf,
+  type Recipient,
+} from "@/lib/messaging/store";
+import { sendWindowFor } from "@/lib/messaging/quiet-hours";
+import { offerMessage } from "@/lib/messaging/templates";
+import { sendSms } from "@/lib/messaging/gateway";
+import { isMessagingEnabled } from "@/lib/messaging/env";
+import { PushStore } from "@/lib/push/store";
+import { sendPush } from "@/lib/push/gateway";
+import { isPushEnabled } from "@/lib/push/vapid";
+import { dispatchBoard, hoursUntil, type DispatchDecision } from "@/lib/dispatch/engine";
+import { presentOffer } from "@/lib/dispatch/ladder";
+import { CLEANER_SHARE_OF_TICKET, payoutForTicket } from "@/lib/pricing/payout";
+import { zipCentroidEstimator } from "@/lib/dispatch/route";
+import { ZIP_CENTROIDS } from "@/lib/config";
+
+import type { Cleaner, DispatchJob } from "@/lib/dispatch/types";
+import type { Job } from "@/lib/data/types";
+
+/** Shared matching execution for protected sweeps and a verified Client's saved request. */
+const estimate = zipCentroidEstimator(ZIP_CENTROIDS);
+export type DispatchScope = { jobId: string; customerProfileId: string };
+export async function runDispatch(origin: string, scope?: DispatchScope) {
+  const db = createAdminClient();
+  const repo = new SupabaseRepository(db);
+  const store = new DispatchStore(db);
+  const messaging = new MessagingStore(db);
+
+  // Time out lapsed countdowns FIRST. A job whose exclusive hold ran out
+  // unanswered has to be seen as unheld, or the sweep keeps politely waiting
+  // on somebody who never replied and the visit is never filled.
+  // A Client confirmation may only kick off its own saved visit. It must
+  // never expire another Client's offers or turn into a whole-board sweep.
+  let expired = 0;
+  let jobs: Job[];
+  if (scope) {
+    const { data: profile, error } = await db.from("profiles").select("role").eq("id", scope.customerProfileId).maybeSingle();
+    if (error || profile?.role !== "customer") throw new Error("Client matching access unavailable.");
+    const customer = await repo.getCustomerByProfile(scope.customerProfileId);
+    const job = customer ? await repo.getJob(scope.jobId) : null;
+    jobs = [];
+    if (customer && job && job.customerId === customer.id && ["unscheduled", "scheduled", "dispatching"].includes(job.status)) {
+      expired = await store.expireStaleOffers(job.id);
+      // Reload relationships after own expired offers enter the passed-over
+      // history. A confirmation retry must not renew a lapsed offer forever.
+      const latest = await repo.getJob(job.id);
+      if (latest && latest.customerId === customer.id && ["unscheduled", "scheduled", "dispatching"].includes(latest.status)) jobs = [latest];
+    }
+  } else {
+    expired = await store.expireStaleOffers();
+    jobs = await repo.listJobs({ needingCleaner: true });
+  }
+  if (jobs.length === 0) return { jobs: 0, expiredOffers: expired, assigned: 0, needsScheduling: 0, held: 0, offered: 0, notified: 0, deferred: 0, unreachable: 0, refused: 0, unfilled: 0, pushed: 0, failed: 0 };
+  const cleaners = await repo.listCleaners();
+
+  const now = new Date();
+
+  const calendar = await matchingCalendarInputs(db, jobs, now);
+  const context = {
+    now, cleaners,
+    driveFor: (cleaner: Cleaner, job: DispatchJob) => estimate(cleaner.lastStopZip, job.zip),
+    ...calendar,
+  };
+
+  // Who we can actually reach. An offer nobody is told about is not an offer:
+  // it starts a countdown the cleaner cannot answer and expires having taught
+  // the ranking she passed on work she was never shown.
+  const recipients = await messaging.recipientsFor(cleaners.map((c) => c.id));
+
+  /**
+   * Devices to wake, alongside the text.
+   *
+   * BOTH GO OUT, and that is the point rather than an oversight. A cleaner who
+   * has not installed the app to her home screen cannot receive a push at all —
+   * on iOS that is most of them — and a marketplace that quietly stopped
+   * offering work to whoever had not installed it would be a marketplace with a
+   * silent supply problem nobody could see.
+   *
+   * The push is the fast half: an offer rung lives 8 to 15 minutes, a
+   * notification arrives in seconds, and it costs nothing per send while a text
+   * costs money every time a rung goes to a tier.
+   */
+  const pushStore = new PushStore(db);
+  const pushTargets = isPushEnabled()
+    ? await pushStore.targetsFor(cleaners.map((c) => c.id))
+    : new Map<string, string[]>();
+
+  const result = {
+    jobs: jobs.length,
+    expiredOffers: expired,
+    assigned: 0,
+    needsScheduling: 0,
+    held: 0,
+    offered: 0,
+    notified: 0,
+    deferred: 0,
+    unreachable: 0,
+    refused: 0,
+    unfilled: 0,
+    pushed: 0,
+    failed: 0,
+  };
+  const problems: { jobId: string; error: string }[] = [];
+
+  for (const { job, decision } of dispatchBoard(jobs, context)) {
+    try {
+      // Recorded BEFORE anything is acted on, and recorded even when the
+      // decision is "nobody". A board that only writes down its successes
+      // cannot answer why a visit went unfilled for three days.
+      const { id: decisionId } = await store.recordDecision(job.id, decision);
+      await act(
+        {
+          store,
+          messaging,
+          recipients,
+          origin,
+          pushStore,
+          pushTargets,
+          result,
+        },
+        job,
+        decision,
+        decisionId,
+        now,
+        result,
+      );
+    } catch (error) {
+      // One job must not stop the board. A visit that fails to dispatch is a
+      // problem for a person; every other visit still needs filling tonight.
+      result.failed += 1;
+      problems.push({ jobId: job.id, error: messageOf(error) });
+      console.error(`dispatch failed for job ${job.id}`, error);
+    }
+  }
+
+  return problems.length > 0 ? { ...result, problems } : result;
+}
+
+type Result = {
+  needsScheduling: number;
+  assigned: number;
+  held: number;
+  offered: number;
+  notified: number;
+  deferred: number;
+  unreachable: number;
+  refused: number;
+  unfilled: number;
+  pushed: number;
+};
+
+interface Deps {
+  store: DispatchStore;
+  messaging: MessagingStore;
+  recipients: Map<string, Recipient>;
+  origin: string;
+  pushStore: PushStore;
+  pushTargets: Map<string, string[]>;
+  result: Result;
+}
+
+/**
+ * Write one offer, treating a refusal as one cleaner's problem rather than the
+ * job's.
+ *
+ * The eligibility gate is a CHECK on the offers table, so an offer the engine
+ * thought was fine can still be refused by the database — the engine works
+ * from a roster read at the top of the sweep, and a cleaner who accepted
+ * something else thirty seconds ago has moved on since. Letting that abort the
+ * whole job would mean one cleaner going busy costs every other cleaner their
+ * look at the work.
+ */
+async function tryOffer(
+  store: DispatchStore,
+  offer: Parameters<DispatchStore["recordOffer"]>[0],
+  result: Result,
+): Promise<string | null> {
+  try {
+    const offerId = await store.recordOffer(offer);
+    if (offerId) result.offered += 1;
+    return offerId;
+  } catch (error) {
+    result.refused += 1;
+    console.warn(
+      `offer refused for cleaner ${offer.cleanerId} on job ${offer.jobId}: ${messageOf(error)}`,
+    );
+    return null;
+  }
+}
+
+async function act(
+  deps: Deps,
+  job: Job,
+  decision: DispatchDecision,
+  decisionId: string,
+  now: Date,
+  result: Result,
+): Promise<void> {
+  const { store } = deps;
+
+  switch (decision.kind) {
+    case "needs_scheduling":
+      result.needsScheduling += 1;
+      return;
+    case "assign_guaranteed":
+    case "assign_w2": {
+      // An employee is scheduled, not asked — and scheduled work needs no
+      // countdown, so nothing here waits on being able to text her.
+      const payout = payoutForTicket(job.priceCents, CLEANER_SHARE_OF_TICKET);
+      if (await store.assignDirectly(job.id, decision.cleaner.id, payout, job.scheduleRevision ?? 1)) result.assigned += 1;
+      return;
+    }
+
+    case "hold_for_incumbent": {
+      const sent = await offerAndNotify(deps, job, result, {
+        cleanerId: decision.cleaner.id,
+        decisionId,
+        channel: "direct_assign",
+        tier: 1,
+        share: decision.share,
+        payoutCents: decision.payoutCents,
+        expiresAt: decision.exclusiveUntil,
+        isExclusive: true,
+        now,
+      });
+      if (sent) result.held += 1;
+      return;
+    }
+
+    case "open_board": {
+      for (const cleaner of decision.eligible) {
+        await offerAndNotify(deps, job, result, {
+          cleanerId: cleaner.id,
+          decisionId,
+          channel: "open_board",
+          tier: 1,
+          share: decision.share,
+          payoutCents: decision.payoutCents,
+          expiresAt: decision.promoteToWaterfallAt,
+          isExclusive: false,
+          now,
+        });
+      }
+      return;
+    }
+
+    case "waterfall": {
+      // ONLY THE FIRST RUNG GOES OUT NOW. The ladder is a schedule, not a
+      // broadcast: writing every rung would put the highest payout on a
+      // cleaner's screen immediately and hand away the entire benefit of
+      // escalating. The next sweep sends the next rung to the next tier once
+      // this one has lapsed.
+      const rung = decision.ladder[0];
+      const tier = decision.tiers[0];
+      if (!rung || !tier) {
+        result.unfilled += 1;
+        return;
+      }
+
+      const presented = presentOffer(job, rung, now);
+      for (const cleaner of tier) {
+        await offerAndNotify(deps, job, result, {
+          cleanerId: cleaner.id,
+          decisionId,
+          channel: "waterfall",
+          tier: 1,
+          share: rung.share,
+          payoutCents: rung.payoutCents,
+          expiresAt: presented.expiresAt,
+          isExclusive: false,
+          now,
+        });
+      }
+      return;
+    }
+
+    case "no_eligible_cleaner":
+      // Nothing to do, and the decision row already says so. This is the line
+      // the exception queue is built from: a visit no cleaner can take is the
+      // one case that always needs a person.
+      result.unfilled += 1;
+      return;
+  }
+}
+
+interface OfferPlan {
+  cleanerId: string;
+  decisionId: string;
+  channel: "open_board" | "waterfall" | "direct_assign";
+  tier: number;
+  share: number;
+  payoutCents: number;
+  expiresAt: Date;
+  isExclusive: boolean;
+  now: Date;
+}
+
+/**
+ * Write an offer and tell the cleaner it exists — or write neither.
+ *
+ * THE ORDER MATTERS AND SO DOES THE REFUSAL. An offer she cannot be told about
+ * is worse than no offer: it starts a countdown she has no way to answer, and
+ * when it lapses the system records that she passed on work she was never
+ * shown. Acceptance rate drives ranking, so that is not a cosmetic error — it
+ * is her standing in the marketplace, spent on a message we never sent.
+ *
+ * So both gates are checked BEFORE the offer is written:
+ *
+ *   * REACHABILITY — no number on file, or she has replied STOP.
+ *   * THE SEND WINDOW — quiet hours, unless the job is close enough that
+ *     waiting until morning is the worse outcome.
+ *
+ * A deferred job is not lost. The sweep runs hourly; the next one after 08:00
+ * writes the offer and sends it.
+ */
+async function offerAndNotify(
+  deps: Deps,
+  job: Job,
+  result: Result,
+  plan: OfferPlan,
+): Promise<boolean> {
+  const recipient = deps.recipients.get(plan.cleanerId);
+  const reach = reachabilityOf(recipient);
+
+  // Messaging switched off entirely — a local run, or a demo. Offers are still
+  // written, because the alternative is a dev environment where dispatch
+  // silently does nothing.
+  const announcing = isMessagingEnabled();
+
+  if (announcing && !reach.reachable) {
+    result.unreachable += 1;
+    return false;
+  }
+
+  if (announcing) {
+    const window = sendWindowFor(plan.now, {
+      hoursUntilJob: hoursUntil(job, plan.now),
+    });
+    if (!window.send) {
+      result.deferred += 1;
+      return false;
+    }
+  }
+
+  const offerId = await tryOffer(
+    deps.store,
+    {
+      jobId: job.id,
+      scheduleRevision: job.scheduleRevision ?? 1,
+      cleanerId: plan.cleanerId,
+      decisionId: plan.decisionId,
+      channel: plan.channel,
+      tier: plan.tier,
+      share: plan.share,
+      payoutCents: plan.payoutCents,
+      estimatedMinutes: job.estimatedCleanMinutes,
+      expiresAt: plan.expiresAt,
+      isExclusive: plan.isExclusive,
+    },
+    result,
+  );
+  // The offer exists now, so wake her devices whatever happens with the text.
+  // Deliberately before the SMS: the push is the fast half, and a Twilio
+  // timeout should not delay it by ten seconds.
+  if (offerId) await wake(deps, plan.cleanerId);
+
+  if (!offerId || !announcing || !reach.reachable || !recipient) return Boolean(offerId);
+
+  const body = offerMessage({
+    cleanerFirstName: recipient.firstName,
+    customerName: job.customerName,
+    street: job.street,
+    city: job.city,
+    payoutCents: plan.payoutCents,
+    scheduledStart: job.scheduledStart,
+    expiresAt: plan.expiresAt,
+    isExclusive: plan.isExclusive,
+    offerUrl: `${deps.origin}/cleaner`,
+  });
+
+  // Claimed before the provider is called: a crash between sending and
+  // recording would otherwise leave no row, and the next sweep would send
+  // again. Null means an earlier sweep already told her.
+  const messageId = await deps.messaging.claim({
+    offerId,
+    kind: OFFER_SENT,
+    cleanerId: plan.cleanerId,
+    jobId: job.id,
+    body,
+    to: reach.phone,
+  });
+  if (!messageId) return true;
+
+  const sent = await sendSms(reach.phone, body);
+  if (sent.ok) {
+    await deps.messaging.settle(messageId, sent.providerId);
+    result.notified += 1;
+  } else {
+    // Recorded, never swallowed. A cleaner we could not reach must not end up
+    // indistinguishable from one who ignored us.
+    await deps.messaging.settle(messageId, null, sent.reason);
+  }
+  return true;
+}
+
+/**
+ * Ring every device this cleaner has registered.
+ *
+ * Never throws and never blocks the offer: a notification is an improvement on
+ * the text, not a replacement for it, and a push service having a bad minute
+ * must not cost anybody a job.
+ *
+ * A subscription the service says is GONE is deleted on the spot. The
+ * alternative is a table that fills with dead endpoints, each of them tried and
+ * failed on every sweep for ever.
+ */
+async function wake(deps: Deps, cleanerId: string): Promise<void> {
+  const endpoints = deps.pushTargets.get(cleanerId);
+  if (!endpoints || endpoints.length === 0) return;
+
+  for (const endpoint of endpoints) {
+    try {
+      const sent = await sendPush(endpoint);
+
+      if (sent.ok) {
+        deps.result.pushed += 1;
+        await deps.pushStore.settle(endpoint, true);
+        continue;
+      }
+
+      if (sent.gone) {
+        await deps.pushStore.remove(endpoint);
+        continue;
+      }
+
+      await deps.pushStore.settle(endpoint, false);
+    } catch (error) {
+      // Recorded and moved past. She still gets the text.
+      console.warn(`push failed for cleaner ${cleanerId}: ${messageOf(error)}`);
+    }
+  }
+}
+
+function messageOf(error: unknown): string {
+  return error instanceof Error ? error.message.slice(0, 500) : "dispatch failed";
+}

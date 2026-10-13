@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#245478" />
+    <title>Saved work | Hey Spotless</title>
+    <style>
+      :root {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #173c58;
+        background: #f6f9fb;
+        line-height: 1.5;
+        color-scheme: light;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+      }
+      header {
+        background: #fff;
+        border-bottom: 1px solid #d6e2ea;
+        padding: 16px max(16px, env(safe-area-inset-left));
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+      }
+      header strong {
+        font-size: 18px;
+      }
+      a {
+        color: #245478;
+      }
+      header a {
+        font-size: 14px;
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+      }
+      main {
+        max-width: 720px;
+        margin: auto;
+        padding: 24px 16px 48px;
+      }
+      h1 {
+        font-size: 28px;
+        line-height: 1.2;
+        margin: 0 0 16px;
+      }
+      h2 {
+        font-size: 20px;
+        margin: 0 0 8px;
+      }
+      p {
+        margin: 8px 0 16px;
+        max-width: 65ch;
+      }
+      .notice {
+        padding: 16px;
+        background: #fae47a;
+        border-radius: 12px;
+        margin-bottom: 24px;
+      }
+      .notice p {
+        margin: 0;
+      }
+      small {
+        display: block;
+        color: #416071;
+        font-size: 14px;
+      }
+      section {
+        margin-top: 24px;
+      }
+      .rooms {
+        padding: 0;
+        list-style: none;
+        margin: 20px 0;
+      }
+      .rooms li {
+        border-bottom: 1px solid #d6e2ea;
+        padding: 14px 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .pair {
+        display: flex;
+        gap: 8px;
+      }
+      button,
+      .action {
+        font: inherit;
+        min-height: 44px;
+        border: 1px solid #245478;
+        border-radius: 8px;
+        padding: 9px 12px;
+        color: #fff;
+        background: #245478;
+        cursor: pointer;
+      }
+      button.saved {
+        background: #fff;
+        color: #245478;
+      }
+      .action {
+        display: inline-flex;
+        align-items: center;
+        text-decoration: none;
+        margin: 6px 8px 6px 0;
+      }
+      .secondary {
+        background: #fff;
+        color: #245478;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: wait;
+      }
+      button:focus-visible,
+      a:focus-visible {
+        outline: 3px solid #075e7b;
+        outline-offset: 3px;
+      }
+      .error {
+        padding: 12px;
+        background: #fff;
+        border-left: 4px solid #245478;
+      }
+      .hidden {
+        display: none;
+      }
+      @media (max-width: 350px) {
+        .rooms li {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+        .pair {
+          width: 100%;
+        }
+        .pair button {
+          flex: 1;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>Hey Spotless</strong
+      ><a href="tel:+14692800397">Call the office</a>
+    </header>
+    <main>
+      <h1>Your saved work</h1>
+      <div class="notice">
+        <p>
+          Could not reach your live visit. This is the checklist saved on this
+          phone. The appointment or assignment may have changed.
+        </p>
+      </div>
+      <p id="message" role="status">Opening saved checklist…</p>
+      <p id="error" class="error hidden" role="alert"></p>
+      <div id="visits"></div>
+      <input
+        id="camera"
+        type="file"
+        accept="image/*"
+        capture="environment"
+        hidden
+      />
+      <p>
+        Connect to check your assignment, upload photos and confirm the visit
+        finished. Start and finish are confirmed in your live visit.
+      </p>
+      <a class="action" id="online" href="/cleaner">Check online</a>
+      <a class="action secondary" href="tel:+14692800397">Call the office</a>
+    </main>
+    <script type="module" src="/offline-cleaner.js"></script>
+  </body>
+</html>

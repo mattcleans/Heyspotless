@@ -139,6 +139,17 @@ describe("a tab closed mid-upload", () => {
 });
 
 describe("what the cleaner is told", () => {
+  it("counts only this visit when other visits are still queued", () => {
+    expect(summarise([item({ jobId: "other", attempts: 8 }), item({ jobId: "mine" })], "mine"))
+      .toMatchObject({ outstanding: 1, struggling: 0, busy: true, authRequired: false });
+  });
+
+  it("distinguishes a sign-in requirement from a weak connection", () => {
+    expect(summarise([item({ lastError: "record: 401" })]).authRequired).toBe(true);
+    expect(summarise([item({ lastError: "record: 500" })]).authRequired).toBe(false);
+    expect(summarise([item({ state: "done", lastError: "record: 401" })]).authRequired).toBe(false);
+  });
+
   it("is busy while anything is outstanding", () => {
     expect(summarise([item()]).busy).toBe(true);
     expect(summarise([item({ state: "done" })]).busy).toBe(false);

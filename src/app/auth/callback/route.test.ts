@@ -65,3 +65,14 @@ it("does not trust an external destination in the cookie", async () => {
     "https://app.example.test/auth/continue?next=%2F",
   );
 });
+it("carries password recovery through the fixed callback without bypassing role routing", async () => {
+  const req = request("?code=recovery-code");
+  req.cookies.set(
+    "hs_login_next",
+    encodeURIComponent("/account/password?next=%2Fcleaner"),
+  );
+  expect((await GET(req)).headers.get("location")).toBe(
+    "https://app.example.test/auth/continue?next=%2Faccount%2Fpassword%3Fnext%3D%252Fcleaner",
+  );
+  expect(exchange).toHaveBeenCalledWith("recovery-code");
+});

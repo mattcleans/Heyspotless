@@ -1,3 +1,4 @@
+import { matchingWeek } from "./week";
 import { describe, expect, it } from "vitest";
 import {
   URGENT_THRESHOLD_HOURS,
@@ -30,6 +31,8 @@ function context(cleaners: Cleaner[], driveMinutes = 20, driveMiles = 12) {
   return {
     now: NOW,
     cleaners,
+    // These money fixtures deliberately provide the saved load for their appointment week.
+    scheduledHoursFor: (cleaner: Cleaner) => cleaner.hoursScheduledThisWeek,
     driveFor: (c: Cleaner, j: DispatchJob) => estimate(c.lastStopZip ?? "75034", j.zip),
     rng: () => 0.5,
   };
@@ -200,7 +203,7 @@ describe("planning a whole board", () => {
     return Array.from({ length: n }, (_, i) =>
       job({
         id: `job-${i}`,
-        scheduledStart: new Date(NOW.getTime() + (100 + i) * 3_600_000),
+        scheduledStart: new Date(NOW.getTime() + (100 + i * 3) * 3_600_000),
       }),
     );
   }
@@ -274,5 +277,94 @@ describe("planning a whole board", () => {
 
   it("handles an empty board", () => {
     expect(dispatchBoard([], context([shonda()]))).toEqual([]);
+  });
+});
+
+describe("appointment readiness before matching", () => {
+  it.each([null, new Date("invalid"), new Date(NOW.getTime() - 1), NOW])(
+    "does not offer or assign an unavailable appointment %s", (scheduledStart) => {
+      const ctx = context([shonda({ hoursScheduledThisWeek: 0 }), contractor()]);
+      ctx.driveFor = () => { throw new Error("Appointment must be checked before ranking"); };
+      const d = dispatch(job({ scheduledStart }), ctx);
+      expect(d.kind).toBe("needs_scheduling");
+      expect(d.continuity).toEqual({ status: "none", reason: "appointment_requires_review" });
+    },
+  );
+  it("leaves guaranteed capacity available for future visits and keeps blocked work on the board", () => {
+    const roster = [shonda({ hoursScheduledThisWeek: 39 })];
+    const ctx = context(roster, 0, 0);
+    const entries = dispatchBoard([
+      job({ id: "past", scheduledStart: new Date(NOW.getTime() - 1), estimatedCleanMinutes: 120 }),
+      job({ id: "future", estimatedCleanMinutes: 30 }),
+      job({ id: "missing", scheduledStart: null, estimatedCleanMinutes: 120 }),
+    ], ctx);
+    expect(entries.find(x => x.job.id === "past")?.decision.kind).toBe("needs_scheduling");
+    expect(entries.find(x => x.job.id === "missing")?.decision.kind).toBe("needs_scheduling");
+    expect(entries.find(x => x.job.id === "future")?.decision.kind).toBe("assign_guaranteed");
+    expect(residualGuaranteedHours(entries, ctx).get("shonda")).toBe(1);
+    expect(residualGuaranteedHours(entries, ctx, matchingWeek(job().scheduledStart!)).get("shonda")).toBe(.5);
+    expect(roster[0]?.hoursScheduledThisWeek).toBe(39);
+  });
+});
+
+describe("proposed appointment reservations within a batch", () => {
+  it("does not suggest the same employee for overlapping visits, but permits adjacent visits", () => {
+    const ctx = context([shonda({ hoursScheduledThisWeek: 0 })], 0, 0);
+    const start = new Date("2026-09-10T15:00:00Z");
+    const board = dispatchBoard([
+      job({ id: "first", scheduledStart: start, scheduledEnd: new Date("2026-09-10T17:00:00Z"), estimatedCleanMinutes: 30 }),
+      job({ id: "overlap", scheduledStart: new Date("2026-09-10T16:00:00Z"), estimatedCleanMinutes: 30 }),
+      job({ id: "adjacent", scheduledStart: new Date("2026-09-10T17:00:00Z"), estimatedCleanMinutes: 30 }),
+    ], ctx);
+    expect(board.find(e => e.job.id === "first")?.decision.kind).toBe("assign_guaranteed");
+    expect(board.find(e => e.job.id === "overlap")?.decision.kind).toBe("no_eligible_cleaner");
+    expect(board.find(e => e.job.id === "adjacent")?.decision.kind).toBe("assign_guaranteed");
+  });
+  it("reserves a contractor's exclusive hold before considering a second overlapping visit", () => {
+    const cleaner = contractor();
+    const ctx = context([cleaner], 0, 0);
+    const continuity = { preferredCleanerId: cleaner.id, incumbentCleanerId: null, priorVisits: 0 };
+    const board = dispatchBoard([
+      job({ id: "first", estimatedCleanMinutes: 90, continuity }),
+      job({ id: "second", scheduledStart: new Date("2026-09-10T15:30:00Z"), estimatedCleanMinutes: 90, continuity }),
+    ], ctx);
+    expect(board[0]?.decision.kind).toBe("hold_for_incumbent");
+    expect(board[1]?.decision.kind).toBe("no_eligible_cleaner");
+  });
+  it("keeps broadcast/open offers as choices rather than reserving every recipient", () => {
+    const board = dispatchBoard([job({ id: "one" }), job({ id: "two" })], context([contractor()], 0, 0));
+    expect(board.map(e => e.decision.kind)).toEqual(["open_board", "open_board"]);
+  });
+});
+
+describe("saved load for each appointment week", () => {
+  const current = new Date("2026-10-08T15:00:00Z");
+  const visit = (id: string, start: string) => job({ id, estimatedCleanMinutes: 60, scheduledStart: new Date(start) });
+  it("does not spend this week's forty hours again against next week's visit", () => {
+    const ctx = { ...context([shonda({ hoursScheduledThisWeek: 40 })], 0), now: current, scheduledHoursFor: undefined };
+    expect(dispatch(visit("next", "2026-10-12T16:00:00Z"), ctx).kind).toBe("assign_guaranteed");
+    expect(dispatch(visit("now", "2026-10-09T16:00:00Z"), ctx).kind).toBe("assign_w2");
+  });
+  it("uses next week's saved forty hours even when this week is empty", () => {
+    const ctx = { ...context([shonda({ hoursScheduledThisWeek: 0 })], 0), now: current,
+      scheduledHoursFor: (_cleaner: Cleaner, week: string) => week === "2026-10-12" ? 40 : 0 };
+    expect(dispatch(visit("next", "2026-10-12T16:00:00Z"), ctx).kind).toBe("assign_w2");
+  });
+  it("reserves hours separately for two weeks and reports each week's residual", () => {
+    const ctx = { ...context([shonda()], 0), now: current, scheduledHoursFor: () => 39 };
+    const entries = dispatchBoard([
+      visit("one", "2026-10-09T16:00:00Z"), visit("two", "2026-10-09T18:00:00Z"),
+      visit("three", "2026-10-12T16:00:00Z"), visit("four", "2026-10-12T18:00:00Z"),
+    ], ctx);
+    expect(entries.map(e => e.decision.kind)).toEqual(["assign_guaranteed", "assign_w2", "assign_guaranteed", "assign_w2"]);
+    expect(residualGuaranteedHours(entries, ctx).get("shonda")).toBe(0);
+    expect(residualGuaranteedHours(entries, ctx, matchingWeek(new Date("2026-10-12T16:00:00Z"))).get("shonda")).toBe(0);
+  });
+  it("does not consume unpaid travel inside a weekly guarantee", () => {
+    const employee = shonda({ terms: { ...shonda().terms!, driveTimePaid: false } });
+    const ctx = { ...context([employee], 30), now: current, scheduledHoursFor: () => 38 };
+    const entries = dispatchBoard([visit("one", "2026-10-09T16:00:00Z"), visit("two", "2026-10-09T18:00:00Z")], ctx);
+    expect(entries.every(e => e.decision.kind === "assign_guaranteed")).toBe(true);
+    expect(residualGuaranteedHours(entries, ctx).get("shonda")).toBe(0);
   });
 });

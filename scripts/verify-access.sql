@@ -378,4 +378,94 @@ begin
 end $$;
 reset role;
 
+-- Unread office conversations cannot be hidden by clients, cleaners or anonymous
+-- callers. These rows are local verifier fixtures and never contact a provider.
+insert into leads(id, source, first_name)
+values ('a1000000-0000-4000-8000-000000000001', 'other', 'Access Test');
+insert into messages(id, channel, direction, customer_id, cleaner_id, lead_id, body)
+values
+  ('a2000000-0000-4000-8000-000000000001', 'sms', 'inbound',
+   '30000000-0000-0000-0000-000000000001', null, null, 'ACCESS TEST: client one'),
+  ('a2000000-0000-4000-8000-000000000002', 'sms', 'outbound',
+   '30000000-0000-0000-0000-000000000001', null, null, 'ACCESS TEST: outbound'),
+  ('a2000000-0000-4000-8000-000000000003', 'sms', 'inbound',
+   '30000000-0000-0000-0000-000000000002', null, null, 'ACCESS TEST: client two'),
+  ('a2000000-0000-4000-8000-000000000004', 'sms', 'inbound', null,
+   '60000000-0000-0000-0000-000000000001', null, 'ACCESS TEST: cleaner'),
+  ('a2000000-0000-4000-8000-000000000005', 'sms', 'inbound', null, null,
+   'a1000000-0000-4000-8000-000000000001', 'ACCESS TEST: lead');
+create function verify_access.expect_thread_read_denied() returns void
+language plpgsql as $$
+declare statement text;
+begin
+  foreach statement in array array[
+    $q$select mark_thread_read('30000000-0000-0000-0000-000000000001', null, null)$q$,
+    $q$select mark_thread_read('30000000-0000-0000-0000-000000000002', null, null)$q$,
+    $q$select mark_thread_read(null, '60000000-0000-0000-0000-000000000001', null)$q$,
+    $q$select mark_thread_read(null, null, 'a1000000-0000-4000-8000-000000000001')$q$
+  ] loop
+    begin
+      execute statement;
+      raise exception 'non-office caller marked a thread read: %', current_user;
+    exception when insufficient_privilege then null;
+    end;
+  end loop;
+end $$;
+select set_config('request.jwt.claim.sub', '', true);
+set local role anon;
+select verify_access.expect_thread_read_denied();
+reset role;
+-- Even an accidental future EXECUTE grant must not remove the actor check.
+grant execute on function mark_thread_read(uuid, uuid, uuid) to anon;
+set local role anon;
+select verify_access.expect_thread_read_denied();
+reset role;
+revoke execute on function mark_thread_read(uuid, uuid, uuid) from anon;
+set local role authenticated;
+select verify_access.expect_thread_read_denied();
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000001', true);
+select verify_access.expect_thread_read_denied();
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000003', true);
+select verify_access.expect_thread_read_denied();
+reset role;
+do $$ begin
+  if exists(select 1 from messages where id::text like 'a2000000-%' and read_at is not null)
+    then raise exception 'Denied calls changed unread messages'; end if;
+end $$;
+select set_config('request.jwt.claim.sub', '20000000-0000-0000-0000-000000000004', true);
+set local role authenticated;
+do $$ begin
+  if mark_thread_read('30000000-0000-0000-0000-000000000001', null, null) <> 1
+    then raise exception 'Office could not mark its selected inbound thread'; end if;
+  if mark_thread_read('30000000-0000-0000-0000-000000000001', null, null) <> 0
+    then raise exception 'Office retry marked already-read messages'; end if;
+  if mark_thread_read(null, '60000000-0000-0000-0000-000000000001', null) <> 1
+    then raise exception 'Office could not mark cleaner thread'; end if;
+  if mark_thread_read(null, null, 'a1000000-0000-4000-8000-000000000001') <> 1
+    then raise exception 'Office could not mark lead thread'; end if;
+  if mark_thread_read(null, null, null) <> 0
+    then raise exception 'Empty selector marked a thread'; end if;
+end $$;
+reset role;
+do $$ begin
+  if exists(select 1 from messages where id in (
+    'a2000000-0000-4000-8000-000000000002',
+    'a2000000-0000-4000-8000-000000000003'
+  ) and read_at is not null) then
+    raise exception 'Office marked an outbound or unselected message';
+  end if;
+end $$;
+select set_config('request.jwt.claim.sub', '', true);
+set local role service_role;
+do $$ begin
+  if mark_thread_read('30000000-0000-0000-0000-000000000002', null, null) <> 1
+    then raise exception 'Service lost selected thread access'; end if;
+end $$;
+reset role;
+do $$ begin
+  if has_function_privilege('anon', 'mark_thread_read(uuid,uuid,uuid)', 'execute')
+    or (select prosecdef from pg_proc where oid='mark_thread_read(uuid,uuid,uuid)'::regprocedure)
+    then raise exception 'Thread read still exposes privileged anonymous access'; end if;
+end $$;
+
 rollback;
