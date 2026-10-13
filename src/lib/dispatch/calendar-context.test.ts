@@ -54,6 +54,9 @@ describe("saved matching calendar via the actual Supabase query builder", () => 
     expect(calendar.has("finished-window")).toBe(false);
     expect(urls).toHaveLength(4);
     expect(urls[0]?.searchParams.get("jobs.or")).toContain("scheduled_start.lte.");
+    // Long-past open visits are bounded out instead of re-read on every run.
+    expect(urls[0]?.searchParams.get("jobs.or")).toContain(`scheduled_start.gte.${new Date(now.getTime() - 86_400_000).toISOString()}`);
+    expect(urls[0]?.searchParams.get("jobs.or")).toContain(`scheduled_end.gt.${now.toISOString()}`);
     expect(urls[0]?.searchParams.has("jobs.scheduled_start")).toBe(false);
   });
   it("pages actual saved weekly aggregates and keeps future hours separate", async () => {

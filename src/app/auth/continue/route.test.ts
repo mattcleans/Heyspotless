@@ -4,8 +4,8 @@ const { client, demo } = vi.hoisted(() => ({ client: vi.fn(), demo: vi.fn() }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: client }));
 vi.mock("@/lib/supabase/env", () => ({ isDemoMode: demo }));
 import { GET } from "./route";
-const request = () =>
-  new NextRequest("https://app.example.test/auth/continue?next=%2Fadmin");
+const request = (next = "%2Fadmin") =>
+  new NextRequest(`https://app.example.test/auth/continue?next=${next}`);
 function session(role: string | null, linked = true, queryError = false) {
   const from = vi.fn((table: string) => ({
     select: () => ({
@@ -80,5 +80,15 @@ describe("post-login routing", () => {
     expect((await GET(request())).headers.get("location")).toBe(
       "https://app.example.test/login?next=%2Fadmin",
     );
+  });
+  it.each([
+    ["new Client", "customer", false],
+    ["unlinked Cleaner", "cleaner", false],
+    ["account without a profile", null, true],
+  ])("lets a %s finish a password reset before setup", async (_, role, linked) => {
+    session(role as string | null, linked as boolean);
+    expect(
+      (await GET(request("%2Faccount%2Fpassword%3Fnext%3D%252Fcustomer"))).headers.get("location"),
+    ).toBe("https://app.example.test/account/password?next=%2Fcustomer");
   });
 });

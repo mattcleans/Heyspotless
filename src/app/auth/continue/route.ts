@@ -16,6 +16,10 @@ export async function GET(request: NextRequest) {
     } = await db.auth.getUser();
     if (authError || !user)
       return redirect(`/login?next=${encodeURIComponent(next)}`);
+    // A password reset needs only the signed-in account, so it must not be
+    // diverted to home or account setup before the person chooses a password.
+    if (new URL(next, request.nextUrl.origin).pathname === "/account/password")
+      return redirect(next);
     const { data: profile, error } = await db
       .from("profiles")
       .select("role")

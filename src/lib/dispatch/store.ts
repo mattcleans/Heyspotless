@@ -301,11 +301,16 @@ export async function busyWindowsFor(
   if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || to <= from)
     throw new Error("Matching calendar range unavailable");
   const byCleaner = new Map<string, TimeWindow[]>();
+  // Visits left open long after their date must not be re-read on every run.
+  // A visit that began before `from` can still overlap it, so look back a day
+  // by start time, and keep any whose stored end reaches into the range.
+  const lookback = new Date(from.getTime() - 24 * 60 * 60_000).toISOString();
+  const until = to.toISOString();
   let cursor: string | null = null;
   for (;;) {
     let query = db.from("job_assignments")
       .select("id, job_id, cleaner_id, jobs!inner ( scheduled_start, scheduled_end, estimated_clean_minutes, status )")
-      .or(`scheduled_start.lte.${to.toISOString()},scheduled_start.is.null,scheduled_start.eq.infinity`, { referencedTable: "jobs" })
+      .or(`and(scheduled_start.gte.${lookback},scheduled_start.lte.${until}),and(scheduled_start.lte.${until},scheduled_end.gt.${from.toISOString()}),scheduled_start.is.null,scheduled_start.eq.infinity`, { referencedTable: "jobs" })
       .in("jobs.status", ["scheduled", "assigned", "in_progress"])
       .order("id", { ascending: true }).limit(200);
     if (cursor) query = query.gt("id", cursor);

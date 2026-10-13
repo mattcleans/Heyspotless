@@ -10,7 +10,9 @@ export default async function SignupPage() {
   if (!demo) {
     const db = await createClient();
     const { data: { user } } = await db.auth.getUser();
-    if (user) redirect("/auth/continue?next=%2Fcustomer%2Faccount%2Fhomes%2Fnew");
+    // Continue routes by the saved role: a new Client still lands on home
+    // setup, while Management and Cleaners reach their own workspaces.
+    if (user) redirect("/auth/continue");
   }
   return <main className="mx-auto min-h-screen max-w-md px-5 py-12">
     <Link href="/" className="brand-lockup">Hey Spotless</Link>

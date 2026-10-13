@@ -7,20 +7,24 @@ export function employeeWeekPlan(entries: readonly BoardEntry[], context: Dispat
   const weeks = [...new Set([matchingWeek(context.now), ...entries
     .filter(e => e.decision.kind !== "needs_scheduling" && e.job.scheduledStart)
     .map(e => matchingWeek(e.job.scheduledStart!))])].sort();
-  return weeks.map(week => ({
-    week,
-    employees: context.cleaners.filter(c => c.type === "w2_core" && c.terms).map(cleaner => {
-      const priorHours = scheduledHoursInWeek(cleaner, week, context);
-      const proposed = entries.filter(e => (e.decision.kind === "assign_guaranteed" || e.decision.kind === "assign_w2")
-        && e.job.scheduledStart && matchingWeek(e.job.scheduledStart) === week
-        && e.decision.cleaner.id === cleaner.id);
-      return {
-        cleaner, priorHours, proposedVisits: proposed.length,
-        guaranteeLeft: residualGuaranteedHours(entries, context, week).get(cleaner.id) ?? 0,
-        forecast: forecastWeek(cleaner, proposed.map(({ job }) => ({
-          cleanMinutes: job.estimatedCleanMinutes, driveMinutes: context.driveFor(cleaner, job).minutes,
-        })), averageTicketCents, priorHours * 60),
-      };
-    }),
-  }));
+  return weeks.map(week => {
+    // The same for every employee in the week, so compute it once per week.
+    const guaranteeLeft = residualGuaranteedHours(entries, context, week);
+    return {
+      week,
+      employees: context.cleaners.filter(c => c.type === "w2_core" && c.terms).map(cleaner => {
+        const priorHours = scheduledHoursInWeek(cleaner, week, context);
+        const proposed = entries.filter(e => (e.decision.kind === "assign_guaranteed" || e.decision.kind === "assign_w2")
+          && e.job.scheduledStart && matchingWeek(e.job.scheduledStart) === week
+          && e.decision.cleaner.id === cleaner.id);
+        return {
+          cleaner, priorHours, proposedVisits: proposed.length,
+          guaranteeLeft: guaranteeLeft.get(cleaner.id) ?? 0,
+          forecast: forecastWeek(cleaner, proposed.map(({ job }) => ({
+            cleanMinutes: job.estimatedCleanMinutes, driveMinutes: context.driveFor(cleaner, job).minutes,
+          })), averageTicketCents, priorHours * 60),
+        };
+      }),
+    };
+  });
 }
