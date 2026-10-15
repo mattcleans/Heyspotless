@@ -44,19 +44,6 @@ const JOB_SELECT = `
  */
 const JOB_SELECT_FOR_CLEANER = `${JOB_SELECT}, job_assignments!inner ( cleaner_id )`;
 
-/**
- * An offer plus the part of the job she needs to decide on it. Nothing about
- * the ladder is selected, because none of it is hers to see.
- */
-const OFFER_SELECT = `
-  id, job_id, cleaner_id, payout_cents, estimated_minutes, expires_at, is_exclusive,
-  jobs!inner (
-    scheduled_start,
-    customers ( first_name, last_name ),
-    properties ( street, city, zip )
-  )
-`;
-
 const CUSTOMER_SELECT = `
   id, first_name, last_name, email, phone, notes, lifetime_value_cents,
   stripe_customer_id, autopay_enabled, autopay_authorized_at,
@@ -175,18 +162,12 @@ export class SupabaseRepository implements Repository {
    * trip costs less than the complexity of embedding it.
    */
   async listLiveOffers(cleanerId: string): Promise<Offer[]> {
-    // `expires_at` bounds it as well as `status`, because an offer whose
-    // countdown has run out is not a decision she still has to make — and the
-    // sweep that flips it to `expired` runs on a schedule, so there is always
-    // a window where the row says `sent` and the clock disagrees. The clock
-    // wins.
-    const { data, error } = await this.db
-      .from("offers")
-      .select(OFFER_SELECT)
-      .eq("cleaner_id", cleanerId)
-      .eq("status", "sent")
-      .gt("expires_at", new Date().toISOString())
-      .order("expires_at", { ascending: true });
+    // Job RLS intentionally hides unassigned waterfall visits. The session-bound
+    // projection returns only own, current offers and minimal decision details;
+    // a join through jobs would silently hide the offers before acceptance.
+    const { data, error } = await this.db.rpc("read_my_live_job_offers", {
+      p_cleaner_id: cleanerId,
+    });
     if (error) throw new Error(`listLiveOffers: ${error.message}`);
 
     return rows(data).map(toOffer);
