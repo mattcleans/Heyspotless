@@ -87,6 +87,9 @@ jobs:
 
       - run: ./scripts/verify-migrations.sh
 
+      - name: Verify completion invoice ordering
+        run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-completion-invoicing.sql
+
       - name: Verify private Cleaner offer projection
         run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-cleaner-live-offers.sql
 
