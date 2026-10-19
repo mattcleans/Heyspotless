@@ -47,7 +47,7 @@ export function JobCapture({
     struggling: 0,
     busy: false,
   });
-  const [durable, setDurable] = useState(true);
+  const [durable, setDurable] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState(false);
   const [retrying, setRetrying] = useState(false);
@@ -66,6 +66,7 @@ export function JobCapture({
           throw new Error("storage unavailable");
         const queued = await store.listForJob(jobId, ownerId);
         if (cancelled) return;
+        setDurable(true);
         setTaken((current) => {
           const next = new Set(current);
           for (const photo of queued)
@@ -206,11 +207,17 @@ export function JobCapture({
         </span>
       </div>
 
-      {!durable && (
+      {durable === null && (
+        <p className="mt-2 text-xs text-ink-2" role="status">
+          Checking photo storage on this device…
+        </p>
+      )}
+
+      {durable === false && (
         <p className="mt-2 rounded-lg border border-line bg-surface-2 p-3 text-xs text-ink-2">
-          Photo storage could not be opened. A photo is marked saved only after
-          it is stored on this device. Try Safari or Chrome outside a private
-          window. Call the office if you cannot save your photos.
+          This window cannot save photo files. Open this visit in Safari or
+          Chrome outside a private window. If storage is full, free some space
+          and reload this visit. Call the office if you still cannot save photos.
         </p>
       )}
 
@@ -244,7 +251,7 @@ export function JobCapture({
                     key={kind}
                     type="button"
                     onClick={() => capture(room.key, kind)}
-                    disabled={saving}
+                    disabled={saving || durable !== true}
                     aria-label={`${done ? "Retake" : "Take"} ${kind} photo for ${room.label}`}
                     className={`min-h-11 min-w-11 rounded-lg px-3 py-2 text-xs font-semibold disabled:opacity-60 ${
                       done

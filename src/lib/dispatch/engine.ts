@@ -200,8 +200,8 @@ export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDe
   // it, before anything below runs.
   const openingShare = (context.ladderConfig ?? DEFAULT_LADDER).openingShare;
 
-  // The share this job is actually being offered at now: the opening share the
-  // first time, and the next rung up on every sweep after that. A cleaner who
+  // The minimum next waterfall rung: the opening share the
+  // first time, and above the spent rung after that. A cleaner who
   // passed at a LOWER share is legitimately asked again here — that is the
   // ladder working, not a bug. The epsilon is a hundredth of a percentage
   // point, the quantum the ladder steps in.
@@ -211,7 +211,10 @@ export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDe
     now,
     hoursUntilJob: hoursUntil(job, now),
     eligibilityFor,
-    offerShare: currentShare,
+    // Continuity actually offers the saved agreement (or opening share), not
+    // the next market rung. Comparing a decline with offeredUpTo + epsilon
+    // would renew the same fixed-pay hold on every retry after a Pass.
+    offerShare: job.continuity?.agreedPayoutShare ?? openingShare,
   });
 
   // Priced against what we would otherwise have done. `null` means there was
@@ -369,8 +372,9 @@ export function dispatch(job: DispatchJob, context: DispatchContext): DispatchDe
   // which is the whole mechanism of the ladder — and which matters most for an
   // incumbent, who would otherwise watch a stranger take her own customer at a
   // rate she was never offered.
+  const marketplaceShare = isUrgent(job, now) ? currentShare : openingShare;
   const marketplace = eligible.filter(
-    (c) => c.type === "contractor_1099" && !hasPassedAtOrAbove(job, c.id, currentShare),
+    (c) => c.type === "contractor_1099" && !hasPassedAtOrAbove(job, c.id, marketplaceShare),
   );
 
   // If nobody is in the marketplace, the W-2 option is the only option.

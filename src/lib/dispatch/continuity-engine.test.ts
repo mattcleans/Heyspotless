@@ -234,6 +234,24 @@ describe("everything without a relationship behaves exactly as it did", () => {
 });
 
 describe("a cleaner is not asked a question she has already answered", () => {
+  it.each([undefined, 0.35])("does not renew a passed fixed-pay hold when offer history is loaded (agreement %s)", (agreedPayoutShare) => {
+    const share = agreedPayoutShare ?? 0.33;
+    const decision = dispatch(
+      job({
+        continuity: { ...asked(), agreedPayoutShare },
+        passedOver: [{ cleanerId: "sarah", share }],
+        offeredUpToShare: share,
+      }),
+      context([sarah(), contractor({ id: "stranger" })]),
+    );
+    expect(decision.kind).toBe("open_board");
+    expect(decision.continuity).toEqual({ status: "none", reason: "incumbent_passed" });
+    if (decision.kind === "open_board") {
+      expect(decision.eligible.map((c) => c.id)).not.toContain("sarah");
+      expect(decision.eligible.map((c) => c.id)).toContain("stranger");
+    }
+  });
+
   it("stops holding the job for an incumbent who passed at this rate", () => {
     // Without this the hourly sweep re-offers a declined visit to the same
     // cleaner every hour until it happens, and keeps it off the board while
