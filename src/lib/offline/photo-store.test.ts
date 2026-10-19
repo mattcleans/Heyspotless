@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
-import { enqueue, forget, listForJob, listOutstanding, update, type StoredPhoto } from "./photo-store";
+import { enqueue, forget, isAvailable, listForJob, listOutstanding, update, type StoredPhoto } from "./photo-store";
+import { openPhotoDatabase } from "../../../public/offline-work.js";
 
 function photo(overrides: Partial<StoredPhoto> = {}): StoredPhoto {
   return { id: "job:kitchen:before", jobId: "job", roomKey: "kitchen", kind: "before",
@@ -10,6 +11,49 @@ function photo(overrides: Partial<StoredPhoto> = {}): StoredPhoto {
 
 beforeEach(() => vi.stubGlobal("indexedDB", new IDBFactory()));
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+describe("photo storage capability", () => {
+  it("does not mistake an open database for support for image bytes", async () => {
+    const put = IDBObjectStore.prototype.put;
+    vi.spyOn(IDBObjectStore.prototype, "put").mockImplementation(function(this: IDBObjectStore, value, key) {
+      if (value.blob instanceof Blob)
+        throw new DOMException("Blob writes unavailable", "DataCloneError");
+      return put.call(this, value, key);
+    });
+    const db = await openPhotoDatabase();
+    db.close();
+    expect(await isAvailable()).toBe(false);
+  });
+
+  it("waits for commit and reports a transaction abort as unavailable", async () => {
+    const put = IDBObjectStore.prototype.put;
+    vi.spyOn(IDBObjectStore.prototype, "put").mockImplementation(function(this: IDBObjectStore, value, key) {
+      const request = put.call(this, value, key);
+      request.addEventListener("success", () => this.transaction.abort());
+      return request;
+    });
+    expect(await isAvailable()).toBe(false);
+  });
+
+  it("leaves the signed-in owner and queued photos intact without retaining a probe", async () => {
+    await enqueue(photo({ ownerId: "cleaner" }));
+    const db = await openPhotoDatabase();
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction("device", "readwrite");
+      tx.objectStore("device").put({ key: "owner", ownerId: "cleaner" });
+      tx.oncomplete = () => resolve();
+    });
+    expect(await isAvailable()).toBe(true);
+    const deviceRecords = await new Promise<unknown[]>((resolve) => {
+      const tx = db.transaction("device", "readonly");
+      const request = tx.objectStore("device").getAll();
+      tx.oncomplete = () => resolve(request.result);
+    });
+    db.close();
+    expect(deviceRecords).toEqual([{ key: "owner", ownerId: "cleaner" }]);
+    expect(await listForJob("job", "cleaner")).toHaveLength(1);
+  });
+});
 
 describe("durable photo writes", () => {
   it("rejects an abort after the put request succeeds and leaves no saved photo", async () => {

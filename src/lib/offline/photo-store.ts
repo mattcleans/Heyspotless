@@ -195,13 +195,32 @@ export async function forget(photo: QueueItem): Promise<boolean> {
   return changeIfCurrent(photo, true);
 }
 
-/** Is durable storage available at all? A private window may say no. */
+/** Opening IndexedDB alone does not prove this window can store photo bytes. */
 export async function isAvailable(): Promise<boolean> {
   if (typeof indexedDB === "undefined") return false;
+  let db: IDBDatabase | undefined;
   try {
-    (await open()).close();
+    db = await open();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db!.transaction("device", "readwrite");
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(storageError(tx.error));
+      try {
+        const device = tx.objectStore("device");
+        const key = `photo-capability:${crypto.randomUUID()}`;
+        // Safari can open an ephemeral database while rejecting Blob writes.
+        // The probe is never visible to upload workers or retained on disk.
+        device.put({ key, blob: new Blob([new Uint8Array([1])]) });
+        device.delete(key);
+      } catch (error) {
+        tx.abort();
+        reject(error);
+      }
+    });
     return true;
   } catch {
     return false;
+  } finally {
+    db?.close();
   }
 }
