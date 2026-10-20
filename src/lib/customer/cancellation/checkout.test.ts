@@ -12,6 +12,7 @@ const m = vi.hoisted(() => ({
   begin: vi.fn(),
   attach: vi.fn(),
   session: vi.fn(),
+  resolve: vi.fn(),
 }));
 vi.mock("@/lib/data", () => ({ getRepository: m.repo }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: m.client }));
@@ -22,6 +23,7 @@ vi.mock("@/lib/billing/store", () => ({
     beginPaymentOperation = m.begin;
     attachPaymentOperation = m.attach;
     setCheckoutSession = m.session;
+    resolvePaymentOperation = m.resolve;
   },
 }));
 vi.mock("@/lib/billing/collection", () => ({
@@ -39,6 +41,7 @@ const invoice = {
   jobId: "job",
   customerId: "customer",
   balanceCents: 6000,
+  status: "sent",
   amounts: {
     subtotalCents: 6000,
     tipCents: 0,
@@ -70,7 +73,7 @@ beforeEach(() => {
   m.client.mockResolvedValue({});
   m.cancel.mockResolvedValue({ billingReview: false, invoiceId: "invoice" });
   m.reconcile.mockResolvedValue({ state: "cleared" });
-  m.begin.mockResolvedValue({ outcome: "started" });
+  m.begin.mockResolvedValue({ outcome: "started", idempotencyKey: "key" });
   m.ensure.mockResolvedValue("cus_existing");
   m.checkout.mockResolvedValue({
     id: "checkout",
@@ -78,6 +81,48 @@ beforeEach(() => {
   });
 });
 describe("canceled visit checkout", () => {
+  it("uses the server's fresh retry key for the provider and attachment", async () => {
+    m.begin.mockResolvedValue({ outcome: "started", idempotencyKey: "key:retry:confirmed-old-id" });
+    await pay();
+    expect(m.checkout).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: "key:retry:confirmed-old-id" }));
+    expect(m.attach).toHaveBeenCalledWith(expect.objectContaining({ idempotencyKey: "key:retry:confirmed-old-id" }));
+  });
+  it("keeps an unconfirmed creation request open for review instead of releasing it", async () => {
+    m.checkout.mockRejectedValue(new Error("network response lost"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const response = await pay();
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ status: "payment_review_required" });
+    expect(m.resolve).not.toHaveBeenCalled();
+    expect(m.attach).not.toHaveBeenCalled();
+    log.mockRestore();
+  });
+  it("does not resume a stored URL when the provider outcome is unconfirmed", async () => {
+    m.reconcile.mockResolvedValue({ state: "in_flight", reviewRequired: true, redirectUrl: "https://checkout.example.test/stored", operation: { channel: "checkout", amountCents: 6000 } });
+    const response = await pay();
+    expect(response.status).toBe(409);
+    expect(await response.json()).not.toHaveProperty("url");
+    expect(m.begin).not.toHaveBeenCalled();
+  });
+  it("does not resume an existing Checkout page for a different current amount", async () => {
+    m.reconcile.mockResolvedValue({ state: "in_flight", redirectUrl: "https://checkout.example.test/old", operation: { channel: "checkout", amountCents: 7000 } });
+    const response = await pay();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ status: "payment_review_required" });
+    expect(m.begin).not.toHaveBeenCalled();
+  });
+  it("resumes a provider-confirmed active page only for the same reviewed bill", async () => {
+    m.reconcile.mockResolvedValue({ state: "in_flight", redirectUrl: "https://checkout.example.test/current", operation: { channel: "checkout", amountCents: 6000 } });
+    const response = await pay();
+    expect(await response.json()).toEqual({ url: "https://checkout.example.test/current", reused: true });
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+  it("does not claim the entire bill is paid after recovering a single payment", async () => {
+    m.reconcile.mockResolvedValue({ state: "settled", recoveredPayment: true });
+    const response = await pay();
+    expect(await response.json()).toMatchObject({ message: expect.stringContaining("latest balance") });
+    expect(m.begin).not.toHaveBeenCalled();
+  });
   it("binds a new checkout to the balance displayed on the Client's Pay button", async () => {
     const response = await pay(0, 5000);
     expect(response.status).toBe(409);

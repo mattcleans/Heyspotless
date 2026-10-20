@@ -4,6 +4,11 @@ import { BillingStore } from "./store";
 import { BillChangedError } from "./types";
 
 describe("reviewed payment claim", () => {
+  it("keeps an open operation in the sweep hold set after its local deadline", async () => {
+    const query = { select: () => query, in: () => query, eq: async () => ({ data: [{ invoice_id: "expired", expires_at: "2000-01-01T00:00:00Z" }, { invoice_id: "current", expires_at: "2100-01-01T00:00:00Z" }], error: null }) };
+    const db = { from: () => query } as unknown as SupabaseClient;
+    expect(await new BillingStore(db).invoiceIdsWithOpenCollection(["expired", "current"])).toEqual(new Set(["expired", "current"]));
+  });
   it("sends the reviewed owner and balance separately from an additional tip", async () => {
     const { db, calls } = fakeRpc(() => ({ data: [{ outcome: "started", operation_id: "op", channel: "checkout", idempotency_key: "key", stripe_object_id: null, stripe_object_kind: null, redirect_url: null, amount_cents: 19000 }], error: null }));
     const result = await new BillingStore(db).beginPaymentOperation({ invoiceId: "invoice", channel: "checkout", idempotencyKey: "key", amountCents: 19000, expectedBalanceCents: 17000, expectedCustomerId: "customer", tipCents: 2000, ttlSeconds: 900 });
