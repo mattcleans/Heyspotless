@@ -1,9 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { formatCents } from "@/lib/money";
 import { tipPassThrough } from "@/lib/billing/tips";
+import { customTipAmount } from "@/lib/billing/tip-input";
+import { fetchWithTimeout } from "@/lib/http/fetch-with-timeout";
 
 /**
  * Screen 7 — how did she do, and would you like to tip.
@@ -58,29 +61,35 @@ export function RateTipForm({
   const [done, setDone] = useState(false);
   const [tipAddedCents, setTipAddedCents] = useState<number | null>(null);
   const [receiptNotice, setReceiptNotice] = useState<string | null>(null);
+  const submission = useRef<{ key: string; id: string } | null>(null);
 
   const split = tipCents > 0 ? tipPassThrough(tipCents) : null;
+  const customTipError = customTipAmount(customTip, cleanPriceCents).error;
 
   function toggle(key: string) {
     setChosen((c) => (c.includes(key) ? c.filter((k) => k !== key) : [...c, key]));
   }
 
   async function submit() {
-    if (score === null) return;
+    if (score === null || customTipError) return;
     setSending(true);
     setError(null);
 
     try {
-      const response = await fetch("/api/visits/rate", {
+      const requestPayload = {
+        jobId, score, highlights: chosen, privateNote: note.trim() || null,
+        tipCents: tipsEnabled ? tipCents : 0,
+      };
+      const key = JSON.stringify(requestPayload);
+      let attempt = submission.current;
+      if (!attempt || attempt.key !== key) {
+        attempt = { key, id: crypto.randomUUID() };
+        submission.current = attempt;
+      }
+      const response = await fetchWithTimeout("/api/visits/rate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          jobId,
-          score,
-          highlights: chosen,
-          privateNote: note.trim() || null,
-          tipCents: tipsEnabled ? tipCents : 0,
-        }),
+        body: JSON.stringify({ ...requestPayload, requestId: attempt.id }),
       });
 
       const payload: unknown = await response.json().catch(() => ({}));
@@ -124,7 +133,8 @@ export function RateTipForm({
   }
 
   return (
-    <div className="space-y-4">
+    <fieldset disabled={sending} aria-busy={sending} className="space-y-4">
+      <legend className="sr-only">Rate this clean and choose an optional tip</legend>
       {initialRating && <p className="text-sm text-ink-2">
         Saved rating: {initialRating.score} out of 5. You can update it below.
       </p>}
@@ -162,7 +172,7 @@ export function RateTipForm({
                   type="button"
                   onClick={() => toggle(h.key)}
                   aria-pressed={chosen.includes(h.key)}
-                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                  className={`min-h-11 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
                     chosen.includes(h.key)
                       ? "border-sky-deep bg-sky/20 text-navy"
                       : "border-line bg-surface-2 text-ink-2"
@@ -207,17 +217,25 @@ export function RateTipForm({
                 );
               })}
               <input
+                aria-label="Custom tip in dollars"
+                aria-invalid={Boolean(customTipError)}
+                aria-describedby={customTipError ? "custom-tip-error" : undefined}
                 inputMode="decimal"
                 value={customTip}
                 placeholder="Other"
                 onChange={(e) => {
                   setCustomTip(e.target.value);
-                  const dollars = Number(e.target.value.replace(/[^0-9.]/g, ""));
-                  setTipCents(Number.isFinite(dollars) ? Math.round(dollars * 100) : 0);
+                  setTipCents(customTipAmount(e.target.value, cleanPriceCents).cents);
                 }}
                 className="w-20 rounded-lg border border-line bg-surface-2 px-2 text-center text-sm"
               />
             </div>
+
+            {customTipError && <p id="custom-tip-error" role="alert" className="mt-2 text-sm text-bad">{customTipError}</p>}
+            <p className="mt-2 text-xs text-ink-3">Tips are optional. Saving your rating alone keeps any tip already on your bill.</p>
+            <button type="button" aria-pressed={tipCents === 0 && !customTip}
+              className="mt-2 min-h-11 rounded-lg border border-line px-3 text-xs text-navy"
+              onClick={() => { setTipCents(0); setCustomTip(""); }}>Save rating without changing tip</button>
 
             {split && split.tipCents > 0 ? (
               <p className="mt-2 text-xs text-ink-3">
@@ -229,11 +247,13 @@ export function RateTipForm({
           </div> : <p className="text-sm text-ink-2">Online tipping is unavailable. You can still save your rating.</p>}
 
           <div className="card p-5">
-            <p className="eyebrow">Private note</p>
-            <p className="mt-0.5 text-[11px] text-ink-3">
+            <label htmlFor="rating-private-note" className="eyebrow">Private note</label>
+            <p id="rating-note-privacy" className="mt-0.5 text-[11px] text-ink-3">
               Only our team sees this — it is never shown on a profile.
             </p>
             <textarea
+              id="rating-private-note"
+              aria-describedby="rating-note-privacy"
               value={note}
               onChange={(e) => setNote(e.target.value)}
               rows={3}
@@ -243,23 +263,23 @@ export function RateTipForm({
             />
           </div>
 
-          {error ? <p className="text-sm text-bad">{error}</p> : null}
+          {error ? <p role="alert" className="text-sm text-bad">{error}</p> : null}
 
           <button
             type="button"
-            disabled={sending}
+            disabled={sending || Boolean(customTipError)}
             onClick={() => void submit()}
             className="w-full rounded-lg bg-navy px-4 py-3 text-sm font-semibold text-white disabled:opacity-40"
           >
             {sending
               ? "Sending…"
               : tipCents > 0
-                ? `Submit and tip ${formatCents(tipCents)}`
-                : initialRating ? "Update rating" : "Submit"}
+                ? `Save rating and set tip to ${formatCents(tipCents)}`
+                : initialRating ? "Update rating" : "Save rating"}
           </button>
         </>
       ) : null}
-    </div>
+    </fieldset>
   );
 }
 
@@ -270,8 +290,9 @@ export function RatingReceipt({ tipAddedCents, notice }: {
   return <div className="card p-6 text-center">
     <p className="text-lg font-semibold text-navy">Thank you. Your rating is saved.</p>
     {tipAddedCents !== null && <p className="mt-2 text-sm text-ink-2">
-      Your {formatCents(tipAddedCents)} tip was added to your bill. Check Account for the payment status.
+      Your {formatCents(tipAddedCents)} tip was saved. Check Account for the latest bill and payment status.
     </p>}
     {notice && <p className="mt-2 text-sm text-bad" role="status">{notice}</p>}
+    <Link href="/customer/account" className="secondary-action mt-4 inline-flex min-h-11 items-center">View account</Link>
   </div>;
 }
