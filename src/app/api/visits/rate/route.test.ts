@@ -47,7 +47,7 @@ describe("atomic rating and tip outcomes", () => {
     expect(await response.json()).toMatchObject({ recorded: true, tip: null, error: expect.stringContaining("no tip was added") });
     expect(m.rpc.mock.calls[0]![1].p_tip_cents).toBe(0);
   });
-  it.each(["tip_no_invoice","tip_invoice_review","tip_assignment_review","tip_payment_in_progress","tip_above_price","tip_unavailable"])("keeps the rating and reports %s without claiming a tip",async tipError=>{
+  it.each(["tip_no_invoice","tip_invoice_review","tip_assignment_review","tip_payment_in_progress","tip_above_price","tip_settled_review","tip_unavailable"])("keeps the rating and reports %s without claiming a tip",async tipError=>{
     m.rpc.mockResolvedValue({data:{recorded:true,tip:null,tipError},error:null});
     const response=await submit({tipCents:3980});
     expect(response.status).toBe(409);

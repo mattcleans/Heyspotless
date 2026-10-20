@@ -29,11 +29,30 @@ begin
  if public.record_client_visit_feedback_once(v_a,v_profile,v_job,5,'SYNTHETIC public review',array['thorough'],'SYNTHETIC private note',2000) is distinct from v_saved then raise exception 'Retry changed the receipt'; end if;
 
  perform public.record_client_visit_feedback_once(v_b,v_profile,v_job,4,null,'{}','New private note',4000);
+ if not exists(select 1 from public.ratings where job_id=v_job and comment='SYNTHETIC public review' and private_note='New private note') then raise exception 'Rating edit erased earlier public review'; end if;
  -- The first response was lost; its retry must not restore an older tip.
  if public.record_client_visit_feedback_once(v_a,v_profile,v_job,5,'SYNTHETIC public review',array['thorough'],'SYNTHETIC private note',2000) is distinct from v_saved then raise exception 'Lost-response receipt changed'; end if;
  if not exists(select 1 from public.invoices where id=v_invoice and tip_cents=4000 and total_cents=21000)
   or not exists(select 1 from public.payouts where job_id=v_job and tip_cents=4000) then raise exception 'Old retry overwrote newer tip'; end if;
  if (select count(*) from public.ratings where job_id=v_job)<>1 or (select count(*) from public.payouts where job_id=v_job)<>1 then raise exception 'Retry duplicated a rating or payout'; end if;
+ -- Settled money records cannot be rewritten by either the Client RPC or a
+ -- direct service upsert. Invoice changes roll back while the rating survives.
+ update public.payouts set paid_at=now() where job_id=v_job;
+ v_result:=public.record_client_visit_feedback_once(pg_catalog.gen_random_uuid(),v_profile,v_job,3,null,'{}','Settled payout keeps this note',3000);
+ if (v_result->>'tipError') is distinct from 'tip_settled_review'
+  or not exists(select 1 from public.ratings where job_id=v_job and score=3 and private_note='Settled payout keeps this note')
+  or not exists(select 1 from public.invoices where id=v_invoice and tip_cents=4000 and total_cents=21000)
+  or not exists(select 1 from public.payouts where job_id=v_job and tip_cents=4000 and paid_at is not null) then raise exception 'Settled payout was changed or rating was lost'; end if;
+ begin
+  perform public.record_tip_payout(v_job,3000);
+  raise exception 'Direct upsert rewrote settled payout';
+ exception when object_not_in_prerequisite_state then null; end;
+ update public.payouts set paid_at=null,stripe_transfer_id='SYNTHETIC-feedback-transfer-'||v_job::text where job_id=v_job;
+ v_result:=public.record_client_visit_feedback_once(pg_catalog.gen_random_uuid(),v_profile,v_job,4,null,'{}',null,3000);
+ if (v_result->>'tipError') is distinct from 'tip_settled_review'
+  or not exists(select 1 from public.invoices where id=v_invoice and tip_cents=4000)
+  or not exists(select 1 from public.payouts where job_id=v_job and tip_cents=4000 and stripe_transfer_id is not null) then raise exception 'Transferred payout was rewritten'; end if;
+ update public.payouts set stripe_transfer_id=null where job_id=v_job;
  begin
   perform public.record_client_visit_feedback_once(v_a,v_profile,v_job,5,null,'{}',null,3000);
   raise exception 'Same receipt accepted another amount';

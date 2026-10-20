@@ -18,6 +18,7 @@ const TIP_ERRORS: Record<string, string> = {
   tip_invoice_review: "Your rating was saved. Contact the office to review this visit’s bill before adding a tip.",
   tip_payment_in_progress: "Your rating was saved. Finish or cancel the payment already in progress, then return to update the tip.",
   tip_above_price: "Your rating was saved. The tip cannot be more than the clean’s price.",
+  tip_settled_review: "Your rating was saved. This Cleaner’s payout has already been settled. Contact the office to add or change a tip.",
   tip_unavailable: "Your rating was saved, but the tip could not be added. Try again or contact the office.",
 };
 
