@@ -3,6 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import type { BillingStore } from "./store";
 import { type BillingTransition, type StripeEventLike, toTransition } from "./events";
+import { lookUpCheckoutSession } from "./gateway";
 
 /**
  * What the Stripe webhook does once the signature has been verified.
@@ -114,7 +115,8 @@ export async function handleStripeEvent(
 
 /**
  * Execute a transition. The decision of what a given event means was already
- * made, purely, in events.ts; this only writes.
+ * made, purely, in events.ts. A delayed Checkout capture can also need a
+ * read-only provider lookup to match its intent back to our saved session.
  */
 async function apply(store: BillingStore, transition: BillingTransition): Promise<string> {
   switch (transition.kind) {
@@ -130,8 +132,23 @@ async function apply(store: BillingStore, transition: BillingTransition): Promis
       // might hold — a Checkout attempt is recorded against the session id,
       // an auto-charge against the intent. An attempt left open blocks the
       // invoice from ever being collected again.
-      await store.settlePaymentOperationByRef(transition.invoiceId, transition.collectionRef);
-      await store.settlePaymentOperationByRef(transition.invoiceId, transition.paymentIntentId);
+      const closedByRef = await store.settlePaymentOperationByRef(transition.invoiceId, transition.collectionRef);
+      const closedByIntent = await store.settlePaymentOperationByRef(transition.invoiceId, transition.paymentIntentId);
+      if (!closedByRef && !closedByIntent && transition.paymentIntentId) {
+        const pending = await store.openPaymentOperation(transition.invoiceId);
+        if (pending?.stripeObjectKind === "checkout_session" && pending.stripeObjectId) {
+          const outcome = await lookUpCheckoutSession(pending.stripeObjectId);
+          if (outcome.state === "paid" && outcome.paymentIntentId === transition.paymentIntentId) {
+            await store.resolvePaymentOperation(pending.idempotencyKey, "succeeded");
+          } else if (outcome.state === "dead") {
+            await store.resolvePaymentOperation(pending.idempotencyKey, "failed", outcome.reason);
+          } else if (outcome.state === "open") {
+            // Record-payment is idempotent. Retry the event until the delayed
+            // capture can be matched, while keeping the operation blocked.
+            throw new Error("Checkout payment association is not confirmed yet");
+          }
+        }
+      }
 
       // A null id means the SQL function found this capture already recorded,
       // which is a normal outcome, not a failure.

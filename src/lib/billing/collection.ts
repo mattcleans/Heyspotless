@@ -35,6 +35,8 @@ export interface Reconciliation {
   redirectUrl: string | null;
   /** True when this reconciliation recorded a payment nobody had recorded. */
   recoveredPayment: boolean;
+  /** No provider receipt can be confirmed; a person must review before retry. */
+  reviewRequired?: boolean;
 }
 
 /**
@@ -52,11 +54,12 @@ export async function reconcileInvoiceCollection(
   invoiceId: string,
 ): Promise<Reconciliation> {
   const operation = await store.openPaymentOperation(invoiceId);
-  if (!operation || !operation.stripeObjectId) {
-    // Either nothing is open, or an attempt was recorded and the process died
-    // before Stripe answered — so no money can have moved under it. The
-    // operation's own expiry releases the invoice; nothing to reconcile.
+  if (!operation) {
     return { state: "cleared", operation: null, redirectUrl: null, recoveredPayment: false };
+  }
+  if (!operation.stripeObjectId) {
+    // The provider request may have succeeded before its response was saved.
+    return { state: "in_flight", operation, redirectUrl: null, recoveredPayment: false, reviewRequired: true };
   }
 
   let outcome: CollectionOutcome;
@@ -72,8 +75,9 @@ export async function reconcileInvoiceCollection(
     return {
       state: "in_flight",
       operation,
-      redirectUrl: operation.redirectUrl,
+      redirectUrl: null,
       recoveredPayment: false,
+      reviewRequired: true,
     };
   }
 
@@ -103,7 +107,7 @@ export async function reconcileInvoiceCollection(
     return {
       state: "in_flight",
       operation,
-      redirectUrl: outcome.url ?? operation.redirectUrl,
+      redirectUrl: outcome.url,
       recoveredPayment: false,
     };
   }

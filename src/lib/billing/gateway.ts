@@ -192,7 +192,7 @@ export async function refundPaymentIntent(args: {
 export type CollectionOutcome =
   /** Money was taken. `paymentIntentId` is what to record it against. */
   | { state: "paid"; paymentIntentId: string | null; amountCents: number; chargeId: string | null }
-  /** Still collectible — the customer has the page open, or has not opened it. */
+  /** Still live or unresolved; a URL exists only for an active Checkout page. */
   | { state: "open"; url: string | null }
   /** Stripe is done with it and no money moved. */
   | { state: "dead"; reason: string };
@@ -206,13 +206,19 @@ export type CollectionOutcome =
  */
 export async function lookUpCheckoutSession(sessionId: string): Promise<CollectionOutcome> {
   const session = await getStripe().checkout.sessions.retrieve(sessionId);
+  const intent = session.payment_intent;
+  const intentId = typeof intent === "string" ? intent : intent?.id;
 
   if (session.payment_status === "paid") {
-    const intent = session.payment_intent;
+    // Without an immutable capture identity, retries could record this same
+    // receipt twice. Missing or malformed provider evidence stays unresolved.
+    if (!intentId || !Number.isSafeInteger(session.amount_total) || (session.amount_total ?? 0) <= 0) {
+      return { state: "open", url: null };
+    }
     return {
       state: "paid",
-      paymentIntentId: typeof intent === "string" ? intent : (intent?.id ?? null),
-      amountCents: session.amount_total ?? 0,
+      paymentIntentId: intentId,
+      amountCents: session.amount_total!,
       chargeId: null,
     };
   }
@@ -220,8 +226,15 @@ export async function lookUpCheckoutSession(sessionId: string): Promise<Collecti
   if (session.status === "open") {
     return { state: "open", url: session.url ?? null };
   }
-
-  return { state: "dead", reason: `session ${session.status ?? "unknown"}` };
+  if (session.status === "expired") {
+    return { state: "dead", reason: "session expired" };
+  }
+  if (session.status === "complete" && intentId) {
+    // Delayed methods finish Checkout before funds settle. Ask the attached
+    // intent instead of releasing the invoice for another payment.
+    return lookUpPaymentIntent(intentId);
+  }
+  return { state: "open", url: null };
 }
 
 /** What happened to a payment intent — the auto-charge side of the same question. */
@@ -229,10 +242,13 @@ export async function lookUpPaymentIntent(paymentIntentId: string): Promise<Coll
   const intent = await getStripe().paymentIntents.retrieve(paymentIntentId);
 
   if (intent.status === "succeeded") {
+    if (!intent.id || !Number.isSafeInteger(intent.amount_received) || intent.amount_received <= 0) {
+      return { state: "open", url: null };
+    }
     return {
       state: "paid",
       paymentIntentId: intent.id,
-      amountCents: intent.amount_received || intent.amount,
+      amountCents: intent.amount_received,
       chargeId: typeof intent.latest_charge === "string" ? intent.latest_charge : null,
     };
   }
@@ -248,5 +264,8 @@ export async function lookUpPaymentIntent(paymentIntentId: string): Promise<Coll
     return { state: "open", url: null };
   }
 
-  return { state: "dead", reason: `payment intent ${intent.status}` };
+  if (intent.status === "canceled" || intent.status === "requires_payment_method") {
+    return { state: "dead", reason: `payment intent ${intent.status}` };
+  }
+  return { state: "open", url: null };
 }

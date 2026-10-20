@@ -131,15 +131,18 @@ export async function POST(request: NextRequest) {
     // again is the failure this whole path exists to prevent.
     return NextResponse.json(
       {
-        status: "already_paid",
+        status: "payment_recorded",
         recovered: reconciled.recoveredPayment,
-        message: "This invoice has already been paid. Nothing further is owed.",
+        message: "Your payment was recorded. Refresh Account to review the latest balance before starting another payment.",
       },
       { status: 409 },
     );
   }
 
   if (reconciled.state === "in_flight") {
+    if (reconciled.reviewRequired) {
+      return NextResponse.json({ status: "payment_review_required", message: "Your previous payment request could not be confirmed. Contact the office before trying again." }, { status: 409 });
+    }
     // Something is genuinely live. If it is a Checkout page, send them back
     // to THAT page — two tabs then finish the same session rather than
     // opening two. If it is an off-session charge, refuse: we cannot know
@@ -148,6 +151,13 @@ export async function POST(request: NextRequest) {
       reconciled.operation?.channel === "checkout" &&
       reconciled.redirectUrl
     ) {
+      const current = await repo.getInvoice(invoiceId);
+      if (!current || current.customerId !== customer.id || current.voidedAt ||
+        (current.status !== "sent" && current.status !== "overdue") ||
+        current.balanceCents !== reviewedBalanceCents ||
+        reconciled.operation.amountCents !== current.balanceCents + tipCents) {
+        return NextResponse.json({ status: "payment_review_required", message: "This bill changed while a payment page was open. Contact the office to review the existing payment before paying." }, { status: 409 });
+      }
       return NextResponse.json({ url: reconciled.redirectUrl, reused: true });
     }
     return NextResponse.json(
@@ -155,7 +165,7 @@ export async function POST(request: NextRequest) {
         status: "collection_in_flight",
         channel: reconciled.operation?.channel ?? "unknown",
         message:
-          "A payment for this invoice is already being processed. Please wait for it.",
+          "A payment for this invoice is already being processed. Refresh Account to check its status before trying again.",
       },
       { status: 409 },
     );
@@ -228,6 +238,8 @@ export async function POST(request: NextRequest) {
   }
 
   let session: { id: string; url: string };
+  // The locked claim assigns a fresh key only after an older Checkout ended.
+  const providerKey = operation.idempotencyKey;
   try {
     session = await createCheckoutSession({
       invoiceId: invoice.id,
@@ -239,24 +251,20 @@ export async function POST(request: NextRequest) {
         : rescheduleFee ? "Hey Spotless · rescheduling fee" : invoiceChargeDescription(invoice.id),
       origin: request.nextUrl.origin,
       saveCard,
-      idempotencyKey,
+      idempotencyKey: providerKey,
     });
   } catch (error) {
-    // Stripe refused outright, so no session exists and nothing can be paid
-    // against it. Release the invoice rather than leaving it blocked.
-    await store.resolvePaymentOperation(
-      idempotencyKey,
-      "failed",
-      messageOf(error),
-    );
-    throw error;
+    // A lost response can follow a successful session creation. Keep the
+    // claim until the provider outcome is confirmed; never label it failed.
+    console.error("Checkout creation could not be confirmed", error instanceof Error ? error.name : "unknown");
+    return NextResponse.json({ status: "payment_review_required", message: "Your payment request could not be confirmed. Contact the office before trying again." }, { status: 503 });
   }
 
   // Record what the attempt became, immediately. The window between asking
   // Stripe for a session and knowing its id is the one place a payment could
   // still go unaccounted for, and it is now as short as an await.
   await store.attachPaymentOperation({
-    idempotencyKey,
+    idempotencyKey: providerKey,
     stripeObjectKind: "checkout_session",
     stripeObjectId: session.id,
     redirectUrl: session.url,
@@ -280,10 +288,4 @@ async function readJson(
   } catch {
     return {};
   }
-}
-
-function messageOf(error: unknown): string {
-  return error instanceof Error
-    ? error.message.slice(0, 500)
-    : "checkout failed";
 }

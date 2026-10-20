@@ -3,6 +3,7 @@ import type { BillingStore } from "./store";
 import type { EventClaim } from "./store";
 import type { StripeEventLike } from "./events";
 import { handleStripeEvent } from "./webhook";
+import * as gateway from "./gateway";
 
 /**
  * The RESPONSE behaviour of the webhook endpoint.
@@ -168,6 +169,38 @@ function paymentEvent(id: string, intent = "pi_1", amount = 17000): StripeEventL
 }
 
 describe("the webhook's response to Stripe", () => {
+  function pendingCheckout(h: Harness) {
+    h.store.settlePaymentOperationByRef = vi.fn().mockResolvedValue(false);
+    h.store.openPaymentOperation = vi.fn().mockResolvedValue({ id: "op", outcome: "existing", channel: "checkout", idempotencyKey: "key", stripeObjectId: "cs_pending", stripeObjectKind: "checkout_session", redirectUrl: null, amountCents: 17000 });
+    h.store.resolvePaymentOperation = vi.fn().mockResolvedValue(true);
+  }
+  it("matches a delayed intent capture to its stored Checkout session", async () => {
+    const h = harness(); pendingCheckout(h);
+    const lookup = vi.spyOn(gateway, "lookUpCheckoutSession").mockResolvedValue({ state: "paid", paymentIntentId: "pi_1", amountCents: 17000, chargeId: "ch_1" });
+    const result = await handleStripeEvent(h.store, paymentEvent("evt_delayed"));
+    expect(result.status).toBe(200);
+    expect(h.store.resolvePaymentOperation).toHaveBeenCalledWith("key", "succeeded");
+    expect(h.recorded.paymentIntents).toEqual(["pi_1"]);
+    lookup.mockRestore();
+  });
+  it("retries an uncertain Checkout association without recording the capture twice", async () => {
+    const h = harness(); pendingCheckout(h);
+    const lookup = vi.spyOn(gateway, "lookUpCheckoutSession").mockRejectedValueOnce(new Error("provider unreachable")).mockResolvedValueOnce({ state: "paid", paymentIntentId: "pi_1", amountCents: 17000, chargeId: "ch_1" });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect((await handleStripeEvent(h.store, paymentEvent("evt_delayed"))).status).toBe(500);
+    expect(h.store.resolvePaymentOperation).not.toHaveBeenCalled();
+    expect((await handleStripeEvent(h.store, paymentEvent("evt_delayed"))).status).toBe(200);
+    expect(h.recorded.paymentIntents).toEqual(["pi_1"]);
+    expect(h.store.resolvePaymentOperation).toHaveBeenCalledWith("key", "succeeded");
+    lookup.mockRestore(); log.mockRestore();
+  });
+  it("does not close a different Checkout capture under an unrelated intent event", async () => {
+    const h = harness(); pendingCheckout(h);
+    const lookup = vi.spyOn(gateway, "lookUpCheckoutSession").mockResolvedValue({ state: "paid", paymentIntentId: "pi_other", amountCents: 17000, chargeId: null });
+    expect((await handleStripeEvent(h.store, paymentEvent("evt_delayed"))).status).toBe(200);
+    expect(h.store.resolvePaymentOperation).not.toHaveBeenCalled();
+    lookup.mockRestore();
+  });
   it("applies a first delivery and acknowledges it", async () => {
     const h = harness();
     const result = await handleStripeEvent(h.store, paymentEvent("evt_1"));

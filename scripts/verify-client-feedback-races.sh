@@ -214,6 +214,26 @@ end $$;
 SQL
 feedback_race ownerclaim
 
+# Two retrying tabs use one fresh server generation after a confirmed terminal
+# Checkout. Replaying the finished provider key must not trap either tab.
+feedback_sql <<'SQL'
+select * from begin_reviewed_payment_operation('e2700000-0000-4000-8000-000000000009','checkout','SYNTHETIC-retry-race',18000,18000,'e2200000-0000-4000-8000-000000000001');
+select resolve_payment_operation('SYNTHETIC-retry-race','failed','SYNTHETIC provider confirmed terminal');
+SQL
+cat >"$FEEDBACK_DIR/retrykey-first.sql" <<'SQL'
+do $$ declare r record; begin
+ select * into r from begin_reviewed_payment_operation('e2700000-0000-4000-8000-000000000009','checkout','SYNTHETIC-retry-race',18000,18000,'e2200000-0000-4000-8000-000000000001');
+ if r.outcome is distinct from 'started' or r.idempotency_key<>'SYNTHETIC-retry-race:retry:1' then raise exception 'Fresh retry reused a finished key'; end if;
+end $$;
+SQL
+cat >"$FEEDBACK_DIR/retrykey-second.sql" <<'SQL'
+do $$ declare r record; begin
+ select * into r from begin_reviewed_payment_operation('e2700000-0000-4000-8000-000000000009','checkout','SYNTHETIC-retry-race',18000,18000,'e2200000-0000-4000-8000-000000000001');
+ if r.outcome is distinct from 'existing' or r.idempotency_key<>'SYNTHETIC-retry-race:retry:1' then raise exception 'Concurrent retry generated a second key'; end if;
+end $$;
+SQL
+feedback_race retrykey
+
 feedback_sql <<'SQL'
 do $$ declare j record; expected integer; receipt jsonb; begin
  for j in select id from jobs where id between 'e2500000-0000-4000-8000-000000000001' and 'e2500000-0000-4000-8000-000000000007' order by id loop
@@ -241,6 +261,9 @@ do $$ declare j record; expected integer; receipt jsonb; begin
   or not exists(select 1 from payouts where job_id='e2500000-0000-4000-8000-000000000008' and tip_cents=2000 and tip_net_cents=1942) then raise exception 'Reviewed collection disturbed the saved tip'; end if;
  if not exists(select 1 from invoices where id='e2700000-0000-4000-8000-000000000009' and balance_cents=18000 and credit_cents=2000) then raise exception 'Reviewed collection disturbed credit'; end if;
  if not exists(select 1 from invoices where id='e2700000-0000-4000-8000-000000000010' and customer_id='e2200000-0000-4000-8000-000000000002') then raise exception 'Reviewed collection disturbed ownership'; end if;
+ if (select count(*) from payment_operations where invoice_id='e2700000-0000-4000-8000-000000000009')<>2
+  or not exists(select 1 from payment_operations where idempotency_key='SYNTHETIC-retry-race:retry:1' and state='open' and amount_cents=18000) then raise exception 'Concurrent retry duplicated or lost its operation'; end if;
+ raise notice 'Terminal Checkout retry race passed: simultaneous tabs share one fresh provider key after the confirmed prior outcome.';
  raise notice 'Reviewed collection races passed: tip, credit and Client changes during actual invoice lock waits reject stale claims; refreshed balance recovers without a duplicate operation.';
  raise notice 'Client feedback races passed: same submission, newer edit and older replay, collection first, payout settlement first, tip first and cross-Client identity collision. Every competing connection was observed waiting on its holder.';
 end $$;

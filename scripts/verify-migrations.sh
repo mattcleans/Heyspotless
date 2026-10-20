@@ -1047,17 +1047,23 @@ begin
   if v_op.outcome <> 'blocked' then v_fail := v_fail+1;
     raise warning 'Checkout was allowed alongside an off-session charge'; end if;
 
-  -- A DEAD PROCESS must not hold the invoice for ever.
+  -- A local deadline cannot prove that a provider request failed.
   insert into invoices (customer_id, status, subtotal_cents, total_cents)
     values (v_cust, 'sent', 17000, 17000) returning id into v_other;
   perform begin_payment_operation(v_other, 'checkout', 'checkout:z:17000:0', 17000, 1);
   perform pg_sleep(1.2);
   select * into v_op from begin_payment_operation(v_other, 'autocharge', 'autocharge:z:1', 17000);
-  if v_op.outcome <> 'started' then v_fail := v_fail+1;
-    raise warning 'an expired attempt still blocked the invoice (%)', v_op.outcome; end if;
+  if v_op.outcome <> 'blocked' then v_fail := v_fail+1;
+    raise warning 'an expired unresolved attempt allowed another collector (%)', v_op.outcome; end if;
   if not exists (select 1 from payment_operations
-                 where idempotency_key = 'checkout:z:17000:0' and state = 'abandoned') then
-    v_fail := v_fail+1; raise warning 'the expired attempt was not marked abandoned'; end if;
+                 where idempotency_key = 'checkout:z:17000:0' and state = 'open') then
+    v_fail := v_fail+1; raise warning 'the expired unresolved attempt was lost'; end if;
+  if (open_payment_operation(v_other)).id is null then v_fail := v_fail+1;
+    raise warning 'reconciliation hid the expired unresolved attempt'; end if;
+  -- Fixture: provider has now confirmed that no money can move.
+  perform resolve_payment_operation('checkout:z:17000:0','failed','Fixture confirmed expired Checkout');
+  select * into v_op from begin_payment_operation(v_other,'autocharge','autocharge:z:1',17000);
+  if v_op.outcome <> 'started' then v_fail := v_fail+1; raise warning 'confirmed terminal attempt did not release invoice'; end if;
 
   -- The database, not just the code, enforces one open attempt per invoice.
   begin
