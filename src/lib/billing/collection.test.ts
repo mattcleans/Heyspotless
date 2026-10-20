@@ -164,6 +164,8 @@ describe("one open attempt per invoice", () => {
       channel: "checkout",
       idempotencyKey: key,
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
     await l.store.attachPaymentOperation({
       idempotencyKey: key,
@@ -177,6 +179,8 @@ describe("one open attempt per invoice", () => {
       channel: "checkout",
       idempotencyKey: key,
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
 
     expect(first.outcome).toBe("started");
@@ -193,6 +197,8 @@ describe("one open attempt per invoice", () => {
       channel: "autocharge",
       idempotencyKey: "autocharge:inv-1:1",
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
 
     const checkout = await l.store.beginPaymentOperation({
@@ -200,6 +206,8 @@ describe("one open attempt per invoice", () => {
       channel: "checkout",
       idempotencyKey: checkoutKeyFor("inv-1", 17000, 0),
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
 
     expect(checkout.outcome).toBe("blocked");
@@ -215,6 +223,8 @@ describe("one open attempt per invoice", () => {
       channel: "checkout",
       idempotencyKey: checkoutKeyFor("inv-1", 17000, 0),
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
 
     const sweep = await l.store.beginPaymentOperation({
@@ -222,6 +232,8 @@ describe("one open attempt per invoice", () => {
       channel: "autocharge",
       idempotencyKey: "autocharge:inv-1:1",
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
 
     expect(sweep.outcome).toBe("blocked");
@@ -237,6 +249,8 @@ describe("one open attempt per invoice", () => {
       channel: "checkout",
       idempotencyKey: key,
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
     await l.store.resolvePaymentOperation(key, "succeeded");
 
@@ -245,6 +259,8 @@ describe("one open attempt per invoice", () => {
       channel: "checkout",
       idempotencyKey: key,
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
 
     expect(again.outcome).toBe("existing");
@@ -259,6 +275,8 @@ describe("one open attempt per invoice", () => {
       channel: "checkout",
       idempotencyKey: "checkout:inv-1:17000:0",
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
 
     clock += 3_600_000;
@@ -268,6 +286,8 @@ describe("one open attempt per invoice", () => {
       channel: "autocharge",
       idempotencyKey: "autocharge:inv-1:1",
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
     expect(later.outcome).toBe("started");
   });
@@ -283,6 +303,8 @@ describe("reconciling an attempt whose outcome we never learned", () => {
       channel: "checkout",
       idempotencyKey: "checkout:inv-1:17000:0",
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
     await l.store.attachPaymentOperation({
       idempotencyKey: "checkout:inv-1:17000:0",
@@ -318,6 +340,8 @@ describe("reconciling an attempt whose outcome we never learned", () => {
       channel: "checkout",
       idempotencyKey: "checkout:inv-1:17000:0",
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
     await l.store.attachPaymentOperation({
       idempotencyKey: "checkout:inv-1:17000:0",
@@ -347,6 +371,8 @@ describe("reconciling an attempt whose outcome we never learned", () => {
       channel: "checkout",
       idempotencyKey: "checkout:inv-1:17000:0",
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
     await l.store.attachPaymentOperation({
       idempotencyKey: "checkout:inv-1:17000:0",
@@ -374,6 +400,8 @@ describe("reconciling an attempt whose outcome we never learned", () => {
       channel: "checkout",
       idempotencyKey: "checkout:inv-1:17000:0",
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
     await l.store.attachPaymentOperation({
       idempotencyKey: "checkout:inv-1:17000:0",
@@ -402,6 +430,8 @@ describe("reconciling an attempt whose outcome we never learned", () => {
       channel: "autocharge",
       idempotencyKey: "autocharge:inv-1:1",
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
     await l.store.attachPaymentOperation({
       idempotencyKey: "autocharge:inv-1:1",
@@ -437,6 +467,8 @@ describe("reconciling an attempt whose outcome we never learned", () => {
       channel: "checkout",
       idempotencyKey: "checkout:inv-1:17000:0",
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
 
     const look = vi.spyOn(gateway, "lookUpCheckoutSession");

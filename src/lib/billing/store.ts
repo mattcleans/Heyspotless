@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AutochargeCandidate } from "./autocharge";
 import type { BillingTransition } from "./events";
 import type { RefundKind, RefundStatus } from "./types";
+import { BillChangedError } from "./types";
 
 /** Which surface a collection attempt came from. */
 export type PaymentOperationChannel = "checkout" | "autocharge";
@@ -255,15 +256,23 @@ export class BillingStore {
     channel: PaymentOperationChannel;
     idempotencyKey: string;
     amountCents: number;
+    /** Balance reviewed by the caller, before any optional Checkout tip. */
+    expectedBalanceCents: number;
+    expectedCustomerId: string;
+    tipCents?: number;
     ttlSeconds?: number;
   }): Promise<PaymentOperation> {
-    const { data, error } = await this.db.rpc("begin_payment_operation", {
+    const { data, error } = await this.db.rpc("begin_reviewed_payment_operation", {
       p_invoice_id: args.invoiceId,
       p_channel: args.channel,
       p_idempotency_key: args.idempotencyKey,
       p_amount_cents: args.amountCents,
+      p_expected_balance_cents: args.expectedBalanceCents,
+      p_expected_customer_id: args.expectedCustomerId,
+      p_tip_cents: args.tipCents ?? 0,
       p_ttl_seconds: args.ttlSeconds ?? null,
     });
+    if (error?.code === "PT409") throw new BillChangedError();
     if (error) throw new Error(`beginPaymentOperation: ${error.message}`);
 
     const row = Array.isArray(data) ? (data[0] as Record<string, unknown> | undefined) : null;

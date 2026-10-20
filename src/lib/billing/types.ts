@@ -118,3 +118,11 @@ export class BillingError extends Error {
     this.name = "BillingError";
   }
 }
+
+/** A claim was refused before any provider call because its bill changed. */
+export class BillChangedError extends BillingError {
+  constructor() {
+    super("Your bill changed. Refresh Account to review the latest balance before paying.");
+    this.name = "BillChangedError";
+  }
+}

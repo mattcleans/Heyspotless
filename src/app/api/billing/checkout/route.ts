@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getRepository } from "@/lib/data";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { BillingStore } from "@/lib/billing/store";
+import { BillingStore, type PaymentOperation } from "@/lib/billing/store";
 import { chargeableCents } from "@/lib/billing/amounts";
 import {
   checkoutKeyFor,
@@ -11,7 +11,8 @@ import {
   createCheckoutSession,
   ensureStripeCustomer,
 } from "@/lib/billing/gateway";
-import { BillingError } from "@/lib/billing/types";
+import { BillChangedError, BillingError } from "@/lib/billing/types";
+import { requestedTipCents } from "@/lib/billing/tip-input";
 import { isBillingEnabled } from "@/lib/stripe/env";
 import { invoiceChargeDescription } from "@/lib/brand";
 import { createClient } from "@/lib/supabase/server";
@@ -50,8 +51,11 @@ export async function POST(request: NextRequest) {
   const body = await readJson(request);
   const invoiceId =
     typeof body["invoiceId"] === "string" ? body["invoiceId"] : null;
-  const tipCents = Math.max(0, Math.trunc(Number(body["tipCents"] ?? 0)) || 0);
+  const tipCents = requestedTipCents(body["tipCents"]);
   const saveCard = body["saveCard"] === true;
+  if (tipCents === null) {
+    return NextResponse.json({ error: "Enter a valid tip amount." }, { status: 400 });
+  }
 
   if (!invoiceId) {
     return NextResponse.json(
@@ -154,7 +158,10 @@ export async function POST(request: NextRequest) {
   }
 
   // Re-read: reconciliation may have recorded a payment that changed it.
-  const current = (await repo.getInvoice(invoiceId)) ?? invoice;
+  const current = await repo.getInvoice(invoiceId);
+  if (!current) {
+    return NextResponse.json({ status: "bill_changed", message: new BillChangedError().message }, { status: 409 });
+  }
 
   let amountCents: number;
   try {
@@ -174,15 +181,25 @@ export async function POST(request: NextRequest) {
     tipCents,
   );
 
-  const operation = await store.beginPaymentOperation({
-    invoiceId: invoice.id,
-    channel: "checkout",
-    idempotencyKey,
-    amountCents,
-    // A Checkout session is good for 24 hours; the operation should not
-    // release the invoice before the session it represents is dead.
-    ttlSeconds: 24 * 60 * 60,
-  });
+  let operation: PaymentOperation;
+  try {
+    operation = await store.beginPaymentOperation({
+      invoiceId: invoice.id,
+      channel: "checkout",
+      idempotencyKey,
+      amountCents,
+      expectedBalanceCents: current.balanceCents,
+      expectedCustomerId: customer.id,
+      tipCents,
+      // The operation must outlive its 24-hour Checkout session.
+      ttlSeconds: 24 * 60 * 60,
+    });
+  } catch (error) {
+    if (error instanceof BillChangedError) {
+      return NextResponse.json({ status: "bill_changed", message: error.message }, { status: 409 });
+    }
+    throw error;
+  }
 
   if (operation.outcome === "existing" && operation.redirectUrl) {
     // The second identical tab. Same session, same page, one payment.

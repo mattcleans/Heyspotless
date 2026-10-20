@@ -84,22 +84,22 @@ insert into properties(id,customer_id,street,city,zip)
  ('e2200000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,'SYNTHETIC verifier only','Dallas','75201' from generate_series(1,2)n;
 insert into cleaners(id,full_name,type,status,rating,background_check_cleared,profile_published)
  select ('e2400000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,
- 'SYNTHETIC feedback race '||n,'contractor_1099','paused',4.8,true,false from generate_series(1,7)n;
+ 'SYNTHETIC feedback race '||n,'contractor_1099','paused',4.8,true,false from generate_series(1,10)n;
 insert into jobs(id,customer_id,property_id,status,service,freq,price_cents,estimated_clean_minutes,completed_at,notes)
  select ('e2500000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,
  case when n=7 then 'e2200000-0000-4000-8000-000000000002'::uuid else 'e2200000-0000-4000-8000-000000000001'::uuid end,
  case when n=7 then 'e2300000-0000-4000-8000-000000000002'::uuid else 'e2300000-0000-4000-8000-000000000001'::uuid end,
- 'complete','standard','one_time',20000,120,now(),'SYNTHETIC CI concurrency fixture; no actual service or transfer.' from generate_series(1,7)n;
+ 'complete','standard','one_time',20000,120,now(),'SYNTHETIC CI concurrency fixture; no actual service or transfer.' from generate_series(1,10)n;
 insert into job_assignments(job_id,cleaner_id,is_lead,payout_cents)
  select ('e2500000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,
- ('e2400000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,true,6600 from generate_series(1,7)n;
+ ('e2400000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,true,6600 from generate_series(1,10)n;
 insert into invoices(id,customer_id,job_id,status,subtotal_cents,total_cents,due_on)
  select ('e2700000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,
  case when n=7 then 'e2200000-0000-4000-8000-000000000002'::uuid else 'e2200000-0000-4000-8000-000000000001'::uuid end,
- ('e2500000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,'sent',20000,20000,business_today()+7 from generate_series(1,7)n;
+ ('e2500000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,'sent',20000,20000,business_today()+7 from generate_series(1,10)n;
 insert into payouts(job_id,cleaner_id,amount_cents)
  select ('e2500000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,
- ('e2400000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,6600 from generate_series(1,7)n;
+ ('e2400000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,6600 from generate_series(1,10)n;
 SQL
 
 # Two clients waiting on the same submission must recover one durable receipt.
@@ -170,9 +170,53 @@ end $$;
 SQL
 feedback_race identity
 
+# A reviewed checkout must reject a balance/owner that changes while its
+# invoice claim waits. These are fixture ledger edits, not provider outcomes.
+cat >"$FEEDBACK_DIR/tipclaim-first.sql" <<'SQL'
+select record_client_visit_feedback_once('e2600000-0000-4000-8000-000000000008','e2100000-0000-4000-8000-000000000001','e2500000-0000-4000-8000-000000000008',5,null,'{}','SYNTHETIC tip before checkout claim',2000);
+SQL
+cat >"$FEEDBACK_DIR/tipclaim-second.sql" <<'SQL'
+do $$ begin
+ begin
+  perform begin_reviewed_payment_operation('e2700000-0000-4000-8000-000000000008','checkout','SYNTHETIC-stale-tip-claim',20000,20000,'e2200000-0000-4000-8000-000000000001');
+  raise exception 'Claim collected the pre-tip balance after a real lock wait';
+ exception when sqlstate 'PT409' then null; end;
+end $$;
+SQL
+feedback_race tipclaim
+feedback_sql <<'SQL'
+select * from begin_reviewed_payment_operation('e2700000-0000-4000-8000-000000000008','checkout','SYNTHETIC-refreshed-tip-claim',22000,22000,'e2200000-0000-4000-8000-000000000001');
+SQL
+cat >"$FEEDBACK_DIR/creditclaim-first.sql" <<'SQL'
+reset role;
+update invoices set credit_cents=2000 where id='e2700000-0000-4000-8000-000000000009';
+SQL
+cat >"$FEEDBACK_DIR/creditclaim-second.sql" <<'SQL'
+do $$ begin
+ begin
+  perform begin_reviewed_payment_operation('e2700000-0000-4000-8000-000000000009','autocharge','SYNTHETIC-stale-credit-claim',20000,20000,'e2200000-0000-4000-8000-000000000001');
+  raise exception 'Sweep collected the pre-credit balance after a real lock wait';
+ exception when sqlstate 'PT409' then null; end;
+end $$;
+SQL
+feedback_race creditclaim
+cat >"$FEEDBACK_DIR/ownerclaim-first.sql" <<'SQL'
+reset role;
+update invoices set customer_id='e2200000-0000-4000-8000-000000000002' where id='e2700000-0000-4000-8000-000000000010';
+SQL
+cat >"$FEEDBACK_DIR/ownerclaim-second.sql" <<'SQL'
+do $$ begin
+ begin
+  perform begin_reviewed_payment_operation('e2700000-0000-4000-8000-000000000010','checkout','SYNTHETIC-stale-owner-claim',20000,20000,'e2200000-0000-4000-8000-000000000001');
+  raise exception 'Claim ignored a changed Client after a real lock wait';
+ exception when sqlstate 'PT409' then null; end;
+end $$;
+SQL
+feedback_race ownerclaim
+
 feedback_sql <<'SQL'
 do $$ declare j record; expected integer; receipt jsonb; begin
- for j in select id from jobs where id::text like 'e2500000-%' order by id loop
+ for j in select id from jobs where id between 'e2500000-0000-4000-8000-000000000001' and 'e2500000-0000-4000-8000-000000000007' order by id loop
   expected:=case right(j.id::text,1) when '1' then 2000 when '2' then 4000 when '5' then 2500 when '6' then 1500 else 0 end;
   if not exists(select 1 from invoices where job_id=j.id and tip_cents=expected and total_cents=20000+expected and amount_paid_cents=0)
    or not exists(select 1 from payouts where job_id=j.id and amount_cents=6600 and tip_cents=expected and tip_fee_cents=floor(expected*.029) and tip_net_cents=expected-floor(expected*.029)) then raise exception 'Concurrent invoice/payout amounts diverged for %',j.id; end if;
@@ -181,7 +225,7 @@ do $$ declare j record; expected integer; receipt jsonb; begin
    if exists(select 1 from ratings where job_id=j.id) or exists(select 1 from spotless_private.client_feedback_receipts where job_id=j.id) then raise exception 'Conflicting actor saved feedback'; end if;
   elsif (select count(*) from ratings where job_id=j.id)<>1 then raise exception 'Concurrent rating was duplicated or lost'; end if;
  end loop;
- if (select count(*) from spotless_private.client_feedback_receipts where job_id::text like 'e2500000-%')<>7 then raise exception 'Concurrent submissions duplicated or lost receipts'; end if;
+ if (select count(*) from spotless_private.client_feedback_receipts where job_id between 'e2500000-0000-4000-8000-000000000001' and 'e2500000-0000-4000-8000-000000000007')<>7 then raise exception 'Concurrent submissions duplicated or lost receipts'; end if;
  if exists(select 1 from spotless_private.client_feedback_receipts where job_id::text like 'e2500000-%' and (result->>'recorded') is distinct from 'true') then raise exception 'Recorded submission lacks rating success'; end if;
  if not exists(select 1 from ratings where job_id='e2500000-0000-4000-8000-000000000002' and score=5 and private_note='SYNTHETIC newer edit') then raise exception 'Older replay overwrote newer rating'; end if;
  select result into receipt from spotless_private.client_feedback_receipts where id='e2600000-0000-4000-8000-000000000004';
@@ -191,6 +235,13 @@ do $$ declare j record; expected integer; receipt jsonb; begin
  if (select count(*) from payouts where job_id::text like 'e2500000-%' and paid_at is not null)<>2 then raise exception 'Fixture settlements were lost'; end if;
  if not exists(select 1 from payment_operations where idempotency_key='SYNTHETIC-feedback-race-open' and state='open' and amount_cents=20000) then raise exception 'In-flight operation was changed'; end if;
  if exists(select 1 from payments where customer_id::text like 'e2200000-%') then raise exception 'Feedback fixture invented a payment'; end if;
+ if exists(select 1 from payment_operations where idempotency_key in ('SYNTHETIC-stale-tip-claim','SYNTHETIC-stale-credit-claim','SYNTHETIC-stale-owner-claim')) then raise exception 'Rejected reviewed claim left an attempt'; end if;
+ if not exists(select 1 from payment_operations where idempotency_key='SYNTHETIC-refreshed-tip-claim' and amount_cents=22000 and state='open') then raise exception 'Refreshed current balance did not recover'; end if;
+ if not exists(select 1 from invoices where id='e2700000-0000-4000-8000-000000000008' and balance_cents=22000 and tip_cents=2000)
+  or not exists(select 1 from payouts where job_id='e2500000-0000-4000-8000-000000000008' and tip_cents=2000 and tip_net_cents=1942) then raise exception 'Reviewed collection disturbed the saved tip'; end if;
+ if not exists(select 1 from invoices where id='e2700000-0000-4000-8000-000000000009' and balance_cents=18000 and credit_cents=2000) then raise exception 'Reviewed collection disturbed credit'; end if;
+ if not exists(select 1 from invoices where id='e2700000-0000-4000-8000-000000000010' and customer_id='e2200000-0000-4000-8000-000000000002') then raise exception 'Reviewed collection disturbed ownership'; end if;
+ raise notice 'Reviewed collection races passed: tip, credit and Client changes during actual invoice lock waits reject stale claims; refreshed balance recovers without a duplicate operation.';
  raise notice 'Client feedback races passed: same submission, newer edit and older replay, collection first, payout settlement first, tip first and cross-Client identity collision. Every competing connection was observed waiting on its holder.';
 end $$;
 SQL

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
+import { BillChangedError } from "@/lib/billing/types";
 const m = vi.hoisted(() => ({
   repo: vi.fn(),
   client: vi.fn(),
@@ -77,6 +78,32 @@ beforeEach(() => {
   });
 });
 describe("canceled visit checkout", () => {
+  it("requests a new balance review before any provider call when the claim is stale", async () => {
+    m.begin.mockRejectedValue(new BillChangedError());
+    const response = await pay();
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ status: "bill_changed", message: expect.stringContaining("Refresh Account") });
+    expect(m.ensure).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
+    expect(m.attach).not.toHaveBeenCalled();
+  });
+  it("does not fall back to a stale invoice when its fresh read disappears", async () => {
+    const getInvoice = vi.fn().mockResolvedValueOnce(invoice).mockResolvedValueOnce(null);
+    m.repo.mockResolvedValue({
+      getCurrentProfile: async () => ({ id: "profile", role: "customer" }), getInvoice,
+      getCustomer: async () => ({ id: "customer", stripeCustomerId: "cus_existing" }),
+      getJob: async () => ({ id: "job", status: "canceled" }),
+    });
+    expect((await pay()).status).toBe(409);
+    expect(m.begin).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+  it.each([-1, 1.5, "2000", null, 2147483648])("rejects malformed tips %j before billing work", async tipCents => {
+    const response = await POST(new NextRequest("https://example.test/api/billing/checkout", { method: "POST", body: JSON.stringify({ invoiceId: "invoice", tipCents }) }));
+    expect(response.status).toBe(400);
+    expect(m.repo).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
   function reschedulingInvoice() {
     m.repo.mockResolvedValue({
       getCurrentProfile: async () => ({ id: "profile", role: "customer" }),
