@@ -96,6 +96,9 @@ jobs:
       - name: Verify Client feedback and tip receipts
         run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-client-feedback.sql
 
+      - name: Verify concurrent Client feedback and settlement
+        run: bash scripts/verify-client-feedback-races.sh spotless_verify
+
   matching_worker:
     name: Matching worker runtime
     runs-on: ubuntu-latest
