@@ -7,7 +7,10 @@ declare
  v_a uuid:=pg_catalog.gen_random_uuid(); v_b uuid:=pg_catalog.gen_random_uuid();
  v_result jsonb; v_saved jsonb; v_id uuid; v_count integer;
 begin
- insert into public.profiles(id,role,full_name) values(v_profile,'customer','SYNTHETIC Feedback Client'),(v_other,'customer','SYNTHETIC Other Client');
+ -- Use the normal auth trigger so profile ownership matches a real signup.
+ insert into auth.users(id,email,raw_user_meta_data) values
+  (v_profile,'feedback-'||v_profile::text||'@example.test','{"full_name":"SYNTHETIC Feedback Client"}'::jsonb),
+  (v_other,'feedback-'||v_other::text||'@example.test','{"full_name":"SYNTHETIC Other Client"}'::jsonb);
  insert into public.customers(profile_id,first_name,last_name) values(v_profile,'SYNTHETIC','Feedback Client') returning id into v_customer;
  insert into public.properties(customer_id,street,city,zip) values(v_customer,'SYNTHETIC PREVIEW ONLY','Dallas','75201') returning id into v_home;
  insert into public.cleaners(full_name,type,status,rating,background_check_cleared)
