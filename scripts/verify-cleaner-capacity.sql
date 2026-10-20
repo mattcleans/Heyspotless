@@ -12,6 +12,8 @@ insert into jobs(id,customer_id,property_id,status,service,freq,price_cents,esti
 create temporary table capacity_test_offers(job_id uuid,id uuid);
 insert into capacity_test_offers select id,record_offer(id,'f4000000-0000-0000-0000-000000000001',null,'open_board',1,0.4,8000,90,clock_timestamp()+interval '1 hour',false)
  from jobs where id in ('f5000000-0000-0000-0000-000000000001','f5000000-0000-0000-0000-000000000002','f5000000-0000-0000-0000-000000000003');
+-- The unrelated infinity visit above must not be evaluated while accepting a
+-- finite visit. Query planners may reorder SQL WHERE predicates before joins.
 do $$ declare o uuid;r text;begin
  select id into o from capacity_test_offers where job_id='f5000000-0000-0000-0000-000000000001';
  if respond_to_offer_with_capacity(o,'f4000000-0000-0000-0000-000000000002',true)<>'not_found' then raise exception 'Another cleaner answered the offer';end if;
@@ -47,15 +49,21 @@ update jobs set status='canceled' where id='f5000000-0000-0000-0000-000000000008
 insert into job_assignments(job_id,cleaner_id,payout_cents) values
  ('f5000000-0000-0000-0000-000000000009','f4000000-0000-0000-0000-000000000001',5000),
  ('f5000000-0000-0000-0000-000000000010','f4000000-0000-0000-0000-000000000001',5000);
-do $$ begin
+do $$ declare v_pair record; begin
  begin update jobs set scheduled_start='2028-01-03 08:30Z' where id='f5000000-0000-0000-0000-000000000010';raise exception 'Undated assignment became overlapping';exception when sqlstate 'PCP01' then null;end;
  begin update jobs set status='scheduled' where id='f5000000-0000-0000-0000-000000000001';raise exception 'Reopened completion double booked';exception when sqlstate 'PCP01' then null;end;
  begin insert into job_assignments(job_id,cleaner_id,payout_cents) values('f5000000-0000-0000-0000-000000000011','f4000000-0000-0000-0000-000000000001',5000);raise exception 'Infinite appointment assigned';exception when invalid_parameter_value then null;end;
- if exists(select 1 from job_assignments a join job_assignments b on a.cleaner_id=b.cleaner_id and a.job_id<b.job_id
+ for v_pair in select j.scheduled_start as a_start,j.scheduled_end as a_end,j.estimated_clean_minutes as a_minutes,
+   k.scheduled_start as b_start,k.scheduled_end as b_end,k.estimated_clean_minutes as b_minutes
+  from job_assignments a join job_assignments b on a.cleaner_id=b.cleaner_id and a.job_id<b.job_id
   join jobs j on j.id=a.job_id join jobs k on k.id=b.job_id where a.cleaner_id::text like 'f4000000-%'
    and j.status not in ('complete','canceled') and k.status not in ('complete','canceled')
-   and spotless_private.visit_capacity_window(j.scheduled_start,j.scheduled_end,j.estimated_clean_minutes)
-    && spotless_private.visit_capacity_window(k.scheduled_start,k.scheduled_end,k.estimated_clean_minutes)) then raise exception 'Active fixture still double booked';end if;
+ loop
+  if spotless_private.visit_capacity_window(v_pair.a_start,v_pair.a_end,v_pair.a_minutes)
+    && spotless_private.visit_capacity_window(v_pair.b_start,v_pair.b_end,v_pair.b_minutes) then
+   raise exception 'Active fixture still double booked';
+  end if;
+ end loop;
  if not (select relrowsecurity from pg_class where oid='spotless_private.cleaner_capacity'::regclass) then raise exception 'Capacity table lacks RLS';end if;
  if has_schema_privilege('anon','spotless_private','USAGE') or has_schema_privilege('authenticated','spotless_private','USAGE') or has_schema_privilege('service_role','spotless_private','USAGE') then raise exception 'Private capacity schema exposed';end if;
  if has_function_privilege('authenticated','public.respond_to_offer_with_capacity(uuid,uuid,boolean,text)','EXECUTE') or has_function_privilege('anon','public.assign_job_for_schedule_with_capacity(uuid,uuid,integer,bigint)','EXECUTE') then raise exception 'Server write exposed to clients';end if;
