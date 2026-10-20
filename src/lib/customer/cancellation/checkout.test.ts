@@ -48,11 +48,11 @@ const invoice = {
     creditCents: 0,
   },
 };
-function pay(tipCents = 0) {
+function pay(tipCents = 0, expectedBalanceCents = 6000) {
   return POST(
     new NextRequest("https://example.test/api/billing/checkout", {
       method: "POST",
-      body: JSON.stringify({ invoiceId: "invoice", tipCents }),
+      body: JSON.stringify({ invoiceId: "invoice", tipCents, expectedBalanceCents }),
     }),
   );
 }
@@ -78,6 +78,19 @@ beforeEach(() => {
   });
 });
 describe("canceled visit checkout", () => {
+  it("binds a new checkout to the balance displayed on the Client's Pay button", async () => {
+    const response = await pay(0, 5000);
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ status: "bill_changed", message: expect.stringContaining("Refresh Account") });
+    expect(m.begin).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
+  it("asks an older form with no reviewed balance to refresh before billing work", async () => {
+    const response = await POST(new NextRequest("https://example.test/api/billing/checkout", { method: "POST", body: JSON.stringify({ invoiceId: "invoice" }) }));
+    expect(response.status).toBe(409);
+    expect(m.repo).not.toHaveBeenCalled();
+    expect(m.checkout).not.toHaveBeenCalled();
+  });
   it("requests a new balance review before any provider call when the claim is stale", async () => {
     m.begin.mockRejectedValue(new BillChangedError());
     const response = await pay();

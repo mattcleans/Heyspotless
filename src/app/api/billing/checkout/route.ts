@@ -56,6 +56,10 @@ export async function POST(request: NextRequest) {
   if (tipCents === null) {
     return NextResponse.json({ error: "Enter a valid tip amount." }, { status: 400 });
   }
+  const reviewedBalanceCents = body["expectedBalanceCents"];
+  if (typeof reviewedBalanceCents !== "number" || !Number.isSafeInteger(reviewedBalanceCents) || reviewedBalanceCents < 0 || reviewedBalanceCents > 2_147_483_647) {
+    return NextResponse.json({ status: "bill_changed", message: new BillChangedError().message }, { status: 409 });
+  }
 
   if (!invoiceId) {
     return NextResponse.json(
@@ -159,7 +163,7 @@ export async function POST(request: NextRequest) {
 
   // Re-read: reconciliation may have recorded a payment that changed it.
   const current = await repo.getInvoice(invoiceId);
-  if (!current) {
+  if (!current || current.balanceCents !== reviewedBalanceCents) {
     return NextResponse.json({ status: "bill_changed", message: new BillChangedError().message }, { status: 409 });
   }
 

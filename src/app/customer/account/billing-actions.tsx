@@ -61,6 +61,7 @@ export function PayInvoiceButton({
       // already saved one is not asked again on every payment.
       window.location.href = await startSession("/api/billing/checkout", {
         invoiceId,
+        expectedBalanceCents: balanceCents,
         saveCard: !hasCard,
       });
     } catch (error) {
@@ -74,12 +75,12 @@ export function PayInvoiceButton({
         type="button"
         onClick={pay}
         disabled={state.status === "working"}
-        className="rounded-lg bg-navy px-3.5 py-2 text-sm font-semibold text-white transition-colors hover:bg-navy-deep disabled:opacity-50"
+        className="min-h-11 rounded-lg bg-navy px-3.5 py-2 text-sm font-semibold text-white transition-colors hover:bg-navy-deep disabled:opacity-50"
       >
         {state.status === "working" ? "Opening…" : `Pay ${formatCents(balanceCents)}`}
       </button>
       {state.status === "error" ? (
-        <p className="mt-1.5 text-xs text-bad">{state.message}</p>
+        <p role="alert" className="mt-1.5 text-xs text-bad">{state.message}</p>
       ) : null}
     </div>
   );
