@@ -93,6 +93,9 @@ jobs:
       - name: Verify private Cleaner offer projection
         run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-cleaner-live-offers.sql
 
+      - name: Verify Client feedback and tip receipts
+        run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-client-feedback.sql
+
   matching_worker:
     name: Matching worker runtime
     runs-on: ubuntu-latest

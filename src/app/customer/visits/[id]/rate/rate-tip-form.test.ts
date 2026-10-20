@@ -38,15 +38,16 @@ describe("saved rating receipt", () => {
     }));
     expect(html).toContain("Your rating is saved");
     expect(html).toContain("no tip was added");
-    expect(html).not.toContain("tip was added to your bill");
+    expect(html).not.toContain("tip was saved");
     expect(html).not.toContain("will get");
   });
   it("describes a recorded tip as a bill item and preserves reconciliation warnings", () => {
     const html = renderToStaticMarkup(createElement(RatingReceipt, {
       tipAddedCents: 3980, notice: "the payout record needs checking",
     }));
-    expect(html).toContain("$39.80 tip was added to your bill");
-    expect(html).toContain("Check Account for the payment status");
+    expect(html).toContain("$39.80 tip was saved");
+    expect(html).toContain("Check Account for the latest bill and payment status");
+    expect(html).toContain('href="/customer/account"');
     expect(html).toContain("the payout record needs checking");
     expect(html).not.toContain("will get");
   });
