@@ -81,6 +81,7 @@ as_super $PSQL -d "$DB" <<'SQL'
 create schema if not exists storage;
 create table storage.objects (
  id uuid primary key default gen_random_uuid(),bucket_id text not null,name text not null,
+ archived_at timestamptz,is_delete_marker boolean not null default false,
  unique(bucket_id,name)
 );
 

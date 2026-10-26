@@ -15,6 +15,11 @@ begin
  begin perform public.record_job_photo(j,k,'jobs/other/kitchen_1-before.jpg','before','kitchen_1');raise exception 'Foreign path accepted';exception when invalid_parameter_value then null;end;
  begin perform public.record_job_photo(j,k,'jobs/'||j||'/invented-before.jpg','before','invented');raise exception 'Unknown room accepted';exception when invalid_parameter_value then null;end;
  begin perform public.record_job_photo(j,k,'jobs/'||j||'/kitchen_1-after.jpg','after','kitchen_1');raise exception 'Missing bytes accepted';exception when sqlstate 'PPH01' then null;end;
+ update storage.objects set archived_at=now() where bucket_id='job-photos' and name=path;
+ begin perform public.record_job_photo(j,k,path,'before','kitchen_1');raise exception 'Archived object accepted';exception when sqlstate 'PPH01' then null;end;
+ update storage.objects set archived_at=null,is_delete_marker=true where bucket_id='job-photos' and name=path;
+ begin perform public.record_job_photo(j,k,path,'before','kitchen_1');raise exception 'Delete marker accepted';exception when sqlstate 'PPH01' then null;end;
+ update storage.objects set is_delete_marker=false where bucket_id='job-photos' and name=path;
  id1:=public.record_job_photo(j,k,path,'before','kitchen_1');
  id2:=public.record_job_photo(j,k,path,'before','kitchen_1');
  if id1 is null or id1 is distinct from id2 then raise exception 'Photo retry changed its receipt';end if;
@@ -37,9 +42,14 @@ begin
  if public.settle_job_invoice(j) is not null then raise exception 'Metadata without objects created a bill';end if;
  foreach room in array array['kitchen_1','bathroom_1','living_room_1','bedroom_1'] loop
   foreach photo_kind in array array['before','after'] loop
-   insert into storage.objects(bucket_id,name) values('job-photos','jobs/'||j||'/'||room||'-'||photo_kind||'.jpg') on conflict(bucket_id,name) do nothing;
+   insert into storage.objects(bucket_id,name) values('job-photos','jobs/'||j||'/'||room||'-'||photo_kind||'.jpg') on conflict do nothing;
   end loop;
  end loop;
+ update storage.objects set archived_at=now() where bucket_id='job-photos' and name='jobs/'||j||'/bedroom_1-after.jpg';
+ if public.settle_job_invoice(j) is not null then raise exception 'Archived evidence created a bill';end if;
+ update storage.objects set archived_at=null,is_delete_marker=true where bucket_id='job-photos' and name='jobs/'||j||'/bedroom_1-after.jpg';
+ if public.settle_job_invoice(j) is not null then raise exception 'Deleted evidence created a bill';end if;
+ update storage.objects set is_delete_marker=false where bucket_id='job-photos' and name='jobs/'||j||'/bedroom_1-after.jpg';
  insert into public.invoices(customer_id,kind,status,subtotal_cents,total_cents) values(c,'reschedule_fee','sent',6000,6000) returning id into fee_id;
  id1:=public.settle_job_invoice(j);id2:=public.settle_job_invoice(j);
  if id1 is null or id1 is distinct from id2 or (select count(*) from public.invoices where job_id=j and kind='service')<>1 then raise exception 'Verified gate failed idempotency';end if;
