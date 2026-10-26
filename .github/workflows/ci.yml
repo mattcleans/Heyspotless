@@ -47,7 +47,9 @@ jobs:
 
   migrations:
     name: Migrations and SQL price book
-    runs-on: ubuntu-latest
+    # PostgreSQL 16 packages are available on this supported Ubuntu release.
+    # ubuntu-latest can move to a release that no longer carries that client.
+    runs-on: ubuntu-24.04
 
     # The other half of the drift check: all 27 quote totals are asserted in
     # SQL as well as in TypeScript, so the two implementations cannot diverge
