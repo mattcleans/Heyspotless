@@ -25,13 +25,17 @@ begin
  select job_id into j from spotless_private.client_booking_reviews where id=review;
  select price_cents into old_price from public.jobs where id=j;
  if not exists(select 1 from public.job_room_scopes where job_id=j and source='client_booking' and bedrooms=1 and bathrooms=1 and half_baths=1 and kitchens=1 and living_rooms=0 and utility_rooms=0) then raise exception 'Confirmed booking did not capture the exact six room counts';end if;
+ -- Room-count changes are an office operation; Clients may edit instructions.
+ perform set_config('request.jwt.claim.sub',u[3]::text,true);
  update public.properties set bedrooms=4,bathrooms=3,half_baths=0,kitchens=2,living_rooms=3,utility_rooms=2 where id=h;
  if not exists(select 1 from public.job_room_scopes where job_id=j and bedrooms=1 and half_baths=1 and kitchens=1 and living_rooms=0) then raise exception 'Later home edit changed the accepted visit';end if;
+ perform set_config('request.jwt.claim.sub',u[1]::text,true);
  review:=gen_random_uuid();
  perform public.review_my_booking(review,h,'standard','one_time',start_at+interval '1 day',false,'[]','SYNTHETIC new booking');
  perform public.confirm_my_booking(review);
  select job_id into fresh from spotless_private.client_booking_reviews where id=review;
  if not exists(select 1 from public.job_room_scopes where job_id=fresh and source='client_booking' and bedrooms=4 and kitchens=2 and living_rooms=3 and half_baths=0) then raise exception 'New booking did not use the newly reviewed home';end if;
+ perform set_config('request.jwt.claim.sub',u[3]::text,true);
  insert into public.job_assignments(job_id,cleaner_id,is_lead,payout_cents) values(j,k,true,floor(old_price*.35)::integer);
  update public.jobs set status='complete',completed_at=now() where id=j;
  foreach room in array array['kitchen_1','bathroom_1','half_bath_1','bedroom_1'] loop

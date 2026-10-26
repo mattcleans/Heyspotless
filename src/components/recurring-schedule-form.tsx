@@ -55,9 +55,9 @@ export function RecurringReview({ review }: { review: ScheduleReview }) {
           · {review.start_time}
         </p>
         <p className="mt-2">{formatCents(review.price_cents)} per clean</p>
-        {review.room_counts && <p className="mt-2 text-sm leading-relaxed text-ink-2">Saved room list: {formatVisitRoomCounts(review.room_counts)}. Changing the frequency keeps this room list.</p>}
-        {review.room_scope_source === "legacy_home" && <p className="mt-2 text-sm text-ink-2">This room list was saved from the home details on file. Contact the office if it needs a correction.</p>}
-        {review.room_counts === null && <p className="mt-2 text-sm text-ink-2">The saved room list needs office review before the cleaning scope or frequency can change.</p>}
+        {review.room_counts && <p className="mt-2 text-sm leading-relaxed text-white">Saved room list: {formatVisitRoomCounts(review.room_counts)}. Changing the frequency keeps this room list.</p>}
+        {review.room_scope_source === "legacy_home" && <p className="mt-2 text-sm text-white">This room list was saved from the home details on file. Contact the office if it needs a correction.</p>}
+        {review.room_counts === null && <p className="mt-2 text-sm text-white">The saved room list needs office review before the cleaning scope or frequency can change.</p>}
         {review.previous_price_cents !== review.price_cents && (
           <p className="mt-1 text-sm">
             Previously {formatCents(review.previous_price_cents)}. Existing
