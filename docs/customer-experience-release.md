@@ -155,3 +155,16 @@ Free Twilio test-credential access could not be established through the accessib
 
 
 The Management inbox now reads SMS provider references and recorded failures through its signed-in RLS client. Outgoing SMS bubbles distinguish submitted/delivery-unconfirmed from delivery-unconfirmed/needs-review, with expandable reference/error details for office investigation. Incoming and non-SMS records do not get outgoing SMS labels. An explicit Management role check precedes the inbox read. Nine additional render/access tests pass; the combined focused suite is50 tests (29 new,21 existing). A390px synthetic office check verified both states, expandable missing-receipt details and no horizontal overflow. This adds request visibility; it does not manufacture carrier-delivery receipts or settle unknown messages automatically.
+
+
+### Verified photo receipts and invoice evidence
+
+The photo recorder now locks the visit and verifies the current assignment, active service status, current required room key, canonical slot path and an existing private job-photos object before returning a receipt. Invalid requests raise errors, so older API code cannot silently acknowledge a rejected write. Replays preserve their receipt, including issue photos. A valid replacement can repair a legacy noncanonical slot pointer. Direct authenticated photo writes are revoked; signed-in reads retain RLS and service writes remain available. No historical row is rewritten by applying the migration.
+
+The service-invoice gate checks each exact before/after room slot and its matching stored object, rather than counting arbitrary paired room names or database metadata alone. It serializes by visit, preserves an existing unambiguous service bill, does not substitute rescheduling fees, refuses blind replacement of voided/ambiguous records and retains the agreed job price and draft status. Completion is still independent from missing photos.
+
+The photo API refuses missing/uncertain receipts, restricts Cleaner role and uses the home's full room configuration for outstanding requirements. The browser queue keeps its bytes until a server receipt identifies the exact visit, room, kind, storage path and photo ID. Old boolean-only or mismatched acknowledgements cannot discard the local copy.
+
+A rollback-only isolated probe reproduced the prior gate creating an invoice from arbitrary room keys without uploaded objects; no probe customer remained. New SQL checks model object metadata explicitly, with no image uploads, and cover assignment/path/room/object denial, exact-slot billing, stable retries and draft price. Existing positive completion fixtures now provide canonical object catalog receipts. Node photo/API/queue/service tests and shell syntax checks pass. Final database CI and hosted after-migration checks remain required.
+
+This patch does not issue or collect invoices. Missing legacy draft recovery and the policy for issuing bills remain open, along with scope snapshots if home room counts change after work and actual handset retake/reassignment acceptance.

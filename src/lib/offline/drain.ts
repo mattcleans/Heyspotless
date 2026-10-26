@@ -187,7 +187,12 @@ async function upload(photo: store.StoredPhoto): Promise<void> {
     !payload ||
     typeof payload !== "object" ||
     !("recorded" in payload) ||
-    payload.recorded !== true
+    payload.recorded !== true ||
+    !("photoId" in payload) || typeof payload.photoId !== "string" || !payload.photoId ||
+    !("jobId" in payload) || payload.jobId !== photo.jobId ||
+    !("roomKey" in payload) || payload.roomKey !== photo.roomKey ||
+    !("kind" in payload) || payload.kind !== photo.kind ||
+    !("storagePath" in payload) || payload.storagePath !== path
   ) {
     throw new Error("record: unconfirmed");
   }
