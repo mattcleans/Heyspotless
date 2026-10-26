@@ -6,6 +6,9 @@ import { loadInbox } from "@/lib/messaging/inbox";
 import { formatDateTimeInZone } from "@/lib/time/zone";
 import type { Thread } from "@/lib/messaging/threads";
 import { ReplyBox } from "./reply-box";
+import { MessageReceipt } from "./message-receipt";
+import { getRepository } from "@/lib/data";
+import { notFound } from "next/navigation";
 
 /**
  * Every conversation the business is having, in one place.
@@ -45,6 +48,7 @@ export default async function InboxPage({
     );
   }
 
+  if ((await (await getRepository()).getCurrentProfile())?.role !== "admin") notFound();
   const threads = await loadInbox(await createClient());
   const selected = threads.find((t) => t.key === selectedKey) ?? threads[0] ?? null;
   const unreadTotal = threads.reduce((sum, t) => sum + t.unread, 0);
@@ -150,6 +154,7 @@ function ThreadView({ thread }: { thread: Thread }) {
               }`}
             >
               <p className="whitespace-pre-wrap">{message.body}</p>
+              <MessageReceipt message={message} />
               <p className="mt-1 text-[10px] text-ink-3">
                 {formatDateTimeInZone(message.sentAt)}
                 {/*
