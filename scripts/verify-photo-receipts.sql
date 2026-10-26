@@ -1,7 +1,7 @@
 -- Metadata-only disposable fixtures. No image bytes or provider uploads.
 begin;
 do $$
-declare c uuid; h uuid; j uuid; k uuid; other_k uuid; id1 uuid; id2 uuid; room text; photo_kind text; path text;
+declare c uuid; h uuid; j uuid; k uuid; other_k uuid; fee_id uuid; id1 uuid; id2 uuid; room text; photo_kind text; path text;
 begin
  insert into public.customers(first_name,last_name) values('SYNTHETIC','Photo receipt') returning id into c;
  insert into public.properties(customer_id,street,city,zip,bedrooms,bathrooms,utility_rooms) values(c,'SYNTHETIC ONLY','Dallas','75201',1,1,0) returning id into h;
@@ -40,7 +40,7 @@ begin
    insert into storage.objects(bucket_id,name) values('job-photos','jobs/'||j||'/'||room||'-'||photo_kind||'.jpg') on conflict(bucket_id,name) do nothing;
   end loop;
  end loop;
- insert into public.invoices(job_id,customer_id,kind,status,subtotal_cents,total_cents) values(j,c,'reschedule_fee','sent',6000,6000);
+ insert into public.invoices(customer_id,kind,status,subtotal_cents,total_cents) values(c,'reschedule_fee','sent',6000,6000) returning id into fee_id;
  id1:=public.settle_job_invoice(j);id2:=public.settle_job_invoice(j);
  if id1 is null or id1 is distinct from id2 or (select count(*) from public.invoices where job_id=j and kind='service')<>1 then raise exception 'Verified gate failed idempotency';end if;
  if not exists(select 1 from public.invoices where id=id1 and status='draft' and subtotal_cents=19900 and total_cents=19900) then raise exception 'Gate changed the agreed price or issued a bill';end if;
@@ -48,7 +48,7 @@ begin
  if public.settle_job_invoice(j) is distinct from id1 or (select invoiced_at from public.jobs where id=j) is null then raise exception 'Existing service receipt was not reused';end if;
  update public.invoices set status='void',voided_at=now() where id=id1;update public.jobs set invoiced_at=null where id=j;
  if public.settle_job_invoice(j) is not null or (select count(*) from public.invoices where job_id=j and kind='service')<>1 then raise exception 'Voided service invoice replaced';end if;
- if not exists(select 1 from public.invoices where job_id=j and kind='reschedule_fee' and total_cents=6000 and status='sent') then raise exception 'Service gate changed the fee';end if;
+ if not exists(select 1 from public.invoices where id=fee_id and kind='reschedule_fee' and total_cents=6000 and status='sent') then raise exception 'Service gate changed the fee';end if;
  if has_table_privilege('authenticated','public.job_photos','INSERT,UPDATE,DELETE,TRUNCATE') or has_table_privilege('anon','public.job_photos','SELECT') or not has_table_privilege('authenticated','public.job_photos','SELECT') then raise exception 'Direct photo writes or anonymous reads remain';end if;
  if has_function_privilege('authenticated','public.record_job_photo(uuid,uuid,text,text,text)','execute') or has_function_privilege('anon','public.settle_job_invoice(uuid)','execute') or not has_function_privilege('service_role','public.record_job_photo(uuid,uuid,text,text,text)','execute') then raise exception 'Photo execution grants changed';end if;
  raise notice 'Photo receipts passed: assignment, canonical slot, actual object, no false bill, idempotent receipt and draft price.';
