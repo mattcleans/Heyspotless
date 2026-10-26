@@ -110,6 +110,12 @@ jobs:
       - name: Verify assigned photo receipts and invoice evidence
         run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-photo-receipts.sql
 
+      - name: Verify reviewed Management service drafts
+        run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-service-draft.sql
+
+      - name: Verify concurrent Management draft preparation
+        run: bash scripts/verify-service-draft-races.sh spotless_verify
+
       - name: Verify office payment review access
         run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-payment-review-access.sql
 

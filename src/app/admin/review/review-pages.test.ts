@@ -38,6 +38,7 @@ const job = {
   city: "Dallas",
   status: "complete",
   scheduledStart: null,
+  priceCents: 19900,
 };
 const rooms = {
   bedrooms: 0,
@@ -131,6 +132,22 @@ describe("management review screens", () => {
     expect(html).toContain("reopen this visit");
     expect(html).toContain("Not received");
     expect(html).not.toContain("createSignedUrl");
+    expect(html).not.toContain("Prepare service draft");
+  });
+  it("offers a priced draft action when all required records are present", async () => {
+    m.facts.mockResolvedValue({ ...facts, photos: ["before", "after"].map(kind => ({ id: kind, roomKey: "kitchen_1", kind, takenAt: new Date() })) });
+    const html = renderToStaticMarkup(await detail());
+    expect(html).toContain("Prepare service draft");
+    expect(html).toContain("$199.00");
+    expect(html).toContain("No payment is taken");
+  });
+  it("offers marker recovery for one existing invoice without creating a replacement", async () => {
+    m.facts.mockResolvedValue({ ...facts, invoices: [{ id: "invoice", status: "draft", totalCents: 19900, balanceCents: 19900 }] });
+    expect(renderToStaticMarkup(await detail())).toContain("Confirm invoice record");
+  });
+  it("does not offer replacement of a voided invoice", async () => {
+    m.facts.mockResolvedValue({ ...facts, invoices: [{ id: "invoice", status: "void", totalCents: 19900, balanceCents: 19900 }] });
+    expect(renderToStaticMarkup(await detail())).not.toContain("Confirm invoice record");
   });
   it("keeps recorded invoice status and balance separate from missing photos", async () => {
     m.facts.mockResolvedValue({

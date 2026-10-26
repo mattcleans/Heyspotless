@@ -21,6 +21,7 @@ import { formatDateTimeInZone } from "@/lib/time/zone";
 import { formatCents } from "@/lib/money";
 import { Pill } from "@/components/ui";
 import { VisitRefresh } from "@/components/visit-refresh";
+import { ServiceDraftAction } from "@/components/service-draft-action";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Visit review | Hey Spotless management" };
 export default async function VisitReviewPage({
@@ -213,13 +214,20 @@ export default async function VisitReviewPage({
           {review.key === "photos"
             ? "The visit is finished, but required photos have not all reached the server. Ask the assigned cleaner to reopen this visit and check the saved-photo queue."
             : review.key === "ready"
-              ? "The server has the photos required for this home's current room counts. No invoice record is loaded. Check billing follow-up before considering this visit settled."
+              ? "Required photo records are present for this home's current room counts. Prepare the service draft to verify the saved images and visit price."
               : review.key === "unavailable"
                 ? "The visit has an invoice timestamp, but its invoice record is unavailable. Refresh and check billing records."
                 : review.key === "recorded"
                   ? "An invoice record exists. Its balance and status below describe what is recorded; photo completeness does not confirm payment."
                   : "This visit has not been marked complete. Review the recorded times and assignment before following up."}
         </p>
+        {job.status === "complete" && !repo.isDemo && <ServiceDraftAction
+          visitId={id}
+          priceCents={job.priceCents}
+          canPrepare={facts.invoicedAt === null && Number.isSafeInteger(job.priceCents) && job.priceCents >= 0 &&
+            (review.key === "ready" || (facts.invoices.length === 1 && facts.invoices[0]?.status !== "void"))}
+          existingInvoice={facts.invoices.length > 0}
+        />}
         {facts.invoices.map((invoice) => (
           <div
             key={invoice.id}
