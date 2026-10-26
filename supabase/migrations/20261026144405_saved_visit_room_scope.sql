@@ -273,8 +273,12 @@ grant execute on function public.record_job_photo(uuid,uuid,text,text,text) to s
 
 
 -- Cadence repricing and its confirmation fingerprint use the same saved plan scope.
-create or replace function public.recurring_edit_snapshot(p_plan uuid,p_from date) returns jsonb
-language sql stable security definer set search_path=public,pg_temp as $$
+CREATE OR REPLACE FUNCTION public.recurring_edit_snapshot(p_plan uuid, p_from date)
+ RETURNS jsonb
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
  select jsonb_build_object(
   'plan',to_jsonb(p)-'last_generated_at'-'next_job_date',
   'room_scope',to_jsonb(spotless_private.plan_room_scope(p.id)),
@@ -290,11 +294,16 @@ language sql stable security definer set search_path=public,pg_temp as $$
    ) order by j.id) from jobs j where j.recurring_plan_id=p.id and j.status<>'canceled'
     and (j.occurrence_date>=p_from or (j.scheduled_start at time zone 'America/Chicago')::date>=p_from)),'[]'::jsonb))
  from recurring_plans p join properties h on h.id=p.property_id where p.id=p_plan
-$$;
+$function$;
 
-create or replace function public.preview_recurring_edit(p_plan uuid,p_first date,p_freq public.frequency,p_time time,p_pause date,p_end date,p_from date)
-returns jsonb language plpgsql security definer set search_path=public,pg_temp as $$
-declare p recurring_plans%rowtype; h properties%rowtype; j jobs%rowtype; saved public.recurring_plan_room_scopes%rowtype;
+CREATE OR REPLACE FUNCTION public.preview_recurring_edit(p_plan uuid, p_first date, p_freq frequency, p_time time without time zone, p_pause date, p_end date, p_from date)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public', 'pg_temp'
+AS $function$
+declare p recurring_plans%rowtype; h properties%rowtype; j jobs%rowtype;
+ saved public.recurring_plan_room_scopes%rowtype;
  v_price integer; v_minutes integer; v_dates date[]:='{}'; v_used date[]:='{}';
  v_date date; v_slot date; v_start timestamptz; v_reason text; v_action text;
  v_visits jsonb:='[]'; v_protected boolean; v_distance integer; v_release integer;
@@ -303,12 +312,12 @@ begin
  select * into p from recurring_plans where id=p_plan;
  select * into h from properties where id=p.property_id;
  if p.id is null or h.id is null or h.customer_id is distinct from p.customer_id or not p.active then
-  raise exception 'schedule unavailable' using errcode='40001';
+  raise exception 'schedule unavailable' using errcode='PT409';
  end if;
  if exists(select 1 from jobs where recurring_plan_id=p.id and status<>'canceled'
   and (occurrence_date>=p_from or (scheduled_start at time zone 'America/Chicago')::date>=p_from)
   and (customer_id is distinct from p.customer_id or property_id is distinct from p.property_id or service is distinct from p.service)) then
-  raise exception 'schedule ownership needs office review' using errcode='40001';
+  raise exception 'schedule ownership needs office review' using errcode='PT409';
  end if;
  if p_from is null or p_from<>(clock_timestamp() at time zone 'America/Chicago')::date+1
   or p_first is null or not isfinite(p_first) or p_first<p_from or p_first>p_from+366
@@ -320,20 +329,22 @@ begin
  end if;
  if (select count(*) from jobs where recurring_plan_id=p.id and status<>'canceled'
   and (occurrence_date>=p_from or (scheduled_start at time zone 'America/Chicago')::date>=p_from))>500 then
-  raise exception 'this schedule needs office review' using errcode='40001';
+  raise exception 'this schedule needs office review' using errcode='PT409';
  end if;
- v_price:=p.agreed_price_cents; v_minutes:=p.estimated_minutes;
  select * into saved from spotless_private.plan_room_scope(p.id);
+ v_price:=p.agreed_price_cents; v_minutes:=p.estimated_minutes;
  if p_freq<>p.freq then
+  if saved.plan_id is null then raise exception 'Review this schedule room list with the office before changing frequency' using errcode='PT409';end if;
   if not exists(select 1 from price_book_items i join price_book_rates r on r.item_id=i.id where i.active and i.service=p.service and r.freq=p_freq) then
    raise exception 'frequency unavailable for this service' using errcode='22023';
   end if;
-  if saved.plan_id is null then raise exception 'Review this schedule room list with the office before changing frequency' using errcode='40001';end if;
   select q.total_cents,q.clean_minutes into v_price,v_minutes from quote_price(p.service,p_freq,
    saved.bedrooms,saved.bathrooms,saved.half_baths,saved.kitchens,saved.living_rooms,saved.utility_rooms) q;
+  v_price:=v_price+coalesce((select sum((l->>'totalCents')::integer) from jsonb_array_elements(p.quote_extras) l),0);
+  v_minutes:=v_minutes+coalesce((select sum((l->>'cleanMinutes')::integer) from jsonb_array_elements(p.quote_extras) l),0);
  end if;
  if v_price is null or v_price<0 or v_minutes is null or v_minutes<=0 then
-  raise exception 'a current service price is required' using errcode='40001';
+  raise exception 'a current service price is required' using errcode='PT409';
  end if;
  for v_date in select d::date from generate_series(p_first::timestamp,(p_first+p.horizon_days)::timestamp,interval '1 day') d loop
   if recurring_date_matches(p_freq,p_first,v_date) and (p_end is null or v_date<=p_end)
@@ -408,5 +419,4 @@ begin
   'room_counts',case when saved.plan_id is null then null else jsonb_build_object('bedrooms',saved.bedrooms,'bathrooms',saved.bathrooms,'halfBaths',saved.half_baths,'kitchens',saved.kitchens,'livingRooms',saved.living_rooms,'utilityRooms',saved.utility_rooms) end,
   'room_scope_source',saved.source,
   'preserved_skips',coalesce((select jsonb_agg(occurrence_date order by occurrence_date) from recurring_plan_skips where plan_id=p.id and occurrence_date>=p_from),'[]'::jsonb));
-end $$;
-
+end $function$;

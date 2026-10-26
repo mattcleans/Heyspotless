@@ -3,7 +3,7 @@ begin;
 do $$
 declare u uuid[]:='{}'; c uuid; other_c uuid; h uuid; other_h uuid; k uuid; other_k uuid;
  j uuid; fresh uuid; board uuid; plan uuid; plan_first uuid; plan_next uuid; legacy uuid;
- review uuid; old_price integer; expected_price integer; changed_price integer; cadence jsonb; receipt uuid; n integer; room text; photo_kind text; path text; start_at timestamptz;
+ review uuid; old_price integer; expected_price integer; expected_minutes integer; changed_price integer; cadence jsonb; receipt uuid; n integer; room text; photo_kind text; path text; start_at timestamptz;
 begin
  for n in 1..5 loop
   u:=array_append(u,gen_random_uuid());
@@ -68,10 +68,11 @@ begin
  insert into public.jobs(customer_id,property_id,recurring_plan_id,status,service,freq,price_cents,estimated_clean_minutes)
  values(other_c,other_h,plan,'scheduled','standard','biweekly',10000,60) returning id into plan_next;
  if not exists(select 1 from public.job_room_scopes a join public.job_room_scopes b on a.job_id=plan_first and b.job_id=plan_next where a.kitchens=1 and b.kitchens=1 and b.living_rooms=0 and a.captured_at=b.captured_at) then raise exception 'Recurring occurrence silently changed its saved scope';end if;
- select total_cents into expected_price from public.quote_price('standard','weekly',1,1,0,1,0,0);
+ update public.recurring_plans set quote_extras='[{"totalCents":2500,"cleanMinutes":30}]'::jsonb where id=plan;
+ select total_cents+2500,clean_minutes+30 into expected_price,expected_minutes from public.quote_price('standard','weekly',1,1,0,1,0,0);
  select total_cents into changed_price from public.quote_price('standard','weekly',1,1,0,2,1,0);
  cadence:=public.preview_recurring_edit(plan,(clock_timestamp() at time zone 'America/Chicago')::date+15,'weekly','09:00',null,null,(clock_timestamp() at time zone 'America/Chicago')::date+1);
- if expected_price=changed_price or (cadence->>'price_cents')::integer<>expected_price or (cadence->'room_counts'->>'kitchens')::integer<>1 then raise exception 'Cadence repricing followed changed home counts';end if;
+ if expected_price=changed_price+2500 or (cadence->>'price_cents')::integer<>expected_price or (cadence->>'estimated_minutes')::integer<>expected_minutes or (cadence->'room_counts'->>'kitchens')::integer<>1 then raise exception 'Cadence repricing lost saved rooms or agreed extras';end if;
  if not exists(select 1 from public.recurring_plan_room_scopes where plan_id=plan and kitchens=1 and living_rooms=0) then raise exception 'Plan scope drifted';end if;
 
  insert into public.jobs(customer_id,property_id,status,service,freq,price_cents,estimated_clean_minutes)
