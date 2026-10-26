@@ -37,7 +37,7 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       message: invoice.status === "draft" ? "Service draft ready. No payment was taken." : "Existing service invoice confirmed. No new payment was taken." });
   } catch (error) {
     return error instanceof DraftPriceChanged
-      ? reply({ message: "The visit price changed. Refresh and review the new price before preparing a draft." }, 409)
+      ? reply({ code: "price_changed", message: "The visit price changed. Refresh and review the new price before preparing a draft." }, 409)
       : reply({ message: "The draft status could not be confirmed. Refresh this visit before trying again." }, 503);
   }
 }

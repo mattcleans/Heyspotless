@@ -16,6 +16,7 @@ export async function requestServiceDraft(visitId: string, reviewedPriceCents: n
     const row = data && typeof data === "object" ? data as Record<string, unknown> : {};
     if (!response.ok) return { confirmed: false, signIn: response.status === 401, message:
       response.status === 401 ? "Sign in to Management, then reopen this visit to check its invoice record." :
+      response.status === 409 && row.code === "price_changed" ? "The visit price changed. Refresh and review the new price before preparing a draft." :
       response.status === 409 ? "The draft was not confirmed. Refresh this visit and review its current price, saved photos and invoice records." : unconfirmed };
     if (row.confirmed !== true || row.visitId !== visitId || typeof row.invoiceId !== "string" || !isReviewId(row.invoiceId) || !["draft", "sent", "paid", "overdue"].includes(String(row.status)) || typeof row.totalCents !== "number" || !Number.isSafeInteger(row.totalCents) || row.totalCents < 0) throw new Error("Unconfirmed draft");
     return { confirmed: true, invoiceId: row.invoiceId, status: String(row.status), totalCents: row.totalCents,
