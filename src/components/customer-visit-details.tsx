@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Avatar } from "@/components/cleaner-card";
 import { VisitRefresh } from "@/components/visit-refresh";
+import { VisitRoomScopeNote } from "@/components/visit-room-scope-note";
 import { Pill } from "@/components/ui";
 import type { CleanerProfile } from "@/lib/cleaners/store";
 import { firstName } from "@/lib/cleaners/profile";
@@ -48,6 +49,8 @@ export function CustomerVisitDetails({
         {visitHeadline(visit, who)}
       </h1>
       <p className="mt-2 text-sm text-ink-2">{details.address}</p>
+      {details.roomScope && <VisitRoomScopeNote scope={details.roomScope} showCounts />}
+      {details.roomScopeUnavailable && <p className="visit-feature mt-3 text-sm">Your saved visit room list needs review. Refresh or call the office; photo completeness cannot be confirmed yet.</p>}
       <dl className="mt-4 space-y-2 text-sm">
         <div>
           <dt className="text-ink-3">
@@ -188,8 +191,7 @@ export function CustomerVisitDetails({
           <h2 className="font-semibold text-navy">Room photo updates</h2>
           {progress === null ? (
             <p className="mt-2 text-sm text-ink-2">
-              Room progress is unavailable because this home has no configured
-              rooms. Call the office to check the home details.
+              {details.roomScopeUnavailable ? "Room progress is unavailable until the office confirms the saved visit room list." : "No rooms require photos in this visit’s saved room list. Call the office if this is unexpected."}
             </p>
           ) : (
             <>

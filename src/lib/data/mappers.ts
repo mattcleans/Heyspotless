@@ -12,6 +12,7 @@ import type { Frequency, ServiceType } from "../pricing/price-book";
 import type { Cleaner, W2Terms } from "../dispatch/types";
 import type { InvoiceStatus, PaymentStatus } from "../billing/types";
 import { toCalendarDate, type CalendarDate } from "../time/zone";
+import { readVisitRoomScope } from "../service/visit-room-scope";
 import type {
   Customer,
   Invoice,
@@ -144,6 +145,7 @@ export function toJob(row: Row): Job {
 
   const firstName = strOrNull(customer, "first_name") ?? "";
   const lastName = strOrNull(customer, "last_name") ?? "";
+  const roomScope = readVisitRoomScope(row.job_room_scopes, { id: str(row, "id"), customerId: str(row, "customer_id"), propertyId: str(row, "property_id") });
 
   return {
     id: str(row, "id"),
@@ -155,8 +157,9 @@ export function toJob(row: Row): Job {
     zip: strOrNull(property, "zip") ?? "",
     service: str(row, "service") as ServiceType,
     frequency: str(row, "freq") as Frequency,
-    bedrooms: num(property, "bedrooms", 0),
-    bathrooms: num(property, "bathrooms", 0),
+    bedrooms: roomScope?.rooms.bedrooms ?? num(property, "bedrooms", 0),
+    bathrooms: roomScope?.rooms.bathrooms ?? num(property, "bathrooms", 0),
+    roomScope,
     status: str(row, "status"),
     priceCents: num(row, "price_cents", 0),
     estimatedCleanMinutes: num(row, "estimated_clean_minutes", 0),

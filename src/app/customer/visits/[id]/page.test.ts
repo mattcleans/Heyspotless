@@ -178,7 +178,7 @@ describe("client visit detail", () => {
   });
   it("does not fabricate room completion for a zero-room home", () => {
     const html = render({ roomsDone: 0, roomsTotal: 0 });
-    expect(html).toContain("no configured rooms");
+    expect(html).toContain("No rooms require photos in this visit");
     expect(html).not.toContain("0 of 0");
   });
   it("distinguishes an unavailable assigned profile from no match yet", () => {

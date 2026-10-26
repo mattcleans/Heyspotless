@@ -32,6 +32,7 @@ export interface JobFlowProps {
   jobId: string;
   initialStatus: Status;
   rooms: Room[];
+  roomScopeAvailable?: boolean;
   alreadyDone: { roomKey: string; kind: string }[];
   backupBlocked?: boolean;
   ownerId?: string | null;
@@ -43,6 +44,7 @@ export function JobFlow({
   jobId,
   initialStatus,
   rooms,
+  roomScopeAvailable = true,
   alreadyDone,
   backupBlocked = false,
   ownerId = null,
@@ -57,10 +59,12 @@ export function JobFlow({
   const [outstanding, setOutstanding] = useState<
     { label: string; missing: string[] }[] | null
   >(null);
+  const [serverScopeAvailable, setServerScopeAvailable] = useState(true);
+  const scopeAvailable = roomScopeAvailable && serverScopeAvailable;
   const [verifiedAt, setVerifiedAt] = useState(checkedAt);
   const work = useMemo<SavedWork | null>(
     () =>
-      ownerId && status !== "assigned"
+      scopeAvailable && ownerId && status !== "assigned"
         ? {
             jobId,
             ownerId,
@@ -71,7 +75,7 @@ export function JobFlow({
             scheduledAt,
           }
         : null,
-    [ownerId, status, jobId, rooms, alreadyDone, verifiedAt, scheduledAt],
+    [scopeAvailable, ownerId, status, jobId, rooms, alreadyDone, verifiedAt, scheduledAt],
   );
 
   async function start() {
@@ -85,6 +89,7 @@ export function JobFlow({
       });
       const data = (await response.json().catch(() => ({}))) as {
         started?: unknown;
+        requirementsAvailable?: unknown;
         error?: unknown;
         code?: unknown;
       };
@@ -99,6 +104,7 @@ export function JobFlow({
         return;
       }
       setStatus("in_progress");
+      if (data.requirementsAvailable === false) setServerScopeAvailable(false);
       setVerifiedAt(Date.now());
     } catch {
       setNote("Could not start the job. Check your signal and try again.");
@@ -128,6 +134,7 @@ export function JobFlow({
         error?: unknown;
         code?: unknown;
         billable?: unknown;
+        requirementsAvailable?: unknown;
         outstanding?: { label?: unknown; missing?: unknown }[];
       };
 
@@ -142,9 +149,10 @@ export function JobFlow({
       }
 
       setStatus("complete");
+      if (data.requirementsAvailable === false) setServerScopeAvailable(false);
       setVerifiedAt(Date.now());
       setOutstanding(
-        Array.isArray(data.outstanding)
+        data.requirementsAvailable === true && Array.isArray(data.outstanding)
           ? data.outstanding.map((gap) => ({
               label: typeof gap.label === "string" ? gap.label : "Room",
               missing: Array.isArray(gap.missing)
@@ -213,12 +221,12 @@ export function JobFlow({
       )}
       {status === "in_progress" && (
         <>
-          <JobCapture
+          {scopeAvailable ? <JobCapture
             jobId={jobId}
             rooms={rooms}
             alreadyDone={alreadyDone}
             ownerId={ownerId}
-          />
+          /> : <p className="visit-feature mt-4">The saved room list needs office review. Your saved photos stay on this device. You can still finish the visit.</p>}
           <button
             type="button"
             onClick={() => void finish()}
@@ -252,12 +260,12 @@ export function JobFlow({
                 : "This visit is finished. Check the photo checklist below for saved photos and any remaining uploads."}
             </p>
           )}
-          <JobCapture
+          {scopeAvailable ? <JobCapture
             jobId={jobId}
             rooms={rooms}
             alreadyDone={alreadyDone}
             ownerId={ownerId}
-          />
+          /> : <p className="visit-feature mt-4">The visit is finished. Ask the office to check the saved room list before adding photos; your saved copies remain on this device.</p>}
         </div>
       )}
     </>

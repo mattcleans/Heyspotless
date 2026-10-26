@@ -3,6 +3,7 @@ import { getRepository } from "@/lib/data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { PhotoReceiptError, ServiceStore } from "@/lib/service/store";
 import { invoiceReadiness } from "@/lib/service/completion";
+import { roomsForVisit } from "@/lib/service/visit-room-scope";
 
 /**
  * Record a photo the phone has already uploaded to storage.
@@ -60,10 +61,10 @@ export async function POST(request: NextRequest) {
   // What is still outstanding, so the queue can tell her rather than leaving
   // her to count.
   const job = await repo.getJob(jobId);
-  const home = job ? await repo.getProperty(job.propertyId) : null;
+  const counts = job ? roomsForVisit(job) : null;
   const photos = await store.photosFor(jobId);
-  const readiness = job && home
-    ? invoiceReadiness(job.status, home.rooms, photos)
+  const readiness = job && counts
+    ? invoiceReadiness(job.status, counts, photos)
     : { ready: false as const, reason: "not_complete" as const };
 
   return NextResponse.json({
@@ -74,6 +75,7 @@ export async function POST(request: NextRequest) {
     kind,
     storagePath,
     billable: readiness.ready,
+    requirementsAvailable: counts !== null,
     outstanding:
       readiness.ready || readiness.reason !== "photos_outstanding"
         ? []

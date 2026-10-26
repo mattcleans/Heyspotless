@@ -79,6 +79,8 @@ export interface Property {
  * DispatchJob so it can be handed straight to the engine.
  */
 export interface Job extends DispatchJob {
+  /** Saved independently from the home's editable room counts. */
+  roomScope?: import("@/lib/service/visit-room-scope").VisitRoomScope | null;
   customerId: string;
   customerName: string;
   propertyId: string;
