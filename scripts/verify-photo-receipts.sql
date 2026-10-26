@@ -45,7 +45,8 @@ begin
  if id1 is null or id1 is distinct from id2 or (select count(*) from public.invoices where job_id=j and kind='service')<>1 then raise exception 'Verified gate failed idempotency';end if;
  if not exists(select 1 from public.invoices where id=id1 and status='draft' and subtotal_cents=19900 and total_cents=19900) then raise exception 'Gate changed the agreed price or issued a bill';end if;
  update public.jobs set invoiced_at=null where id=j;
- if public.settle_job_invoice(j) is distinct from id1 or (select invoiced_at from public.jobs where id=j) is null then raise exception 'Existing service receipt was not reused';end if;
+ id2:=public.settle_job_invoice(j);
+ if id2 is distinct from id1 or (select invoiced_at from public.jobs where id=j) is null then raise exception 'Existing service receipt was not reused';end if;
  update public.invoices set status='void',voided_at=now() where id=id1;update public.jobs set invoiced_at=null where id=j;
  if public.settle_job_invoice(j) is not null or (select count(*) from public.invoices where job_id=j and kind='service')<>1 then raise exception 'Voided service invoice replaced';end if;
  if not exists(select 1 from public.invoices where id=fee_id and kind='reschedule_fee' and total_cents=6000 and status='sent') then raise exception 'Service gate changed the fee';end if;
