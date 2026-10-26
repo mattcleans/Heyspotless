@@ -29,14 +29,6 @@ as_super createdb "$DB"
 as_super $PSQL -d "$DB" <<'SQL'
 create schema if not exists auth;
 create schema if not exists extensions;
--- Metadata-only model of the provider-owned Storage catalog. This is only
--- the disposable verifier; deployed migrations never create Storage tables.
-create schema if not exists storage;
-create table storage.objects (
- id uuid primary key default gen_random_uuid(),bucket_id text not null,name text not null,
- unique(bucket_id,name)
-);
-
 create extension if not exists "uuid-ossp" with schema extensions;
 set search_path=public,extensions;
 
@@ -80,6 +72,19 @@ for f in supabase/migrations/*.sql; do
   as_super $PSQL -d "$DB" -f "$f"
 done
 echo "  all migrations applied"
+
+# Historical Storage migrations intentionally skip the provider-owned schema
+# on bare Postgres. Add only the metadata model after those migrations.
+as_super $PSQL -d "$DB" <<'SQL'
+-- Metadata-only model of the provider-owned Storage catalog. This is only
+-- the disposable verifier; deployed migrations never create Storage tables.
+create schema if not exists storage;
+create table storage.objects (
+ id uuid primary key default gen_random_uuid(),bucket_id text not null,name text not null,
+ unique(bucket_id,name)
+);
+
+SQL
 
 # Explicit workflow conflicts must never masquerade as transaction retries.
 as_super $PSQL -d "$DB" -f scripts/verify-stale-review-conflicts.sql
