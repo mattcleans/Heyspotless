@@ -2,7 +2,7 @@
 begin;
 do $$
 declare u uuid[]:='{}'; c uuid; other_c uuid; h uuid; other_h uuid; k uuid; other_k uuid;
- j uuid; fresh uuid; board uuid; plan uuid; plan_first uuid; plan_next uuid; legacy uuid;
+ j uuid; fresh uuid; board uuid; plan uuid; plan_first uuid; plan_next uuid; legacy uuid; booked_plan uuid; booked_job uuid; qid uuid; quote_review jsonb;
  review uuid; old_price integer; expected_price integer; expected_minutes integer; changed_price integer; cadence jsonb; receipt uuid; n integer; room text; photo_kind text; path text; start_at timestamptz;
 begin
  for n in 1..5 loop
@@ -78,6 +78,27 @@ begin
  cadence:=public.preview_recurring_edit(plan,(clock_timestamp() at time zone 'America/Chicago')::date+15,'weekly','09:00',null,null,(clock_timestamp() at time zone 'America/Chicago')::date+1);
  if expected_price=changed_price+2500 or (cadence->>'price_cents')::integer<>expected_price or (cadence->>'estimated_minutes')::integer<>expected_minutes or (cadence->'room_counts'->>'kitchens')::integer<>1 then raise exception 'Cadence repricing lost saved rooms or agreed extras';end if;
  if not exists(select 1 from public.recurring_plan_room_scopes where plan_id=plan and kitchens=1 and living_rooms=0) then raise exception 'Plan scope drifted';end if;
+
+ -- Finalizing each real recurring workflow upgrades the temporary creation
+ -- baseline to the original agreement for both the plan and first visit.
+ perform set_config('request.jwt.claim.sub',u[1]::text,true);
+ review:=gen_random_uuid();
+ perform public.review_my_booking(review,h,'standard','weekly',start_at+interval '45 days',true,'[]','SYNTHETIC recurring scope');
+ perform public.confirm_my_booking(review);
+ select plan_id,job_id into booked_plan,booked_job from spotless_private.client_booking_reviews where id=review;
+ if not exists(select 1 from public.recurring_plan_room_scopes where plan_id=booked_plan and source='client_booking' and bedrooms=4 and kitchens=2)
+  or not exists(select 1 from public.job_room_scopes where job_id=booked_job and source='client_booking' and bedrooms=4 and kitchens=2) then raise exception 'Recurring Client booking retained a temporary baseline';end if;
+ perform set_config('request.jwt.claim.sub',u[3]::text,true);
+ qid:=gen_random_uuid();
+ perform public.prepare_client_quote(qid,other_h,'standard','weekly',start_at+interval '60 days',clock_timestamp()+interval '7 days',true,'[]','SYNTHETIC quote scope');
+ quote_review:=public.publish_client_quote(qid);
+ perform set_config('request.jwt.claim.sub',u[2]::text,true);
+ quote_review:=public.decide_client_quote(qid,gen_random_uuid(),(quote_review->>'version')::integer,true);
+ perform set_config('request.jwt.claim.sub',u[3]::text,true);
+ perform public.book_client_quote(qid,(quote_review->>'version')::integer);
+ select plan_id,job_id into booked_plan,booked_job from spotless_private.client_quote_terms where id=qid;
+ if not exists(select 1 from public.recurring_plan_room_scopes where plan_id=booked_plan and source='client_quote' and kitchens=2 and living_rooms=1)
+  or not exists(select 1 from public.job_room_scopes where job_id=booked_job and source='client_quote' and kitchens=2 and living_rooms=1) then raise exception 'Recurring office quote retained a temporary baseline';end if;
 
  insert into public.jobs(customer_id,property_id,status,service,freq,price_cents,estimated_clean_minutes)
  values(other_c,other_h,'scheduled','standard','one_time',10000,60) returning id into legacy;

@@ -38,9 +38,9 @@ alter table public.recurring_plan_room_scopes enable row level security;
 revoke all on public.recurring_plan_room_scopes from public,anon,authenticated,service_role;
 grant select on public.recurring_plan_room_scopes to authenticated,service_role;
 create policy recurring_plan_room_scopes_read on public.recurring_plan_room_scopes for select to authenticated using (
- public.is_admin() or (public.current_role_of()='customer' and exists(select 1 from public.recurring_plans p
-  where p.id=recurring_plan_room_scopes.plan_id and p.customer_id=recurring_plan_room_scopes.customer_id
-   and p.property_id=recurring_plan_room_scopes.property_id and p.customer_id=public.current_customer_id()))
+ -- Plans are RPC-only. Reuse the current-plan ownership predicate rather than
+ -- granting Clients direct plan-table reads merely to evaluate this policy.
+ public.can_read_recurring_change(plan_id,customer_id)
 );
 
 create function spotless_private.room_scope_values(p_home jsonb) returns integer[]
