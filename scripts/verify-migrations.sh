@@ -29,6 +29,14 @@ as_super createdb "$DB"
 as_super $PSQL -d "$DB" <<'SQL'
 create schema if not exists auth;
 create schema if not exists extensions;
+-- Metadata-only model of the provider-owned Storage catalog. This is only
+-- the disposable verifier; deployed migrations never create Storage tables.
+create schema if not exists storage;
+create table storage.objects (
+ id uuid primary key default gen_random_uuid(),bucket_id text not null,name text not null,
+ unique(bucket_id,name)
+);
+
 create extension if not exists "uuid-ossp" with schema extensions;
 set search_path=public,extensions;
 
@@ -2067,8 +2075,9 @@ begin
 
   -- Two per room, one before and one after. Every room but the last.
   for r in select unnest(array['kitchen_1','bathroom_1','living_room_1']) as k loop
-    perform record_job_photo(v_job, v_cleaner, '/p/' || r.k || '/b', 'before', r.k);
-    perform record_job_photo(v_job, v_cleaner, '/p/' || r.k || '/a', 'after', r.k);
+    insert into storage.objects(bucket_id,name) values('job-photos','jobs/'||v_job||'/'||r.k||'-before.jpg'),('job-photos','jobs/'||v_job||'/'||r.k||'-after.jpg');
+    perform record_job_photo(v_job, v_cleaner, 'jobs/'||v_job||'/'||r.k||'-before.jpg', 'before', r.k);
+    perform record_job_photo(v_job, v_cleaner, 'jobs/'||v_job||'/'||r.k||'-after.jpg', 'after', r.k);
   end loop;
 
   if settle_job_invoice(v_job) is not null then v_fail := v_fail+1;
@@ -2076,14 +2085,15 @@ begin
 
   -- An ISSUE photo is extra evidence, never a substitute: a picture of a stain
   -- is not a picture of a clean room.
-  perform record_job_photo(v_job, v_cleaner, '/p/bed/i', 'issue', 'bedroom_1');
-  perform record_job_photo(v_job, v_cleaner, '/p/bed/b', 'before', 'bedroom_1');
+  insert into storage.objects(bucket_id,name) values('job-photos','jobs/'||v_job||'/bedroom_1-issue.jpg'),('job-photos','jobs/'||v_job||'/bedroom_1-before.jpg'),('job-photos','jobs/'||v_job||'/bedroom_1-after.jpg');
+  perform record_job_photo(v_job, v_cleaner, 'jobs/'||v_job||'/bedroom_1-issue.jpg', 'issue', 'bedroom_1');
+  perform record_job_photo(v_job, v_cleaner, 'jobs/'||v_job||'/bedroom_1-before.jpg', 'before', 'bedroom_1');
   if settle_job_invoice(v_job) is not null then v_fail := v_fail+1;
     raise warning 'an issue photo stood in for an after'; end if;
 
   -- THE LAST PHOTO RAISES THE INVOICE, from the photo path rather than the
   -- completion path -- which is the whole reason the gate is checked on both.
-  perform record_job_photo(v_job, v_cleaner, '/p/bed/a', 'after', 'bedroom_1');
+  perform record_job_photo(v_job, v_cleaner, 'jobs/'||v_job||'/bedroom_1-after.jpg', 'after', 'bedroom_1');
   select id into v_invoice from invoices where job_id = v_job;
   if v_invoice is null then v_fail := v_fail+1;
     raise warning 'the final photo did not raise the invoice'; end if;
@@ -2093,7 +2103,7 @@ begin
     raise warning 'the invoice is for %, want the job price 17000', v_count; end if;
 
   -- Never twice. A retrying offline queue must not bill a customer again.
-  perform record_job_photo(v_job, v_cleaner, '/p/bed/a2', 'after', 'bedroom_1');
+  perform record_job_photo(v_job, v_cleaner, 'jobs/'||v_job||'/bedroom_1-after.jpg', 'after', 'bedroom_1');
   v_again := settle_job_invoice(v_job);
   select count(*) into v_count from invoices where job_id = v_job;
   if v_count <> 1 then v_fail := v_fail+1;

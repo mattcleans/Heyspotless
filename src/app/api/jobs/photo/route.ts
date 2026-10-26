@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getRepository } from "@/lib/data";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { ServiceStore } from "@/lib/service/store";
+import { PhotoReceiptError, ServiceStore } from "@/lib/service/store";
 import { invoiceReadiness } from "@/lib/service/completion";
 
 /**
@@ -39,29 +39,40 @@ export async function POST(request: NextRequest) {
   const repo = await getRepository();
   const profile = await repo.getCurrentProfile();
   if (!profile) return NextResponse.json({ error: "not signed in" }, { status: 401 });
+  if (profile.role !== "cleaner") return NextResponse.json({ recorded: false, error: "Cleaner access required" }, { status: 403 });
 
   const cleaner = await repo.getCleanerByProfile(profile.id);
   if (!cleaner) return NextResponse.json({ error: "no cleaner record" }, { status: 403 });
 
   const store = new ServiceStore(createAdminClient());
-  await store.recordPhoto({
+  let photoId: string | null;
+  try { photoId = await store.recordPhoto({
     jobId,
     cleanerId: cleaner.id,
     storagePath,
     kind: kind as "before" | "after" | "issue",
     roomKey,
-  });
+  }); } catch (error) {
+    return NextResponse.json({ recorded: false, message: error instanceof PhotoReceiptError ? error.message : "The photo receipt could not be confirmed. Keep the saved copy and try again." }, { status: error instanceof PhotoReceiptError ? 409 : 503 });
+  }
+  if (!photoId) return NextResponse.json({ recorded: false, message: "The photo receipt could not be confirmed. Keep the saved copy and refresh this visit." }, { status: 409 });
 
   // What is still outstanding, so the queue can tell her rather than leaving
   // her to count.
   const job = await repo.getJob(jobId);
+  const home = job ? await repo.getProperty(job.propertyId) : null;
   const photos = await store.photosFor(jobId);
-  const readiness = job
-    ? invoiceReadiness(job.status, { bedrooms: job.bedrooms, bathrooms: job.bathrooms }, photos)
+  const readiness = job && home
+    ? invoiceReadiness(job.status, home.rooms, photos)
     : { ready: false as const, reason: "not_complete" as const };
 
   return NextResponse.json({
     recorded: true,
+    photoId,
+    jobId,
+    roomKey,
+    kind,
+    storagePath,
     billable: readiness.ready,
     outstanding:
       readiness.ready || readiness.reason !== "photos_outstanding"

@@ -105,6 +105,9 @@ jobs:
       - name: Verify unresolved payment claims survive local expiry
         run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-unresolved-payment-claims.sql
 
+      - name: Verify assigned photo receipts and invoice evidence
+        run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-photo-receipts.sql
+
       - name: Verify office payment review access
         run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-payment-review-access.sql
 
