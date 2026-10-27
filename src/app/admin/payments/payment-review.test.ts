@@ -44,6 +44,21 @@ describe("office payment list", () => {
     expect(html).not.toContain("Check payment status"); expect(html).toContain("Find this request in Stripe");
     expect(html).toContain("does not confirm that it failed");
   });
+  it.each([null, "abandoned"])("offers a confirmed manual release for missing/older receipt %s", state => {
+    const row = state ? { ...item, state: "abandoned" as const } : { ...item, providerReference: null };
+    const html = renderToStaticMarkup(createElement(PaymentReviewList, { items: [row], enabled: true, now }));
+    expect(html).toContain("found no charge or payment");
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Release request<\/button>/);
+  });
+  it("waits 30 minutes before offering to release a request with no receipt", () => {
+    const row = { ...item, providerReference: null, createdAt: "2026-10-25T15:45:00Z" };
+    const html = renderToStaticMarkup(createElement(PaymentReviewList, { items: [row], enabled: true, now }));
+    expect(html).not.toContain("Release request"); expect(html).toContain("30 minutes after it started");
+  });
+  it("never offers release for a request a status check can answer", () => {
+    const html = renderToStaticMarkup(createElement(PaymentReviewList, { items: [item], enabled: true, now }));
+    expect(html).not.toContain("Release request");
+  });
   it("keeps status checks inactive when billing is off", () => {
     const html = renderToStaticMarkup(createElement(PaymentReviewList, { items: [item], enabled: false, now }));
     expect(html).toContain('disabled=""');

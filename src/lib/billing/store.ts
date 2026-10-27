@@ -322,6 +322,27 @@ export class BillingStore {
   }
 
   /**
+   * Release a claim reconciliation cannot answer, after Management confirmed
+   * in Stripe that nothing was charged. The database re-checks the actor and
+   * refuses a claim that is too recent or still has a provider reference.
+   */
+  async releaseUnconfirmedPaymentOperation(
+    operationId: string,
+    actorProfileId: string,
+  ): Promise<{ released: boolean; reason: string | null }> {
+    const { data, error } = await this.db.rpc("release_unconfirmed_payment_operation", {
+      p_operation_id: operationId,
+      p_actor_profile_id: actorProfileId,
+    });
+    if (error) throw new Error(`releaseUnconfirmedPaymentOperation: ${error.message}`);
+    const result = (data ?? {}) as { released?: unknown; reason?: unknown };
+    return {
+      released: result.released === true,
+      reason: typeof result.reason === "string" ? result.reason : null,
+    };
+  }
+
+  /**
    * Close a failed attempt by the Stripe object it was made against.
    *
    * Only ever called when Stripe has told us the attempt is over. An attempt

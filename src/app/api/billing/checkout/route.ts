@@ -13,6 +13,7 @@ import {
 } from "@/lib/billing/gateway";
 import { BillChangedError, BillingError } from "@/lib/billing/types";
 import { requestedTipCents } from "@/lib/billing/tip-input";
+import { isDefiniteStripeRefusal } from "@/lib/billing/stripe-errors";
 import { isBillingEnabled } from "@/lib/stripe/env";
 import { invoiceChargeDescription } from "@/lib/brand";
 import { createClient } from "@/lib/supabase/server";
@@ -254,6 +255,13 @@ export async function POST(request: NextRequest) {
       idempotencyKey: providerKey,
     });
   } catch (error) {
+    if (isDefiniteStripeRefusal(error)) {
+      // Stripe refused before creating a session, so nothing can be paid
+      // against this claim. Release it rather than leaving the bill blocked.
+      await store.resolvePaymentOperation(providerKey, "failed", "Stripe refused Checkout creation");
+      console.error("Checkout creation refused", error instanceof Error ? error.name : "unknown");
+      return NextResponse.json({ status: "payment_unavailable", message: "Payment could not be started. No payment was taken. Try again later or contact the office." }, { status: 502 });
+    }
     // A lost response can follow a successful session creation. Keep the
     // claim until the provider outcome is confirmed; never label it failed.
     console.error("Checkout creation could not be confirmed", error instanceof Error ? error.name : "unknown");
