@@ -384,16 +384,11 @@ export class BillingStore {
       .eq("state", "open");
     if (error) throw new Error(`invoiceIdsWithOpenCollection: ${error.message}`);
 
-    const now = Date.now();
     const open = new Set<string>();
     for (const row of (data ?? []) as Record<string, unknown>[]) {
       const invoiceId = row["invoice_id"];
-      const expiresAt = row["expires_at"];
       if (typeof invoiceId !== "string") continue;
-      // An expired attempt is not in flight. It still blocks a NEW attempt
-      // until reconciled (begin_payment_operation abandons it), but it must
-      // not make the sweep skip an invoice for ever.
-      if (typeof expiresAt === "string" && new Date(expiresAt).getTime() <= now) continue;
+      // A local deadline cannot prove that the provider stopped processing.
       open.add(invoiceId);
     }
     return open;

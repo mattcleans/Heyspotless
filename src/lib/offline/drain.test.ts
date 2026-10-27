@@ -34,9 +34,9 @@ function photo(overrides: Partial<store.StoredPhoto> = {}): store.StoredPhoto {
     ...overrides,
   };
 }
-const recorded = () =>
+const recorded = (_input: RequestInfo | URL, init?: RequestInit) =>
   Promise.resolve(
-    new Response(JSON.stringify({ recorded: true }), { status: 200 }),
+    new Response(JSON.stringify({ recorded: true, photoId: "SYNTHETIC-photo", ...JSON.parse(String(init?.body ?? "{}")) }), { status: 200 }),
   );
 beforeEach(() => {
   vi.stubGlobal("indexedDB", new IDBFactory());
@@ -177,7 +177,7 @@ describe("upload settlement", () => {
     expect(await store.listOutstanding()).toEqual([]);
   });
 
-  it.each([401, 500])(
+  it.each([401, 409, 500])(
     "keeps photos when recording returns %s",
     async (status) => {
       vi.mocked(fetch).mockResolvedValue(new Response("{}", { status }));
@@ -192,7 +192,7 @@ describe("upload settlement", () => {
     },
   );
 
-  it.each(["{}", "<html>Sign in</html>"])(
+  it.each(["{}", '{"recorded":true}', '{"recorded":true,"photoId":"wrong","jobId":"other"}', "<html>Sign in</html>"])(
     "keeps photos after an unconfirmed successful response %s",
     async (body) => {
       vi.mocked(fetch).mockResolvedValue(new Response(body, { status: 200 }));

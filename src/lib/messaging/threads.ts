@@ -26,6 +26,9 @@ export interface InboxMessage {
   leadId: string | null;
   fromAddress: string | null;
   toAddress: string | null;
+  channel?: "sms" | "email" | "in_app";
+  providerId?: string | null;
+  failedReason?: string | null;
   /** Display names, resolved by the caller's query. */
   customerName?: string | null;
   cleanerName?: string | null;

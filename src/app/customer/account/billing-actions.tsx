@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { formatCents } from "@/lib/money";
+import { PaymentSessionError, startSession, uncertainPayment } from "./payment-session";
 
 /**
  * The two buttons that talk to Stripe.
@@ -11,36 +12,23 @@ import { formatCents } from "@/lib/money";
  * out of our DOM, our logs and our PCI scope entirely.
  */
 
-type State = { status: "idle" | "working" } | { status: "error"; message: string };
+type State = { status: "idle" | "working" } | { status: "error"; error: PaymentSessionError };
 
-async function startSession(path: string, body: unknown): Promise<string> {
-  const response = await fetch(path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-
-  const payload: unknown = await response.json().catch(() => ({}));
-  const data = (payload ?? {}) as { url?: unknown; error?: unknown; message?: unknown };
-
-  if (!response.ok) {
-    // The checkout route answers 409 when a payment for this invoice is
-    // already in flight, or when it turns out to have been paid already —
-    // both carry a sentence written for the customer rather than a code.
-    // Showing "Something went wrong" for either would be a lie, and the
-    // obvious response to it is to press the button again.
-    const message =
-      typeof data.message === "string"
-        ? data.message
-        : typeof data.error === "string"
-          ? data.error
-          : "Something went wrong.";
-    throw new Error(message);
-  }
-  if (typeof data.url !== "string") {
-    throw new Error("Stripe did not return a payment page.");
-  }
-  return data.url;
+export function PaymentSessionNotice({ error }: { error: PaymentSessionError }) {
+  const action = error.recovery === "office"
+    ? { href: "tel:+14692800397", label: "Call the office" }
+    : error.recovery === "sign_in"
+      ? { href: "/login?next=%2Fcustomer%2Faccount", label: "Sign in" }
+      : { href: "/customer/account", label: "Refresh Account" };
+  return (
+    <div role="alert" className="mt-2 max-w-sm text-sm text-ink-2">
+      <p>{error.message}</p>
+      {/* A full navigation re-reads the account instead of preserving its old balance. */}
+      <a href={action.href} className="mt-1 inline-flex min-h-11 items-center rounded-lg px-2 font-semibold text-navy underline underline-offset-4">
+        {action.label}
+      </a>
+    </div>
+  );
 }
 
 export function PayInvoiceButton({
@@ -65,7 +53,7 @@ export function PayInvoiceButton({
         saveCard: !hasCard,
       });
     } catch (error) {
-      setState({ status: "error", message: (error as Error).message });
+      setState({ status: "error", error: error instanceof PaymentSessionError ? error : uncertainPayment() });
     }
   }
 
@@ -74,13 +62,13 @@ export function PayInvoiceButton({
       <button
         type="button"
         onClick={pay}
-        disabled={state.status === "working"}
+        disabled={state.status !== "idle"}
         className="min-h-11 rounded-lg bg-navy px-3.5 py-2 text-sm font-semibold text-white transition-colors hover:bg-navy-deep disabled:opacity-50"
       >
         {state.status === "working" ? "Opening…" : `Pay ${formatCents(balanceCents)}`}
       </button>
       {state.status === "error" ? (
-        <p role="alert" className="mt-1.5 text-xs text-bad">{state.message}</p>
+        <PaymentSessionNotice error={state.error} />
       ) : null}
     </div>
   );
@@ -101,7 +89,7 @@ export function SaveCardButton({
     try {
       window.location.href = await startSession("/api/billing/save-card", { autopay });
     } catch (error) {
-      setState({ status: "error", message: (error as Error).message });
+      setState({ status: "error", error: error instanceof PaymentSessionError ? error : uncertainPayment() });
     }
   }
 
@@ -128,14 +116,14 @@ export function SaveCardButton({
       <button
         type="button"
         onClick={save}
-        disabled={state.status === "working"}
-        className="mt-3 rounded-lg border border-line bg-surface-2 px-3.5 py-2 text-sm font-semibold text-navy transition-colors hover:bg-sunk disabled:opacity-50"
+        disabled={state.status !== "idle"}
+        className="mt-3 min-h-11 rounded-lg border border-line bg-surface-2 px-3.5 py-2 text-sm font-semibold text-navy transition-colors hover:bg-sunk disabled:opacity-50"
       >
         {state.status === "working" ? "Opening…" : hasCard ? "Replace card" : "Add a card"}
       </button>
 
       {state.status === "error" ? (
-        <p className="mt-1.5 text-xs text-bad">{state.message}</p>
+        <PaymentSessionNotice error={state.error} />
       ) : null}
     </div>
   );

@@ -17,6 +17,7 @@ const groups: {
       { href: "/admin/dispatch", label: "Matching", icon: "people" },
       { href: "/admin/cleaner-requests", label: "Cleaner requests", icon: "people" },
       { href: "/admin/cancellations", label: "Cancellations", icon: "calendar" },
+      { href: "/admin/payments", label: "Payment review", icon: "account" },
       { href: "/admin/inbox", label: "Inbox", icon: "message" },
     ],
   },

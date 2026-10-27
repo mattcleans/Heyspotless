@@ -162,6 +162,7 @@ export default async function AutomationPage() {
             Payment activation is a separate launch step. This screen does not
             enable billing or charge a customer.
           </p>
+          <Link href="/admin/payments" className="secondary-action mt-5">Review unresolved payments</Link>
         </section>
         <section className="card p-6">
           <h2 className="text-lg font-semibold text-navy">
