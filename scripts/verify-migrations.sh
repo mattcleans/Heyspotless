@@ -73,6 +73,20 @@ for f in supabase/migrations/*.sql; do
 done
 echo "  all migrations applied"
 
+# Historical Storage migrations intentionally skip the provider-owned schema
+# on bare Postgres. Add only the metadata model after those migrations.
+as_super $PSQL -d "$DB" <<'SQL'
+-- Metadata-only model of the provider-owned Storage catalog. This is only
+-- the disposable verifier; deployed migrations never create Storage tables.
+create schema if not exists storage;
+create table storage.objects (
+ id uuid primary key default gen_random_uuid(),bucket_id text not null,name text not null,
+ archived_at timestamptz,is_delete_marker boolean not null default false,
+ unique(bucket_id,name)
+);
+
+SQL
+
 # Explicit workflow conflicts must never masquerade as transaction retries.
 as_super $PSQL -d "$DB" -f scripts/verify-stale-review-conflicts.sql
 
@@ -1047,17 +1061,23 @@ begin
   if v_op.outcome <> 'blocked' then v_fail := v_fail+1;
     raise warning 'Checkout was allowed alongside an off-session charge'; end if;
 
-  -- A DEAD PROCESS must not hold the invoice for ever.
+  -- A local deadline cannot prove that a provider request failed.
   insert into invoices (customer_id, status, subtotal_cents, total_cents)
     values (v_cust, 'sent', 17000, 17000) returning id into v_other;
   perform begin_payment_operation(v_other, 'checkout', 'checkout:z:17000:0', 17000, 1);
   perform pg_sleep(1.2);
   select * into v_op from begin_payment_operation(v_other, 'autocharge', 'autocharge:z:1', 17000);
-  if v_op.outcome <> 'started' then v_fail := v_fail+1;
-    raise warning 'an expired attempt still blocked the invoice (%)', v_op.outcome; end if;
+  if v_op.outcome <> 'blocked' then v_fail := v_fail+1;
+    raise warning 'an expired unresolved attempt allowed another collector (%)', v_op.outcome; end if;
   if not exists (select 1 from payment_operations
-                 where idempotency_key = 'checkout:z:17000:0' and state = 'abandoned') then
-    v_fail := v_fail+1; raise warning 'the expired attempt was not marked abandoned'; end if;
+                 where idempotency_key = 'checkout:z:17000:0' and state = 'open') then
+    v_fail := v_fail+1; raise warning 'the expired unresolved attempt was lost'; end if;
+  if (open_payment_operation(v_other)).id is null then v_fail := v_fail+1;
+    raise warning 'reconciliation hid the expired unresolved attempt'; end if;
+  -- Fixture: provider has now confirmed that no money can move.
+  perform resolve_payment_operation('checkout:z:17000:0','failed','Fixture confirmed expired Checkout');
+  select * into v_op from begin_payment_operation(v_other,'autocharge','autocharge:z:1',17000);
+  if v_op.outcome <> 'started' then v_fail := v_fail+1; raise warning 'confirmed terminal attempt did not release invoice'; end if;
 
   -- The database, not just the code, enforces one open attempt per invoice.
   begin
@@ -2061,8 +2081,9 @@ begin
 
   -- Two per room, one before and one after. Every room but the last.
   for r in select unnest(array['kitchen_1','bathroom_1','living_room_1']) as k loop
-    perform record_job_photo(v_job, v_cleaner, '/p/' || r.k || '/b', 'before', r.k);
-    perform record_job_photo(v_job, v_cleaner, '/p/' || r.k || '/a', 'after', r.k);
+    insert into storage.objects(bucket_id,name) values('job-photos','jobs/'||v_job||'/'||r.k||'-before.jpg'),('job-photos','jobs/'||v_job||'/'||r.k||'-after.jpg');
+    perform record_job_photo(v_job, v_cleaner, 'jobs/'||v_job||'/'||r.k||'-before.jpg', 'before', r.k);
+    perform record_job_photo(v_job, v_cleaner, 'jobs/'||v_job||'/'||r.k||'-after.jpg', 'after', r.k);
   end loop;
 
   if settle_job_invoice(v_job) is not null then v_fail := v_fail+1;
@@ -2070,14 +2091,15 @@ begin
 
   -- An ISSUE photo is extra evidence, never a substitute: a picture of a stain
   -- is not a picture of a clean room.
-  perform record_job_photo(v_job, v_cleaner, '/p/bed/i', 'issue', 'bedroom_1');
-  perform record_job_photo(v_job, v_cleaner, '/p/bed/b', 'before', 'bedroom_1');
+  insert into storage.objects(bucket_id,name) values('job-photos','jobs/'||v_job||'/bedroom_1-issue.jpg'),('job-photos','jobs/'||v_job||'/bedroom_1-before.jpg'),('job-photos','jobs/'||v_job||'/bedroom_1-after.jpg');
+  perform record_job_photo(v_job, v_cleaner, 'jobs/'||v_job||'/bedroom_1-issue.jpg', 'issue', 'bedroom_1');
+  perform record_job_photo(v_job, v_cleaner, 'jobs/'||v_job||'/bedroom_1-before.jpg', 'before', 'bedroom_1');
   if settle_job_invoice(v_job) is not null then v_fail := v_fail+1;
     raise warning 'an issue photo stood in for an after'; end if;
 
   -- THE LAST PHOTO RAISES THE INVOICE, from the photo path rather than the
   -- completion path -- which is the whole reason the gate is checked on both.
-  perform record_job_photo(v_job, v_cleaner, '/p/bed/a', 'after', 'bedroom_1');
+  perform record_job_photo(v_job, v_cleaner, 'jobs/'||v_job||'/bedroom_1-after.jpg', 'after', 'bedroom_1');
   select id into v_invoice from invoices where job_id = v_job;
   if v_invoice is null then v_fail := v_fail+1;
     raise warning 'the final photo did not raise the invoice'; end if;
@@ -2087,7 +2109,7 @@ begin
     raise warning 'the invoice is for %, want the job price 17000', v_count; end if;
 
   -- Never twice. A retrying offline queue must not bill a customer again.
-  perform record_job_photo(v_job, v_cleaner, '/p/bed/a2', 'after', 'bedroom_1');
+  perform record_job_photo(v_job, v_cleaner, 'jobs/'||v_job||'/bedroom_1-after.jpg', 'after', 'bedroom_1');
   v_again := settle_job_invoice(v_job);
   select count(*) into v_count from invoices where job_id = v_job;
   if v_count <> 1 then v_fail := v_fail+1;

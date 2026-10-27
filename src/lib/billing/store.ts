@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AutochargeCandidate } from "./autocharge";
 import type { BillingTransition } from "./events";
 import type { RefundKind, RefundStatus } from "./types";
+import { BillChangedError } from "./types";
 
 /** Which surface a collection attempt came from. */
 export type PaymentOperationChannel = "checkout" | "autocharge";
@@ -255,15 +256,23 @@ export class BillingStore {
     channel: PaymentOperationChannel;
     idempotencyKey: string;
     amountCents: number;
+    /** Balance reviewed by the caller, before any optional Checkout tip. */
+    expectedBalanceCents: number;
+    expectedCustomerId: string;
+    tipCents?: number;
     ttlSeconds?: number;
   }): Promise<PaymentOperation> {
-    const { data, error } = await this.db.rpc("begin_payment_operation", {
+    const { data, error } = await this.db.rpc("begin_reviewed_payment_operation", {
       p_invoice_id: args.invoiceId,
       p_channel: args.channel,
       p_idempotency_key: args.idempotencyKey,
       p_amount_cents: args.amountCents,
+      p_expected_balance_cents: args.expectedBalanceCents,
+      p_expected_customer_id: args.expectedCustomerId,
+      p_tip_cents: args.tipCents ?? 0,
       p_ttl_seconds: args.ttlSeconds ?? null,
     });
+    if (error?.code === "PT409") throw new BillChangedError();
     if (error) throw new Error(`beginPaymentOperation: ${error.message}`);
 
     const row = Array.isArray(data) ? (data[0] as Record<string, unknown> | undefined) : null;
@@ -375,16 +384,11 @@ export class BillingStore {
       .eq("state", "open");
     if (error) throw new Error(`invoiceIdsWithOpenCollection: ${error.message}`);
 
-    const now = Date.now();
     const open = new Set<string>();
     for (const row of (data ?? []) as Record<string, unknown>[]) {
       const invoiceId = row["invoice_id"];
-      const expiresAt = row["expires_at"];
       if (typeof invoiceId !== "string") continue;
-      // An expired attempt is not in flight. It still blocks a NEW attempt
-      // until reconciled (begin_payment_operation abandons it), but it must
-      // not make the sweep skip an invoice for ever.
-      if (typeof expiresAt === "string" && new Date(expiresAt).getTime() <= now) continue;
+      // A local deadline cannot prove that the provider stopped processing.
       open.add(invoiceId);
     }
     return open;

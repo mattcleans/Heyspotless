@@ -1,6 +1,32 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { describe, expect, it } from "vitest";
 import { BillingStore } from "./store";
+import { BillChangedError } from "./types";
+
+describe("reviewed payment claim", () => {
+  it("keeps an open operation in the sweep hold set after its local deadline", async () => {
+    const query = { select: () => query, in: () => query, eq: async () => ({ data: [{ invoice_id: "expired", expires_at: "2000-01-01T00:00:00Z" }, { invoice_id: "current", expires_at: "2100-01-01T00:00:00Z" }], error: null }) };
+    const db = { from: () => query } as unknown as SupabaseClient;
+    expect(await new BillingStore(db).invoiceIdsWithOpenCollection(["expired", "current"])).toEqual(new Set(["expired", "current"]));
+  });
+  it("sends the reviewed owner and balance separately from an additional tip", async () => {
+    const { db, calls } = fakeRpc(() => ({ data: [{ outcome: "started", operation_id: "op", channel: "checkout", idempotency_key: "key", stripe_object_id: null, stripe_object_kind: null, redirect_url: null, amount_cents: 19000 }], error: null }));
+    const result = await new BillingStore(db).beginPaymentOperation({ invoiceId: "invoice", channel: "checkout", idempotencyKey: "key", amountCents: 19000, expectedBalanceCents: 17000, expectedCustomerId: "customer", tipCents: 2000, ttlSeconds: 900 });
+    expect(result).toMatchObject({ outcome: "started", amountCents: 19000 });
+    expect(calls).toEqual([{ fn: "begin_reviewed_payment_operation", args: { p_invoice_id: "invoice", p_channel: "checkout", p_idempotency_key: "key", p_amount_cents: 19000, p_expected_balance_cents: 17000, p_expected_customer_id: "customer", p_tip_cents: 2000, p_ttl_seconds: 900 } }]);
+  });
+  it("maps a changed bill to a safe review message without private database text", async () => {
+    const { db } = fakeRpc(() => ({ data: null, error: { code: "PT409", message: "private database detail" } }));
+    const claim = new BillingStore(db).beginPaymentOperation({ invoiceId: "invoice", channel: "checkout", idempotencyKey: "key", amountCents: 17000, expectedBalanceCents: 17000, expectedCustomerId: "customer" });
+    await expect(claim).rejects.toBeInstanceOf(BillChangedError);
+    await expect(claim).rejects.toThrow("Refresh Account");
+    await expect(claim).rejects.not.toThrow("private database detail");
+  });
+  it("preserves genuine database failures as failures", async () => {
+    const { db } = fakeRpc(() => ({ data: null, error: { code: "40001", message: "serialization failure" } }));
+    await expect(new BillingStore(db).beginPaymentOperation({ invoiceId: "invoice", channel: "checkout", idempotencyKey: "key", amountCents: 17000, expectedBalanceCents: 17000, expectedCustomerId: "customer" })).rejects.not.toBeInstanceOf(BillChangedError);
+  });
+});
 
 // --- cards ----------------------------------------------------------------
 

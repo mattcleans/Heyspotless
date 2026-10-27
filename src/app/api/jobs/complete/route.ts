@@ -53,9 +53,10 @@ export async function POST(request: NextRequest) {
   }
 
   const job = await repo.getJob(jobId);
+  const home = job ? await repo.getProperty(job.propertyId) : null;
   const photos = await store.photosFor(jobId);
-  const readiness = job
-    ? invoiceReadiness("complete", { bedrooms: job.bedrooms, bathrooms: job.bathrooms }, photos)
+  const readiness = job && home
+    ? invoiceReadiness("complete", home.rooms, photos)
     : { ready: false as const, reason: "not_complete" as const };
 
   return NextResponse.json({

@@ -15,6 +15,10 @@ export class BackupApprovalRequired extends Error {
   constructor() { super("The client must approve this backup before work starts. Refresh this visit or contact the office."); }
 }
 
+export class PhotoReceiptError extends Error {
+  constructor() { super("The photo could not be confirmed for this visit. Keep the saved copy and refresh the visit or contact the office."); }
+}
+
 export class ServiceStore {
   constructor(private readonly db: SupabaseClient) {}
 
@@ -73,6 +77,7 @@ export class ServiceStore {
       p_kind: input.kind,
       p_room_key: input.roomKey,
     });
+    if (error && ["42501", "22023", "PPH01"].includes(error.code)) throw new PhotoReceiptError();
     if (error) throw new Error(`recordPhoto: ${error.message}`);
     return typeof data === "string" ? data : null;
   }

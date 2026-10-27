@@ -19,9 +19,10 @@ begin
     insert into job_assignments(job_id,cleaner_id,payout_cents) values(v_job,v_cleaner,6965);
     perform start_job(v_job,v_cleaner);
     foreach room in array array['kitchen_1','bathroom_1','living_room_1','bedroom_1'] loop
-      perform record_job_photo(v_job,v_cleaner,'synthetic/'||v_job||'/'||room||'/before','before',room);
+      insert into storage.objects(bucket_id,name) values('job-photos','jobs/'||v_job||'/'||room||'-before.jpg'),('job-photos','jobs/'||v_job||'/'||room||'-after.jpg');
+      perform record_job_photo(v_job,v_cleaner,'jobs/'||v_job||'/'||room||'-before.jpg','before',room);
       if n<>2 or room<>'bedroom_1' then
-        perform record_job_photo(v_job,v_cleaner,'synthetic/'||v_job||'/'||room||'/after','after',room);
+        perform record_job_photo(v_job,v_cleaner,'jobs/'||v_job||'/'||room||'-after.jpg','after',room);
       end if;
     end loop;
     if exists(select 1 from invoices where job_id=v_job) then raise exception 'In-progress visit invoiced'; end if;
@@ -33,14 +34,14 @@ begin
     select completed_at into v_completed from jobs where id=v_job;
     if n=2 then
       if exists(select 1 from invoices where job_id=v_job) then raise exception 'Missing after photo did not block billing'; end if;
-      perform record_job_photo(v_job,v_cleaner,'synthetic/'||v_job||'/bedroom_1/after','after','bedroom_1');
+      perform record_job_photo(v_job,v_cleaner,'jobs/'||v_job||'/bedroom_1-after.jpg','after','bedroom_1');
     end if;
     select id into v_invoice from invoices where job_id=v_job;
     if v_invoice is null then raise exception 'Invoice missing for ordering %',n; end if;
     if not exists(select 1 from invoices where id=v_invoice and total_cents=19900 and subtotal_cents=19900) then raise exception 'Invoice changed agreed job price'; end if;
     if not exists(select 1 from jobs where id=v_job and status='complete' and invoiced_at is not null) then raise exception 'Invoice timestamp or completion missing'; end if;
     perform complete_job(v_job,v_cleaner);
-    perform record_job_photo(v_job,v_cleaner,'synthetic/retry','after','bedroom_1');
+    perform record_job_photo(v_job,v_cleaner,'jobs/'||v_job||'/bedroom_1-after.jpg','after','bedroom_1');
     select count(*) into v_count from invoices where job_id=v_job;
     if v_count<>1 or (select completed_at from jobs where id=v_job) is distinct from v_completed then raise exception 'Retry duplicated invoice or moved completion'; end if;
   end loop;

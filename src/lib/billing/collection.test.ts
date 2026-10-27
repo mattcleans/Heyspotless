@@ -44,7 +44,7 @@ function ledger(now = () => Date.now()): Ledger {
 
   const openFor = (invoiceId: string) =>
     operations.find(
-      (o) => o.invoiceId === invoiceId && o.state === "open" && o.expiresAt > now(),
+      (o) => o.invoiceId === invoiceId && o.state === "open",
     ) ?? null;
 
   const asOperation = (
@@ -68,11 +68,7 @@ function ledger(now = () => Date.now()): Ledger {
       idempotencyKey: string;
       amountCents: number;
     }): Promise<PaymentOperation> {
-      // Expire anything nobody came back for, as 0012 does.
-      for (const row of operations) {
-        if (row.state === "open" && row.expiresAt <= now()) row.state = "abandoned";
-      }
-
+      // A local deadline cannot close an unresolved provider attempt.
       const open = openFor(args.invoiceId);
       if (open) {
         return asOperation(open, open.idempotencyKey === args.idempotencyKey ? "existing" : "blocked");
@@ -164,6 +160,8 @@ describe("one open attempt per invoice", () => {
       channel: "checkout",
       idempotencyKey: key,
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
     await l.store.attachPaymentOperation({
       idempotencyKey: key,
@@ -177,6 +175,8 @@ describe("one open attempt per invoice", () => {
       channel: "checkout",
       idempotencyKey: key,
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
 
     expect(first.outcome).toBe("started");
@@ -193,6 +193,8 @@ describe("one open attempt per invoice", () => {
       channel: "autocharge",
       idempotencyKey: "autocharge:inv-1:1",
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
 
     const checkout = await l.store.beginPaymentOperation({
@@ -200,6 +202,8 @@ describe("one open attempt per invoice", () => {
       channel: "checkout",
       idempotencyKey: checkoutKeyFor("inv-1", 17000, 0),
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
 
     expect(checkout.outcome).toBe("blocked");
@@ -215,6 +219,8 @@ describe("one open attempt per invoice", () => {
       channel: "checkout",
       idempotencyKey: checkoutKeyFor("inv-1", 17000, 0),
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
 
     const sweep = await l.store.beginPaymentOperation({
@@ -222,6 +228,8 @@ describe("one open attempt per invoice", () => {
       channel: "autocharge",
       idempotencyKey: "autocharge:inv-1:1",
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
 
     expect(sweep.outcome).toBe("blocked");
@@ -237,6 +245,8 @@ describe("one open attempt per invoice", () => {
       channel: "checkout",
       idempotencyKey: key,
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
     await l.store.resolvePaymentOperation(key, "succeeded");
 
@@ -245,13 +255,15 @@ describe("one open attempt per invoice", () => {
       channel: "checkout",
       idempotencyKey: key,
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
 
     expect(again.outcome).toBe("existing");
     expect(l.operations).toHaveLength(1);
   });
 
-  it("does not let a dead process block an invoice for ever", async () => {
+  it("keeps expired claims blocked until a provider outcome is confirmed", async () => {
     let clock = Date.now();
     const l = ledger(() => clock);
     await l.store.beginPaymentOperation({
@@ -259,6 +271,8 @@ describe("one open attempt per invoice", () => {
       channel: "checkout",
       idempotencyKey: "checkout:inv-1:17000:0",
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
 
     clock += 3_600_000;
@@ -268,8 +282,13 @@ describe("one open attempt per invoice", () => {
       channel: "autocharge",
       idempotencyKey: "autocharge:inv-1:1",
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
-    expect(later.outcome).toBe("started");
+    expect(later.outcome).toBe("blocked");
+    await l.store.resolvePaymentOperation("checkout:inv-1:17000:0", "failed");
+    const confirmed = await l.store.beginPaymentOperation({ invoiceId: "inv-1", channel: "autocharge", idempotencyKey: "autocharge:inv-1:1", amountCents: 17000, expectedBalanceCents: 17000, expectedCustomerId: "customer" });
+    expect(confirmed.outcome).toBe("started");
   });
 });
 
@@ -283,6 +302,8 @@ describe("reconciling an attempt whose outcome we never learned", () => {
       channel: "checkout",
       idempotencyKey: "checkout:inv-1:17000:0",
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
     await l.store.attachPaymentOperation({
       idempotencyKey: "checkout:inv-1:17000:0",
@@ -318,6 +339,8 @@ describe("reconciling an attempt whose outcome we never learned", () => {
       channel: "checkout",
       idempotencyKey: "checkout:inv-1:17000:0",
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
     await l.store.attachPaymentOperation({
       idempotencyKey: "checkout:inv-1:17000:0",
@@ -347,6 +370,8 @@ describe("reconciling an attempt whose outcome we never learned", () => {
       channel: "checkout",
       idempotencyKey: "checkout:inv-1:17000:0",
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
     await l.store.attachPaymentOperation({
       idempotencyKey: "checkout:inv-1:17000:0",
@@ -374,6 +399,8 @@ describe("reconciling an attempt whose outcome we never learned", () => {
       channel: "checkout",
       idempotencyKey: "checkout:inv-1:17000:0",
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
     await l.store.attachPaymentOperation({
       idempotencyKey: "checkout:inv-1:17000:0",
@@ -393,6 +420,19 @@ describe("reconciling an attempt whose outcome we never learned", () => {
     look.mockRestore();
   });
 
+  it("does not reuse an earlier page URL when Checkout is now processing", async () => {
+    const l = ledger();
+    await l.store.beginPaymentOperation({ invoiceId: "inv-1", channel: "checkout", idempotencyKey: "key", amountCents: 17000, expectedBalanceCents: 17000, expectedCustomerId: "customer" });
+    await l.store.attachPaymentOperation({ idempotencyKey: "key", stripeObjectKind: "checkout_session", stripeObjectId: "cs_1", redirectUrl: "https://checkout.stripe.test/old" });
+    const look = vi.spyOn(gateway, "lookUpCheckoutSession").mockResolvedValue({ state: "open", url: null });
+    const result = await reconcileInvoiceCollection(l.store, "inv-1");
+    expect(result.state).toBe("in_flight");
+    expect(result.redirectUrl).toBeNull();
+    expect(l.operations[0]?.state).toBe("open");
+    expect(l.payments).toHaveLength(0);
+    look.mockRestore();
+  });
+
   it("refuses to treat an unreachable Stripe as permission to charge again", async () => {
     // The most dangerous case. We asked, we could not find out, and the
     // answer to that is emphatically not "assume it failed".
@@ -402,6 +442,8 @@ describe("reconciling an attempt whose outcome we never learned", () => {
       channel: "autocharge",
       idempotencyKey: "autocharge:inv-1:1",
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
     await l.store.attachPaymentOperation({
       idempotencyKey: "autocharge:inv-1:1",
@@ -428,21 +470,25 @@ describe("reconciling an attempt whose outcome we never learned", () => {
     expect((await reconcileInvoiceCollection(l.store, "inv-1")).state).toBe("cleared");
   });
 
-  it("does not go to Stripe for an attempt that never reached it", async () => {
-    // Row written, process died before the Stripe call. No money can have
-    // moved, and there is no object to ask about.
+  it("keeps a request with no saved provider identity for review", async () => {
+    // A response may have been lost after the provider accepted the request.
+    // Missing identity is insufficient evidence to release the invoice.
     const l = ledger();
     await l.store.beginPaymentOperation({
       invoiceId: "inv-1",
       channel: "checkout",
       idempotencyKey: "checkout:inv-1:17000:0",
       amountCents: 17000,
+      expectedBalanceCents: 17000,
+      expectedCustomerId: "customer",
     });
 
     const look = vi.spyOn(gateway, "lookUpCheckoutSession");
     const result = await reconcileInvoiceCollection(l.store, "inv-1");
 
-    expect(result.state).toBe("cleared");
+    expect(result.state).toBe("in_flight");
+    expect(result.reviewRequired).toBe(true);
+    expect(result.redirectUrl).toBeNull();
     expect(look).not.toHaveBeenCalled();
     look.mockRestore();
   });
