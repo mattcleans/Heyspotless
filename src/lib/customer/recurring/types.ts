@@ -1,4 +1,6 @@
 import { isChoiceId } from "../cleaner-choice/input";
+import { validVisitRoomCounts, type VisitRoomScope } from "@/lib/service/visit-room-scope";
+import type { RoomCounts } from "@/lib/pricing/quote";
 export type RecurringFrequency = "weekly" | "biweekly" | "monthly";
 export interface ScheduleDraft {
   firstDate: string;
@@ -23,6 +25,8 @@ export interface ScheduleVisit {
   fills_date: string | null;
 }
 export interface ScheduleReview {
+  room_counts?: RoomCounts | null;
+  room_scope_source?: VisitRoomScope["source"] | null;
   plan_id: string;
   effective_from: string;
   first_date: string;
@@ -112,6 +116,9 @@ export function toScheduleReview(
   saved = false,
 ): ScheduleReview {
   const r = object(value);
+  if (r.room_counts !== undefined && r.room_counts !== null && !validVisitRoomCounts(r.room_counts)) return fail();
+  if (r.room_scope_source !== undefined && r.room_scope_source !== null && !["client_booking", "client_quote", "plan_created", "visit_created", "legacy_home"].includes(String(r.room_scope_source))) return fail();
+  if (r.room_counts !== undefined && r.room_counts !== null && r.room_scope_source == null) return fail();
   if (
     !isChoiceId(r.plan_id) ||
     !calendarDay(r.effective_from) ||
@@ -202,6 +209,7 @@ export function toScheduleReview(
   });
   return {
     plan_id: r.plan_id,
+    ...(r.room_counts === undefined ? {} : { room_counts: r.room_counts as RoomCounts | null, room_scope_source: r.room_scope_source as VisitRoomScope["source"] | null }),
     effective_from: r.effective_from,
     first_date: r.first_date,
     freq: r.freq,

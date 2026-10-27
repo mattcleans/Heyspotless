@@ -27,6 +27,7 @@ import {
   toProperty,
 } from "./mappers";
 import { continuityFor, offeredUpToFor, passedOverFor } from "../dispatch/store";
+import { VISIT_ROOM_SCOPE_SELECT } from "../service/visit-room-scope";
 
 /** Jobs in these states still need a cleaner — the dispatch board's working set. */
 const NEEDS_CLEANER = ["unscheduled", "scheduled", "dispatching"];
@@ -35,7 +36,8 @@ const JOB_SELECT = `
   id, customer_id, property_id, status, service, freq,
   scheduled_start, scheduled_end, schedule_revision, price_cents, estimated_clean_minutes,
   customers ( first_name, last_name ),
-  properties ( street, city, zip, bedrooms, bathrooms )
+  properties ( street, city, zip, bedrooms, bathrooms ),
+  job_room_scopes ( ${VISIT_ROOM_SCOPE_SELECT} )
 `;
 
 /**

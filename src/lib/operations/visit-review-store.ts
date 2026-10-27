@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { toJob } from "@/lib/data/mappers";
 import type { RoomCounts } from "@/lib/pricing/quote";
+import { VISIT_ROOM_SCOPE_SELECT } from "@/lib/service/visit-room-scope";
 import { REVIEW_LIMIT, reviewRooms, type ReviewVisit, type VisitFacts, type ReviewPhoto } from "./visit-review";
 
 type Row = Record<string, unknown>;
@@ -31,16 +32,16 @@ function relation(value: unknown): Row {
 export async function listUninvoicedVisits(db: SupabaseClient): Promise<ReviewVisit[]> {
   const { data, error } = await db.from("jobs").select(`id, customer_id, property_id, status, service, freq,
     scheduled_start, completed_at, price_cents, estimated_clean_minutes,
-    customers(first_name,last_name), properties(street,city,zip,bedrooms,bathrooms)`)
+    customers(first_name,last_name), properties(street,city,zip,bedrooms,bathrooms), job_room_scopes(${VISIT_ROOM_SCOPE_SELECT})`)
     .eq("status", "complete").is("invoiced_at", null)
     .order("completed_at", { ascending: true, nullsFirst: true }).order("id", { ascending: true }).limit(REVIEW_LIMIT);
   return rows(data, error).map(row => ({ job: toJob(row), completedAt: date(row.completed_at) }));
 }
 
 /** Caller supplies the request-scoped client after checking the admin profile. */
-export async function loadVisitFacts(db: SupabaseClient, jobId: string, counts: RoomCounts): Promise<VisitFacts> {
+export async function loadVisitFacts(db: SupabaseClient, jobId: string, counts: RoomCounts | null): Promise<VisitFacts> {
   if (!jobId) throw new Error("Visit identity is required.");
-  const keys = reviewRooms(counts).map(room => room.key);
+  const keys = counts ? reviewRooms(counts).map(room => room.key) : [];
   // Required photos are unique per room and kind. Restrict to those keys so
   // arbitrary extra records cannot crowd required evidence out of a read.
   const [timing, photos, issues, assignments, invoices] = await Promise.all([

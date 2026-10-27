@@ -57,6 +57,8 @@ beforeEach(() => {
     id,
     status: "assigned",
     propertyId: "home",
+    customerId: "client",
+    roomScope: { jobId: id, customerId: "client", propertyId: "home", rooms: { bedrooms: 1, bathrooms: 1, halfBaths: 0, kitchens: 1, livingRooms: 1, utilityRooms: 1 }, source: "client_booking", capturedAt: new Date("2026-10-01T00:00:00Z") },
     bedrooms: 1,
     bathrooms: 1,
     street: "Sample",

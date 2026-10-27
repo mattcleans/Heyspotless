@@ -74,7 +74,7 @@ const detail = (visitId = id, photoError?: string) =>
 beforeEach(() => {
   vi.clearAllMocks();
   account("admin");
-  m.job.mockResolvedValue(job);
+  m.job.mockResolvedValue({ ...job, roomScope: { jobId: id, customerId: job.customerId, propertyId: job.propertyId, rooms: { ...rooms, halfBaths: 0 }, source: "client_booking", capturedAt: new Date("2026-10-01T00:00:00Z") } });
   m.home.mockResolvedValue({ street: "Sample street", city: "Dallas", rooms });
   m.facts.mockResolvedValue(facts);
   m.queue.mockResolvedValue([]);
@@ -83,6 +83,21 @@ beforeEach(() => {
   m.booking.mockResolvedValue(null);
 });
 describe("management review screens", () => {
+  it("keeps the booked photo checklist after the home gains rooms", async () => {
+    m.home.mockResolvedValue({ rooms: { bedrooms: 3, bathrooms: 2, halfBaths: 1, kitchens: 2, livingRooms: 2, utilityRooms: 2 } });
+    const html = renderToStaticMarkup(await detail());
+    expect(html).toContain("2 required photos outstanding");
+    expect(html).toContain("confirmed booking terms");
+    expect(m.facts).toHaveBeenCalledWith({}, id, { ...rooms, halfBaths: 0 });
+  });
+  it("preserves invoice review without calling missing scope a zero-room checklist", async () => {
+    m.job.mockResolvedValue({ ...job, roomScope: null });
+    const html = renderToStaticMarkup(await detail());
+    expect(html).toContain("Saved room list needs review");
+    expect(html).not.toContain("No rooms require photos");
+    expect(html).not.toContain("Prepare service draft");
+    expect(m.facts).toHaveBeenCalledWith({}, id, null);
+  });
   it.each([null, "cleaner", "customer"])(
     "does not read management data for %s",
     async (role) => {

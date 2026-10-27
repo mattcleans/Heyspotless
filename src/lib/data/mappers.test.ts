@@ -30,6 +30,12 @@ describe("toJob", () => {
     customers: { first_name: "Bonnie", last_name: "Cornell" },
     properties: { street: "3412 Legacy Dr", city: "Plano", zip: "75024", bedrooms: 2, bathrooms: 2 },
   };
+  it("uses the saved visit counts rather than an edited home in list summaries", () => {
+    const job = toJob({ ...row, properties: { ...row.properties, bedrooms: 7, bathrooms: 4 }, job_room_scopes: {
+      job_id: row.id, customer_id: row.customer_id, property_id: row.property_id, bedrooms: 2, bathrooms: 1, half_baths: 1, kitchens: 1, living_rooms: 1, utility_rooms: 0, source: "client_booking", captured_at: "2026-10-01T00:00:00Z",
+    } });
+    expect(job.bedrooms).toBe(2);expect(job.bathrooms).toBe(1);expect(job.roomScope?.rooms.halfBaths).toBe(1);
+  });
 
   it("flattens the joined relations into one shape the engine can consume", () => {
     const job = toJob(row);
