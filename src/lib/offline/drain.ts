@@ -13,6 +13,7 @@
  */
 
 import { createClient } from "../supabase/client";
+import { fetchWithTimeout } from "../http/fetch-with-timeout";
 import { PHOTO_BUCKET } from "./bucket";
 import * as store from "./photo-store";
 import {
@@ -147,6 +148,10 @@ async function upload(photo: store.StoredPhoto): Promise<void> {
   const supabase = createClient();
   if (photo.ownerId) {
     const { data, error } = await supabase.auth.getUser();
+    // A tunnel, timeout or unavailable auth server does not invalidate her
+    // login. Keep the bytes queued without sending her through sign-in.
+    if (error && (!error.status || error.status >= 500 || error.status === 429))
+      throw new Error("session: unavailable");
     if (error || data.user?.id !== photo.ownerId)
       throw new Error("record: 401");
   }
@@ -163,7 +168,7 @@ async function upload(photo: store.StoredPhoto): Promise<void> {
     throw new Error(`storage: ${error.message}`);
   }
 
-  const response = await fetch("/api/jobs/photo", {
+  const response = await fetchWithTimeout("/api/jobs/photo", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -182,7 +187,12 @@ async function upload(photo: store.StoredPhoto): Promise<void> {
     !payload ||
     typeof payload !== "object" ||
     !("recorded" in payload) ||
-    payload.recorded !== true
+    payload.recorded !== true ||
+    !("photoId" in payload) || typeof payload.photoId !== "string" || !payload.photoId ||
+    !("jobId" in payload) || payload.jobId !== photo.jobId ||
+    !("roomKey" in payload) || payload.roomKey !== photo.roomKey ||
+    !("kind" in payload) || payload.kind !== photo.kind ||
+    !("storagePath" in payload) || payload.storagePath !== path
   ) {
     throw new Error("record: unconfirmed");
   }

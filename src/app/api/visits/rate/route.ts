@@ -1,176 +1,85 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getRepository } from "@/lib/data";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
 import { isDemoMode } from "@/lib/supabase/env";
-import { tipPassThrough } from "@/lib/billing/tips";
+import { requestedTipCents } from "@/lib/billing/tip-input";
 import { isBillingEnabled } from "@/lib/stripe/env";
 
-/**
- * Screen 7, submitted: the rating, what stood out, a private note, and a tip.
- *
- * THE TIP IS THE PART TO BE CAREFUL WITH. Three things happen, in this order,
- * and the order is the point:
- *
- *   1. The rating is recorded. It is what the customer came to do, it feeds
- *      the eligibility gate, and it must not be lost because a tip failed.
- *   2. The tip goes on the invoice, so every path that collects a balance —
- *      Checkout, the autocharge sweep — collects it. A tip that is not on the
- *      invoice by the time the sweep runs is a tip nobody ever charges for.
- *   3. The payout split is recorded: what the card costs, and what reaches
- *      her. Written together so the money always reconciles.
- *
- * WHOSE CLEAN IT IS, is answered by row-level security rather than by trusting
- * the id in the body — the ownership check reads `jobs` as the signed-in
- * customer, so a job that is not theirs simply is not there.
- */
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** Matches the chips on the screen. Anything else is somebody else's payload. */
 const HIGHLIGHTS = new Set([
-  "on_time",
-  "thorough",
-  "great_with_pets",
-  "communicated_well",
-  "went_above",
+  "on_time", "thorough", "great_with_pets", "communicated_well", "went_above",
 ]);
+const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+const TIP_ERRORS: Record<string, string> = {
+  tip_assignment_review: "Your rating was saved. Contact the office to confirm which Cleaner receives the tip.",
+  tip_no_invoice: "Your rating was saved. A tip cannot be added until this visit has a bill.",
+  tip_invoice_review: "Your rating was saved. Contact the office to review this visit’s bill before adding a tip.",
+  tip_payment_in_progress: "Your rating was saved. Finish or cancel the payment already in progress, then return to update the tip.",
+  tip_above_price: "Your rating was saved. The tip cannot be more than the clean’s price.",
+  tip_settled_review: "Your rating was saved. This Cleaner’s payout has already been settled. Contact the office to add or change a tip.",
+  tip_unavailable: "Your rating was saved, but the tip could not be added. Try again or contact the office.",
+};
 
 export async function POST(request: NextRequest) {
-  if (isDemoMode()) {
-    return NextResponse.json({ error: "rating needs a live database" }, { status: 503 });
-  }
-
+  if (isDemoMode()) return NextResponse.json({ error: "rating needs a live database" }, { status: 503 });
   const repo = await getRepository();
   const profile = await repo.getCurrentProfile();
   if (!profile) return NextResponse.json({ error: "not signed in" }, { status: 401 });
   if (profile.role !== "customer") return NextResponse.json({ error: "Client access required" }, { status: 403 });
-
   const body = await readJson(request);
-  const jobId = typeof body["jobId"] === "string" ? body["jobId"] : null;
-  const score = typeof body["score"] === "number" ? body["score"] : null;
-
-  if (!jobId || score === null || !Number.isFinite(score) || score < 1 || score > 5) {
-    return NextResponse.json({ error: "a job and a score of 1 to 5 are required" }, { status: 400 });
+  const jobId = body.jobId;
+  const score = body.score;
+  const tipCents = requestedTipCents(body.tipCents);
+  if (typeof jobId !== "string" || !UUID.test(jobId) ||
+    typeof score !== "number" || !Number.isInteger(score) || score < 1 || score > 5 || tipCents === null) {
+    return NextResponse.json({ error: "A valid visit, a whole-number rating from 1 to 5, and a nonnegative tip in whole cents are required." }, { status: 400 });
   }
-
-  // Theirs? RLS answers it: `messages_own`-style policies on jobs mean a job
-  // belonging to somebody else returns no row at all.
-  const asCustomer = await createClient();
-  const { data: owned } = await asCustomer.from("jobs").select("id").eq("id", jobId).maybeSingle();
-  if (!owned) return NextResponse.json({ error: "that clean is not yours" }, { status: 409 });
-
-  const tipCents =
-    typeof body["tipCents"] === "number" && Number.isFinite(body["tipCents"])
-      ? Math.max(0, Math.round(body["tipCents"]))
-      : 0;
-
-  const highlights = Array.isArray(body["highlights"])
-    ? (body["highlights"] as unknown[])
-        .filter((h): h is string => typeof h === "string" && HIGHLIGHTS.has(h))
-        .slice(0, HIGHLIGHTS.size)
-    : [];
-
-  const privateNote = text(body["privateNote"]);
-  const comment = text(body["comment"]);
-
-  const db = createAdminClient();
-
-  // ---- 1. the rating ------------------------------------------------------
-  const { data: ratingId, error: ratingError } = await db.rpc("record_rating_detailed", {
-    p_job_id: jobId,
-    p_score: score,
-    p_comment: comment,
-    p_highlights: highlights,
-    p_private_note: privateNote,
+  if (typeof body.requestId !== "string" || !UUID.test(body.requestId)) {
+    return NextResponse.json({ error: "Refresh this rating form before saving. Your entries have not been submitted." }, { status: 409 });
+  }
+  const highlights = Array.isArray(body.highlights)
+    ? [...new Set(body.highlights.filter((h): h is string => typeof h === "string" && HIGHLIGHTS.has(h)))] : [];
+  const billingEnabled = isBillingEnabled();
+  // The database rechecks the trusted actor and locks the owned completed visit.
+  // Its tip subtransaction commits invoice + payout together, independently of
+  // the rating outcome. No provider charge is issued by this route.
+  const { data, error } = await createAdminClient().rpc("record_client_visit_feedback_once", {
+    p_submission_id: body.requestId,
+    p_profile_id: profile.id, p_job_id: jobId, p_score: score,
+    p_comment: text(body.comment), p_highlights: highlights,
+    p_private_note: text(body.privateNote), p_tip_cents: billingEnabled ? tipCents : 0,
   });
-
-  if (ratingError) {
-    console.error("record_rating_detailed failed", ratingError);
-    return NextResponse.json({ error: "could not record that" }, { status: 500 });
+  if (error) {
+    console.error("record_client_visit_feedback_once failed", error.code);
+    return NextResponse.json({ error: "Your rating could not be confirmed. Refresh and try again." }, { status: 500 });
   }
-  if (typeof ratingId !== "string") {
-    return NextResponse.json({ error: "that clean cannot be rated" }, { status: 409 });
+  if (!data || typeof data !== "object" || data.recorded !== true) {
+    return NextResponse.json({ error: "That completed clean could not be rated. Refresh or contact the office." }, { status: 409 });
   }
-
+  if (tipCents > 0 && !billingEnabled) {
+    return NextResponse.json({ recorded: true, tip: null, error: "Online tipping is unavailable. Your rating was saved and no tip was added." }, { status: 409 });
+  }
+  if (typeof data.tipError === "string") {
+    return NextResponse.json({ recorded: true, tip: null, error: TIP_ERRORS[data.tipError] ?? TIP_ERRORS.tip_unavailable }, { status: 409 });
+  }
   if (tipCents === 0) return NextResponse.json({ recorded: true, tip: null });
-
-  if (!isBillingEnabled()) {
-    return NextResponse.json(
-      { recorded: true, tip: null, error: "Online tipping is unavailable. Your rating was saved and no tip was added." },
-      { status: 409 },
-    );
+  const tip = data.tip;
+  if (!tip || tip.tipCents !== tipCents || !Number.isSafeInteger(tip.feeCents) ||
+    !Number.isSafeInteger(tip.netCents) || tip.feeCents < 0 || tip.netCents < 0 ||
+    tip.feeCents + tip.netCents !== tipCents) {
+    return NextResponse.json({ recorded: true, tip: null, error: "Your rating was saved. Check Account to confirm the tip before trying again." }, { status: 502 });
   }
-
-  // ---- 2. the tip, on the bill -------------------------------------------
-  const { data: invoice } = await db
-    .from("invoices")
-    .select("id")
-    .eq("job_id", jobId)
-    .is("voided_at", null)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const invoiceId = (invoice as Record<string, unknown> | null)?.["id"];
-
-  if (typeof invoiceId !== "string") {
-    return NextResponse.json(
-      { recorded: true, tip: null, error: "Your rating was saved. A tip cannot be added until this visit has a bill." },
-      { status: 409 },
-    );
-  }
-
-  if (typeof invoiceId === "string") {
-    const { error } = await db.rpc("set_invoice_tip", {
-      p_invoice_id: invoiceId,
-      p_tip_cents: tipCents,
-    });
-
-    if (error) {
-      // The ceiling, almost always: a tip larger than the work it thanks. The
-      // rating is already saved, so this is a partial success and says so
-      // rather than pretending the whole submission failed.
-      return NextResponse.json(
-        { recorded: true, tip: null, error: "that tip could not be added to your bill" },
-        { status: 409 },
-      );
-    }
-  }
-
-  // ---- 3. the split -------------------------------------------------------
-  const split = tipPassThrough(tipCents);
-  const { error: payoutError } = await db.rpc("record_tip_payout", {
-    p_job_id: jobId,
-    p_tip_cents: tipCents,
-  });
-
-  if (payoutError) {
-    // The customer will be charged the tip either way, so a payout row that
-    // failed to write is money owed to a cleaner with nothing pointing at it.
-    // Loud, never silent.
-    console.error("record_tip_payout failed", payoutError);
-    return NextResponse.json({
-      recorded: true,
-      tip: split,
-      warning: "the payout record needs checking",
-    });
-  }
-
-  return NextResponse.json({ recorded: true, tip: split });
+  return NextResponse.json({ recorded: true, tip });
 }
 
 function text(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed ? trimmed.slice(0, 2000) : null;
+  return typeof value === "string" ? value.trim().slice(0, 2000) || null : null;
 }
-
 async function readJson(request: NextRequest): Promise<Record<string, unknown>> {
   try {
-    const parsed: unknown = await request.json();
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
-  } catch {
-    return {};
-  }
+    const body: unknown = await request.json();
+    return body && typeof body === "object" ? body as Record<string, unknown> : {};
+  } catch { return {}; }
 }

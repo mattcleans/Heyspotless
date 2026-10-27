@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IDBFactory } from "fake-indexeddb";
 import * as store from "./photo-store";
 import { drain } from "./drain";
+import { CLIENT_REQUEST_TIMEOUT_MS } from "../http/fetch-with-timeout";
 import {
   listWork,
   saveWork,
@@ -33,9 +34,9 @@ function photo(overrides: Partial<store.StoredPhoto> = {}): store.StoredPhoto {
     ...overrides,
   };
 }
-const recorded = () =>
+const recorded = (_input: RequestInfo | URL, init?: RequestInit) =>
   Promise.resolve(
-    new Response(JSON.stringify({ recorded: true }), { status: 200 }),
+    new Response(JSON.stringify({ recorded: true, photoId: "SYNTHETIC-photo", ...JSON.parse(String(init?.body ?? "{}")) }), { status: 200 }),
   );
 beforeEach(() => {
   vi.stubGlobal("indexedDB", new IDBFactory());
@@ -45,11 +46,62 @@ beforeEach(() => {
   getUser.mockReset();
 });
 afterEach(() => {
+  vi.clearAllTimers();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe("upload settlement", () => {
+  it.each([0, 429, 503])("keeps an owned photo on session network failure %s without asking for sign-in", async (status) => {
+    const ownerId = "e1100000-0000-0000-0000-000000000001";
+    await setWorkOwner(ownerId);
+    await store.enqueue(photo({ ownerId }));
+    getUser.mockResolvedValue({ data: { user: null }, error: { status } });
+    const summary = vi.fn();
+    await drain(summary, "job");
+    expect(upload).not.toHaveBeenCalled();
+    const [saved] = await store.listOutstanding();
+    expect(saved?.lastError).toBe("session: unavailable");
+    expect(await saved?.blob.text()).toBe("original");
+    expect(summary.mock.lastCall?.[0].authRequired).toBe(false);
+  });
+
+  it("still requests sign-in for an expired session", async () => {
+    const ownerId = "e1100000-0000-0000-0000-000000000001";
+    await setWorkOwner(ownerId);
+    await store.enqueue(photo({ ownerId }));
+    getUser.mockResolvedValue({ data: { user: null }, error: { status: 401 } });
+    const summary = vi.fn();
+    await drain(summary, "job");
+    expect(upload).not.toHaveBeenCalled();
+    expect(await store.listOutstanding()).toHaveLength(1);
+    expect(summary.mock.lastCall?.[0].authRequired).toBe(true);
+  });
+
+  it("retains photo bytes after a stalled recording request, then permits a fresh retry", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.mocked(fetch).mockImplementationOnce((_input, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), { once: true });
+    }));
+    await store.enqueue(photo());
+    const summary = vi.fn();
+    const pass = drain(summary, "job");
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(CLIENT_REQUEST_TIMEOUT_MS);
+    await pass;
+    const [saved] = await store.listOutstanding();
+    expect(saved?.state).toBe("pending");
+    expect(saved?.attempts).toBe(1);
+    expect(saved?.lastError).toMatch(/timed out/i);
+    expect(await saved?.blob.text()).toBe("original");
+    expect(summary.mock.lastCall?.[0].outstanding).toBe(1);
+
+    vi.mocked(fetch).mockImplementation(recorded);
+    await drain(summary, "job", true);
+    expect(await store.listOutstanding()).toEqual([]);
+    expect(summary.mock.lastCall?.[0].outstanding).toBe(0);
+  });
   it("does not send an owned capture using another cleaner's authenticated session", async () => {
     const ownerId = "e1100000-0000-0000-0000-000000000001";
     await setWorkOwner(ownerId);
@@ -125,7 +177,7 @@ describe("upload settlement", () => {
     expect(await store.listOutstanding()).toEqual([]);
   });
 
-  it.each([401, 500])(
+  it.each([401, 409, 500])(
     "keeps photos when recording returns %s",
     async (status) => {
       vi.mocked(fetch).mockResolvedValue(new Response("{}", { status }));
@@ -140,7 +192,7 @@ describe("upload settlement", () => {
     },
   );
 
-  it.each(["{}", "<html>Sign in</html>"])(
+  it.each(["{}", '{"recorded":true}', '{"recorded":true,"photoId":"wrong","jobId":"other"}', "<html>Sign in</html>"])(
     "keeps photos after an unconfirmed successful response %s",
     async (body) => {
       vi.mocked(fetch).mockResolvedValue(new Response(body, { status: 200 }));

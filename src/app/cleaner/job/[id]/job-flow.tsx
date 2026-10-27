@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { ArrivalTextControls } from "./arrival-text-controls";
 import { VisitRefresh } from "@/components/visit-refresh";
 import { useMemo, useState } from "react";
 import { OfflineWorkRecovery } from "@/components/offline-work-recovery";
@@ -31,6 +32,7 @@ export interface JobFlowProps {
   jobId: string;
   initialStatus: Status;
   rooms: Room[];
+  roomScopeAvailable?: boolean;
   alreadyDone: { roomKey: string; kind: string }[];
   backupBlocked?: boolean;
   ownerId?: string | null;
@@ -42,6 +44,7 @@ export function JobFlow({
   jobId,
   initialStatus,
   rooms,
+  roomScopeAvailable = true,
   alreadyDone,
   backupBlocked = false,
   ownerId = null,
@@ -56,11 +59,12 @@ export function JobFlow({
   const [outstanding, setOutstanding] = useState<
     { label: string; missing: string[] }[] | null
   >(null);
-  const [onMyWay, setOnMyWay] = useState<"idle" | "sending" | "sent">("idle");
+  const [serverScopeAvailable, setServerScopeAvailable] = useState(true);
+  const scopeAvailable = roomScopeAvailable && serverScopeAvailable;
   const [verifiedAt, setVerifiedAt] = useState(checkedAt);
   const work = useMemo<SavedWork | null>(
     () =>
-      ownerId && status !== "assigned"
+      scopeAvailable && ownerId && status !== "assigned"
         ? {
             jobId,
             ownerId,
@@ -71,50 +75,8 @@ export function JobFlow({
             scheduledAt,
           }
         : null,
-    [ownerId, status, jobId, rooms, alreadyDone, verifiedAt, scheduledAt],
+    [scopeAvailable, ownerId, status, jobId, rooms, alreadyDone, verifiedAt, scheduledAt],
   );
-
-  /**
-   * Tell the customer she is coming.
-   *
-   * Separate from Start, and BEFORE it, because they are different moments:
-   * on-my-way happens in the van and starting happens at the door. Folding
-   * them together would either text the customer when the cleaner is already
-   * on the step, or start the clock while she is still driving.
-   *
-   * One per job — the server enforces it — so this becomes a flat "Told them"
-   * rather than a button that can be leaned on.
-   */
-  async function tellThem() {
-    setOnMyWay("sending");
-    setNote(null);
-    try {
-      const response = await fetch("/api/jobs/on-my-way", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jobId }),
-      });
-      const payload: unknown = await response.json().catch(() => ({}));
-      const data = (payload ?? {}) as { sent?: unknown; reason?: unknown };
-
-      if (data.sent === true) {
-        setOnMyWay("sent");
-        return;
-      }
-
-      // A reason the customer could not be texted is hers to know: she is about
-      // to knock on a door nobody is expecting her at.
-      setOnMyWay("idle");
-      setNote(
-        typeof data.reason === "string"
-          ? `Not sent — ${data.reason}. Knock as usual.`
-          : "Could not text them. Knock as usual.",
-      );
-    } catch {
-      setOnMyWay("idle");
-      setNote("No signal. They have not been told yet.");
-    }
-  }
 
   async function start() {
     setWorking(true);
@@ -127,6 +89,7 @@ export function JobFlow({
       });
       const data = (await response.json().catch(() => ({}))) as {
         started?: unknown;
+        requirementsAvailable?: unknown;
         error?: unknown;
         code?: unknown;
       };
@@ -141,6 +104,7 @@ export function JobFlow({
         return;
       }
       setStatus("in_progress");
+      if (data.requirementsAvailable === false) setServerScopeAvailable(false);
       setVerifiedAt(Date.now());
     } catch {
       setNote("Could not start the job. Check your signal and try again.");
@@ -170,6 +134,7 @@ export function JobFlow({
         error?: unknown;
         code?: unknown;
         billable?: unknown;
+        requirementsAvailable?: unknown;
         outstanding?: { label?: unknown; missing?: unknown }[];
       };
 
@@ -184,9 +149,10 @@ export function JobFlow({
       }
 
       setStatus("complete");
+      if (data.requirementsAvailable === false) setServerScopeAvailable(false);
       setVerifiedAt(Date.now());
       setOutstanding(
-        Array.isArray(data.outstanding)
+        data.requirementsAvailable === true && Array.isArray(data.outstanding)
           ? data.outstanding.map((gap) => ({
               label: typeof gap.label === "string" ? gap.label : "Room",
               missing: Array.isArray(gap.missing)
@@ -219,20 +185,7 @@ export function JobFlow({
         </p>
       )}
 
-      {status === "assigned" && !blocked && !needsSignIn && (
-        <button
-          type="button"
-          onClick={() => void tellThem()}
-          disabled={onMyWay !== "idle"}
-          className="mt-6 w-full rounded-lg border border-navy px-4 py-3 text-sm font-semibold text-navy disabled:opacity-60"
-        >
-          {onMyWay === "sent"
-            ? "They know you're coming"
-            : onMyWay === "sending"
-              ? "Texting…"
-              : "On my way"}
-        </button>
-      )}
+      {status === "assigned" && !blocked && !needsSignIn && <ArrivalTextControls key={jobId} jobId={jobId} />}
 
       {status === "assigned" && !blocked && !needsSignIn && (
         <button
@@ -268,12 +221,12 @@ export function JobFlow({
       )}
       {status === "in_progress" && (
         <>
-          <JobCapture
+          {scopeAvailable ? <JobCapture
             jobId={jobId}
             rooms={rooms}
             alreadyDone={alreadyDone}
             ownerId={ownerId}
-          />
+          /> : <p className="visit-feature mt-4">The saved room list needs office review. Your saved photos stay on this device. You can still finish the visit.</p>}
           <button
             type="button"
             onClick={() => void finish()}
@@ -307,12 +260,12 @@ export function JobFlow({
                 : "This visit is finished. Check the photo checklist below for saved photos and any remaining uploads."}
             </p>
           )}
-          <JobCapture
+          {scopeAvailable ? <JobCapture
             jobId={jobId}
             rooms={rooms}
             alreadyDone={alreadyDone}
             ownerId={ownerId}
-          />
+          /> : <p className="visit-feature mt-4">The visit is finished. Ask the office to check the saved room list before adding photos; your saved copies remain on this device.</p>}
         </div>
       )}
     </>

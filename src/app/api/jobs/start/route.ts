@@ -3,6 +3,7 @@ import { getRepository } from "@/lib/data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { BackupApprovalRequired, ServiceStore } from "@/lib/service/store";
 import { roomsFor } from "@/lib/service/rooms";
+import { roomsForVisit } from "@/lib/service/visit-room-scope";
 
 /**
  * The cleaner arrives and starts.
@@ -46,9 +47,10 @@ export async function POST(request: NextRequest) {
   }
 
   const job = await repo.getJob(jobId);
-  const rooms = job ? roomsFor({ bedrooms: job.bedrooms, bathrooms: job.bathrooms }) : [];
+  const counts = job ? roomsForVisit(job) : null;
+  const rooms = counts ? roomsFor(counts) : [];
 
-  return NextResponse.json({ started: true, rooms });
+  return NextResponse.json({ started: true, rooms, requirementsAvailable: counts !== null });
 }
 
 async function readJson(request: NextRequest): Promise<Record<string, unknown>> {

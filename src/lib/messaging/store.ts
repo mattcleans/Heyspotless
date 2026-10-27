@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { arrivalTextReceipt, type ArrivalTextReceipt } from "./arrival-receipt";
 
 /**
  * Recording what the platform said, and to whom.
@@ -38,6 +39,18 @@ export interface Recipient {
 
 export class MessagingStore {
   constructor(private readonly db: SupabaseClient) {}
+
+  /** A dedupe key is a request record, not evidence that a text arrived. */
+  async onMyWayReceipt(jobId: string, cleanerId: string): Promise<ArrivalTextReceipt> {
+    const { data, error } = await this.db.from("messages")
+      .select("provider_id,failed_reason")
+      .eq("dedupe_key", `job:${jobId}:${ON_MY_WAY}`)
+      .eq("job_id", jobId).eq("cleaner_id", cleanerId)
+      .eq("direction", "outbound").eq("kind", ON_MY_WAY).eq("channel", "sms")
+      .maybeSingle();
+    if (error) throw new Error("Arrival text status unavailable");
+    return arrivalTextReceipt(data ? { providerId: data.provider_id, failedReason: data.failed_reason } : null);
+  }
 
   /**
    * Claim the right to send one message about one offer.

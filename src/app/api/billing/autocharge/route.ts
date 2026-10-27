@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { BillingStore } from "@/lib/billing/store";
+import { BillingStore, type PaymentOperation } from "@/lib/billing/store";
+import { BillChangedError } from "@/lib/billing/types";
 import { type AutochargeDecision, nextAttemptAfter, planSweep } from "@/lib/billing/autocharge";
 import { chargeOffSession } from "@/lib/billing/gateway";
 import { reconcileInvoiceCollection } from "@/lib/billing/collection";
@@ -85,15 +86,25 @@ export async function POST(request: NextRequest) {
     // Claim the invoice before calling Stripe. `planSweep` already skipped
     // anything with an attempt open, but the sweep and a customer pressing
     // Pay are not synchronised — this is what makes the claim atomic.
-    const operation = await store.beginPaymentOperation({
-      invoiceId: decision.invoiceId,
-      channel: "autocharge",
-      idempotencyKey: decision.idempotencyKey,
-      amountCents: decision.amountCents,
-      // Long enough to cover a slow authorisation, short enough that a dead
-      // process does not hold the invoice until morning.
-      ttlSeconds: 15 * 60,
-    });
+    let operation: PaymentOperation;
+    try {
+      operation = await store.beginPaymentOperation({
+        invoiceId: decision.invoiceId,
+        channel: "autocharge",
+        idempotencyKey: decision.idempotencyKey,
+        amountCents: decision.amountCents,
+        expectedBalanceCents: decision.amountCents,
+        expectedCustomerId: decision.customerId,
+        ttlSeconds: 15 * 60,
+      });
+    } catch (error) {
+      if (error instanceof BillChangedError) {
+        // A stale plan spends no card attempt and must not stop other invoices.
+        result.skipped += 1;
+        continue;
+      }
+      throw error;
+    }
 
     if (operation.outcome === "blocked") {
       // Somebody started collecting between planning and now.

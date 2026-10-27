@@ -22,7 +22,7 @@ export async function loadInbox(db: SupabaseClient, limit = WINDOW): Promise<Thr
   const { data, error } = await db
     .from("messages")
     .select(
-      "id, direction, body, sent_at, read_at, kind, from_address, to_address, " +
+      "id, direction, body, sent_at, read_at, kind, from_address, to_address, channel, provider_id, failed_reason, " +
         "customer_id, cleaner_id, lead_id, " +
         "customers ( first_name, last_name ), " +
         "cleaners ( full_name ), " +
@@ -47,6 +47,9 @@ export async function loadInbox(db: SupabaseClient, limit = WINDOW): Promise<Thr
       sentAt: new Date(String(row["sent_at"])),
       readAt: row["read_at"] ? new Date(String(row["read_at"])) : null,
       kind: typeof row["kind"] === "string" ? row["kind"] : null,
+      channel: row["channel"] === "sms" || row["channel"] === "email" ? row["channel"] : "in_app",
+      providerId: typeof row["provider_id"] === "string" ? row["provider_id"] : null,
+      failedReason: typeof row["failed_reason"] === "string" ? row["failed_reason"] : null,
       customerId: typeof row["customer_id"] === "string" ? row["customer_id"] : null,
       cleanerId: typeof row["cleaner_id"] === "string" ? row["cleaner_id"] : null,
       leadId: typeof row["lead_id"] === "string" ? row["lead_id"] : null,

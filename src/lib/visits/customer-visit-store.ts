@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { recordedRooms, trackedRooms } from "./customer-visit";
 import { visitStage, type VisitSummary } from "./progress";
+import { readVisitRoomScope, VISIT_ROOM_SCOPE_SELECT, type VisitRoomScope } from "@/lib/service/visit-room-scope";
 
 type Row = Record<string, unknown>;
 const failed = () =>
@@ -22,6 +23,8 @@ const count = (value: unknown): number => {
   return value;
 };
 export interface CustomerVisit {
+  roomScope?: VisitRoomScope;
+  roomScopeUnavailable?: boolean;
   summary: VisitSummary;
   address: string;
   propertyId: string;
@@ -45,8 +48,8 @@ export async function loadCustomerVisit(
   const result = await db
     .from("jobs")
     .select(
-      `id,status,property_id,scheduled_start,started_at,completed_at,estimated_clean_minutes,
-    properties(street,city,zip,bedrooms,bathrooms,half_baths,kitchens,living_rooms,utility_rooms)`,
+      `id,customer_id,status,property_id,scheduled_start,started_at,completed_at,estimated_clean_minutes,
+    properties(street,city,zip),job_room_scopes(${VISIT_ROOM_SCOPE_SELECT})`,
     )
     .eq("id", id)
     .maybeSingle();
@@ -58,15 +61,9 @@ export async function loadCustomerVisit(
     : row.properties;
   if (!property || typeof property !== "object") throw failed();
   const home = property as Row;
-  const counts = {
-    bedrooms: count(home.bedrooms),
-    bathrooms: count(home.bathrooms),
-    halfBaths: count(home.half_baths),
-    kitchens: count(home.kitchens),
-    livingRooms: count(home.living_rooms),
-    utilityRooms: count(home.utility_rooms),
-  };
-  const required = trackedRooms(counts);
+  const roomScope = readVisitRoomScope(row.job_room_scopes, { id: text(row.id), customerId: text(row.customer_id), propertyId: text(row.property_id) });
+  const counts = roomScope?.rooms;
+  const required = counts ? trackedRooms(counts) : [];
   const [assigned, photos, backups] = await Promise.all([
     db
       .from("client_visit_assignments")
@@ -139,13 +136,13 @@ export async function loadCustomerVisit(
     );
   const lead = leads[0];
   const cleanerId = lead ? text(lead.cleaner_id) : null;
-  const rooms = recordedRooms(
+  const rooms = counts ? recordedRooms(
     counts,
     photos.data.map((photo) => ({
       roomKey: text(photo.room_key),
       kind: text(photo.kind),
     })),
-  );
+  ) : [];
   const startedAt = date(row.started_at),
     scheduledStart = date(row.scheduled_start);
   const estimatedMinutes = count(row.estimated_clean_minutes);
@@ -156,6 +153,8 @@ export async function loadCustomerVisit(
   if (expectedFinishAt && !Number.isFinite(expectedFinishAt.getTime()))
     throw failed();
   return {
+    roomScope: roomScope ?? undefined,
+    roomScopeUnavailable: !roomScope,
     propertyId: text(row.property_id),
     address: `${text(home.street)}, ${text(home.city)} ${text(home.zip)}`,
     cleanerId,

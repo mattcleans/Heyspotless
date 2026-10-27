@@ -3,6 +3,7 @@ import { getRepository } from "@/lib/data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { BackupApprovalRequired, ServiceStore } from "@/lib/service/store";
 import { invoiceReadiness } from "@/lib/service/completion";
+import { roomsForVisit } from "@/lib/service/visit-room-scope";
 
 /**
  * The cleaner taps done.
@@ -53,14 +54,16 @@ export async function POST(request: NextRequest) {
   }
 
   const job = await repo.getJob(jobId);
+  const counts = job ? roomsForVisit(job) : null;
   const photos = await store.photosFor(jobId);
-  const readiness = job
-    ? invoiceReadiness("complete", { bedrooms: job.bedrooms, bathrooms: job.bathrooms }, photos)
+  const readiness = job && counts
+    ? invoiceReadiness("complete", counts, photos)
     : { ready: false as const, reason: "not_complete" as const };
 
   return NextResponse.json({
     completed: true,
     billable: readiness.ready,
+    requirementsAvailable: counts !== null,
     outstanding:
       readiness.ready || readiness.reason !== "photos_outstanding"
         ? []
