@@ -50,6 +50,8 @@ beforeEach(() => {
         id,
         status: "in_progress",
         property_id: "home",
+        customer_id: "client",
+        job_room_scopes: { job_id: id, customer_id: "client", property_id: "home", ...home, source: "client_booking", captured_at: "2026-10-01T00:00:00Z" },
         scheduled_start: "2026-10-01T14:00:00Z",
         started_at: "2026-10-01T14:04:00Z",
         completed_at: null,
@@ -72,6 +74,20 @@ beforeEach(() => {
   };
 });
 describe("request-scoped client visit reads", () => {
+  it("keeps booked progress counts after home details change", async () => {
+    (results.jobs.data as Record<string, unknown>).properties = { ...home, bedrooms: 5, bathrooms: 5, half_baths: 0, kitchens: 1, living_rooms: 3, utility_rooms: 2 };
+    const visit = await loadCustomerVisit(db(), id);
+    expect(visit?.summary.roomsTotal).toBe(3);
+    expect(visit?.roomScope?.rooms.kitchens).toBe(2);
+  });
+  it("keeps appointment and assignment details when the saved room list is missing", async () => {
+    (results.jobs.data as Record<string, unknown>).job_room_scopes = null;
+    const visit = await loadCustomerVisit(db(), id);
+    expect(visit?.roomScopeUnavailable).toBe(true);
+    expect(visit?.cleanerId).toBe("cleaner");
+    expect(visit?.summary.stage).toBe("cleaning");
+    expect(calls.some(c => c.table === "job_photos")).toBe(false);
+  });
   it("reads only this visit and required room/photo kinds with exact bounded limits", async () => {
     const visit = await loadCustomerVisit(db(), id);
     expect(visit?.summary.roomsDone).toBe(1);
@@ -172,14 +188,11 @@ describe("request-scoped client visit reads", () => {
     expect((await loadCustomerVisit(db(), id))?.rooms).toHaveLength(3);
   });
   it.each([null, "2", -1, 0.5, Number.MAX_SAFE_INTEGER])(
-    "rejects invalid configured count %s without photo reads",
+    "reports invalid saved count %s without photo reads",
     async (kitchens) => {
-      (results.jobs.data as Record<string, unknown>).properties = {
-        ...home,
-        kitchens,
-      };
-      await expect(loadCustomerVisit(db(), id)).rejects.toThrow();
-      expect(calls.every((c) => c.table === "jobs")).toBe(true);
+      Object.assign((results.jobs.data as Record<string, unknown>).job_room_scopes as object, { kitchens });
+      expect((await loadCustomerVisit(db(), id))?.roomScopeUnavailable).toBe(true);
+      expect(calls.some(c => c.table === "job_photos")).toBe(false);
     },
   );
   it("does not arbitrarily name one of two lead cleaners", async () => {
@@ -216,11 +229,7 @@ describe("request-scoped client visit reads", () => {
     expect(visit?.summary.roomsDone).toBe(1);
   });
   it("handles zero rooms without querying photos", async () => {
-    (results.jobs.data as Record<string, unknown>).properties = {
-      ...home,
-      kitchens: 0,
-      half_baths: 0,
-    };
+    Object.assign((results.jobs.data as Record<string, unknown>).job_room_scopes as object, { kitchens: 0, half_baths: 0 });
     const visit = await loadCustomerVisit(db(), id);
     expect(visit?.summary.roomsTotal).toBe(0);
     expect(calls.some((c) => c.table === "job_photos")).toBe(false);

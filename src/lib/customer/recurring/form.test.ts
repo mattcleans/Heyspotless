@@ -39,6 +39,8 @@ describe("recurring schedule microcopy", () => {
       paused_until: "2026-10-20",
       ends_on: null,
       price_cents: 20000,
+      room_counts: { bedrooms: 2, bathrooms: 1, halfBaths: 0, kitchens: 1, livingRooms: 1, utilityRooms: 0 },
+      room_scope_source: "client_booking",
       previous_price_cents: 15000,
       estimated_minutes: 90,
       fee_cents: 0,
@@ -50,6 +52,8 @@ describe("recurring schedule microcopy", () => {
       createElement(RecurringReview, { review }),
     );
     expect(html).toContain("Every visit affected");
+    expect(html).toContain("Saved room list: 2 bedrooms, 1 full bath, 0 half baths, 1 kitchen, 1 living room, 0 utility rooms");
+    expect(html).toContain("Changing the frequency keeps this room list");
     expect(html).toContain("another day costs $60");
     expect(html).toContain("another time today is free");
     expect(html).toContain("Previously $150");

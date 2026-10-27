@@ -12,6 +12,7 @@ import type { Cleaner, DispatchJob } from "../dispatch/types";
 import type { RoomCounts } from "../pricing/quote";
 import type { InvoiceAmounts, InvoiceStatus, PaymentStatus } from "../billing/types";
 import type { CalendarDate } from "../time/zone";
+import type { VisitRoomScope } from "../service/visit-room-scope";
 
 export type UserRole = "admin" | "cleaner" | "customer";
 
@@ -79,6 +80,8 @@ export interface Property {
  * DispatchJob so it can be handed straight to the engine.
  */
 export interface Job extends DispatchJob {
+  /** Saved independently from the home's editable room counts. */
+  roomScope?: VisitRoomScope | null;
   customerId: string;
   customerName: string;
   propertyId: string;

@@ -13,7 +13,7 @@ beforeEach(() => {
   m.profile.mockResolvedValue({ id: "profile", role: "cleaner" });
   m.cleaner.mockResolvedValue({ id: "cleaner" });
   m.complete.mockResolvedValue(true);
-  m.job.mockResolvedValue({ id: "job", status: "complete", propertyId: "home", bedrooms: 0, bathrooms: 0 });
+  m.job.mockResolvedValue({ id: "job", status: "complete", propertyId: "home", customerId: "client", bedrooms: 0, bathrooms: 0, roomScope: { jobId: "job", propertyId: "home", customerId: "client", source: "client_booking", capturedAt: new Date("2026-10-01T00:00:00Z"), rooms: { bedrooms: 0, bathrooms: 0, halfBaths: 1, kitchens: 2, livingRooms: 2, utilityRooms: 2 } } });
   m.home.mockResolvedValue({ rooms: { bedrooms: 0, bathrooms: 0, halfBaths: 1, kitchens: 2, livingRooms: 2, utilityRooms: 2 } });
   m.photos.mockResolvedValue(["kitchen_1", "living_room_1", "utility_room_1"].flatMap(roomKey => ["before", "after"].map(kind => ({ roomKey, kind }))));
 });
@@ -24,8 +24,8 @@ describe("completion photo requirements", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ completed: true, billable: false, outstanding: expect.arrayContaining(["half_bath_1", "kitchen_2", "living_room_2", "utility_room_2"].map(room => expect.objectContaining({ room }))) });
   });
-  it("does not claim billing readiness if the home cannot be read", async () => {
-    m.home.mockResolvedValue(null);
+  it("does not claim billing readiness if the saved visit scope cannot be read", async () => {
+    m.job.mockResolvedValue({ id: "job", status: "complete", propertyId: "home", customerId: "client", roomScope: null });
     expect(await (await POST(request())).json()).toMatchObject({ completed: true, billable: false });
   });
   it("does not perform readiness reads for an unconfirmed completion", async () => {
