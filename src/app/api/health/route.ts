@@ -5,6 +5,7 @@ import {
   cronSecretMatches,
   hasStripeConfig,
   isBillingEnabled,
+  isAutochargeEnabled,
   stripePublishableKey,
   stripeWebhookSecret,
 } from "@/lib/stripe/env";
@@ -105,6 +106,7 @@ export async function GET(request: NextRequest) {
       // The one that actually decides whether a customer can pay. All three
       // keys present and this false means BILLING_ENABLED=0 is holding it.
       billingEnabled: isBillingEnabled(),
+      autochargeEnabled: isAutochargeEnabled(),
     },
     twilio: {
       accountSid: Boolean(twilioAccountSid()),

@@ -17,11 +17,12 @@ import {
 } from "@/lib/operations/visit-review";
 import { JOB_LABELS } from "@/lib/experience/schedule";
 import { FREQUENCY_LABELS, SERVICE_LABELS } from "@/lib/pricing/price-book";
-import { formatDateTimeInZone } from "@/lib/time/zone";
+import { formatDateTimeInZone,formatCalendarDate,toCalendarDate,todayIn } from "@/lib/time/zone";
 import { formatCents } from "@/lib/money";
 import { Pill } from "@/components/ui";
 import { VisitRefresh } from "@/components/visit-refresh";
 import { ServiceDraftAction } from "@/components/service-draft-action";
+import { InvoiceIssueAction } from "@/components/invoice-issue-action";
 import { roomsForVisit } from "@/lib/service/visit-room-scope";
 import { VisitRoomScopeNote } from "@/components/visit-room-scope-note";
 export const dynamic = "force-dynamic";
@@ -246,6 +247,8 @@ export default async function VisitReviewPage({
             <p className="mt-1 break-all text-xs text-ink-3">
               Reference {invoice.id}
             </p>
+            {invoice.issuedAt && <p className="mt-2 text-sm">Issued {formatDateTimeInZone(invoice.issuedAt)}{toCalendarDate(invoice.dueOn)?` · Due ${formatCalendarDate(toCalendarDate(invoice.dueOn)!)}`:""}</p>}
+            {!repo.isDemo && job.status === "complete" && invoice.status === "draft" && invoice.kind === "service" && facts.invoices.filter(i=>i.kind==="service").length===1 && <InvoiceIssueAction visitId={id} invoiceId={invoice.id} totalCents={invoice.totalCents} defaultDueOn={toCalendarDate(invoice.dueOn) && invoice.dueOn! >= todayIn() ? invoice.dueOn! : todayIn()} minDueOn={todayIn()} />}
           </div>
         ))}
       </section>
@@ -284,8 +287,8 @@ export default async function VisitReviewPage({
       <section className="mt-6">
         <h2 className="font-semibold text-navy">Photo evidence</h2>
         <p className="mt-2 text-sm text-ink-2">
-          Required before and after photos for the current room counts of this
-          home. These are server records; photos waiting on a phone are not
+          Required before and after photos for this visit’s saved room list.
+          These are server records; photos waiting on a phone are not
           visible here.
         </p>
         {review.gaps.length > 0 && (

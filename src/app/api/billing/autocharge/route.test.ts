@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { BillChangedError } from "@/lib/billing/types";
-const m = vi.hoisted(() => ({ begin: vi.fn(), attach: vi.fn(), charge: vi.fn(), plan: vi.fn(), failure: vi.fn() }));
-vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => ({}) }));
+const m = vi.hoisted(() => ({ begin: vi.fn(), attach: vi.fn(), charge: vi.fn(), plan: vi.fn(), failure: vi.fn(),automatic:vi.fn(),writer:vi.fn() }));
+vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: m.writer }));
 vi.mock("@/lib/billing/store", () => ({ BillingStore: class {
   listAutochargeCandidates = async () => [];
   getStripeCustomerId = async () => "cus_synthetic";
@@ -12,15 +12,17 @@ vi.mock("@/lib/billing/store", () => ({ BillingStore: class {
 } }));
 vi.mock("@/lib/billing/autocharge", () => ({ planSweep: m.plan, nextAttemptAfter: vi.fn() }));
 vi.mock("@/lib/billing/gateway", () => ({ chargeOffSession: m.charge }));
-vi.mock("@/lib/stripe/env", () => ({ cronSecretMatches: () => true, isBillingEnabled: () => true }));
+vi.mock("@/lib/stripe/env", () => ({ cronSecretMatches: () => true, isBillingEnabled: () => true,isAutochargeEnabled:m.automatic }));
 import { POST } from "./route";
 const decision = (id: string) => ({ action: "charge", invoiceId: id, customerId: "customer", amountCents: 17000, paymentMethodId: "pm_synthetic", attempt: 1, idempotencyKey: `SYNTHETIC-${id}` });
 beforeEach(() => {
   vi.resetAllMocks();
+  m.automatic.mockReturnValue(true);m.writer.mockReturnValue({});
   m.attach.mockResolvedValue(true);
   m.charge.mockResolvedValue({ status: "processing", paymentIntentId: "pi_synthetic" });
 });
 describe("sweep bill changes", () => {
+  it("does not even read candidates or reach Stripe while automatic collection is off",async()=>{m.automatic.mockReturnValue(false);const r=await POST(new NextRequest("https://example.test/api/billing/autocharge",{method:"POST"}));expect(r.status).toBe(503);expect(m.writer).not.toHaveBeenCalled();expect(m.plan).not.toHaveBeenCalled();expect(m.charge).not.toHaveBeenCalled();});
   it("skips a changed bill without spending a card attempt and continues the sweep", async () => {
     m.plan.mockReturnValue([decision("changed"), decision("current")]);
     m.begin.mockRejectedValueOnce(new BillChangedError()).mockResolvedValueOnce({ outcome: "started" });

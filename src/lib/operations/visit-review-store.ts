@@ -53,7 +53,7 @@ export async function loadVisitFacts(db: SupabaseClient, jobId: string, counts: 
       .order("taken_at", { ascending: false }).order("id", { ascending: false }).limit(20),
     db.from("job_assignments").select("cleaner_id,cleaners(id,full_name,profiles(phone))").eq("job_id", jobId)
       .order("id", { ascending: true }).limit(50),
-    db.from("invoices").select("id,status,total_cents,balance_cents").eq("job_id", jobId)
+    db.from("invoices").select("id,status,kind,total_cents,balance_cents,due_on,issued_at").eq("job_id", jobId)
       .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(200),
   ]);
   if (timing.error || !timing.data) throw new Error("Visit timing is unavailable. Please refresh.");
@@ -68,6 +68,7 @@ export async function loadVisitFacts(db: SupabaseClient, jobId: string, counts: 
       return { id: text(cleaner, "id"), name: text(cleaner, "full_name"), phone: typeof profile?.phone === "string" ? profile.phone : null };
     }),
     invoices: rows(invoices.data, invoices.error).map(row => ({ id: text(row, "id"), status: text(row, "status"),
-      totalCents: money(row, "total_cents"), balanceCents: money(row, "balance_cents") })),
+      totalCents: money(row, "total_cents"), balanceCents: money(row, "balance_cents"),kind:typeof row.kind==="string"?row.kind:undefined,
+      dueOn:typeof row.due_on==="string"?row.due_on:null,issuedAt:date(row.issued_at??null) })),
   };
 }

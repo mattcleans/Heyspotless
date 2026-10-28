@@ -125,6 +125,12 @@ jobs:
       - name: Verify frozen visit room scopes and role access
         run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-visit-room-scope.sql
 
+      - name: Verify reviewed manual invoice issuance
+        run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-invoice-issuance.sql
+
+      - name: Verify concurrent invoice issuance
+        run: bash scripts/verify-invoice-issue-races.sh spotless_verify
+
       - name: Verify office payment review access
         run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-payment-review-access.sql
 
