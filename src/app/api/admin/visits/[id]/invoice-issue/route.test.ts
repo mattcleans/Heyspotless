@@ -1,0 +1,25 @@
+import {beforeEach,describe,it,expect,vi} from "vitest";
+import {NextRequest} from "next/server";
+const m=vi.hoisted(()=>({profile:vi.fn(),job:vi.fn(),invoice:vi.fn(),writer:vi.fn(),issue:vi.fn(),demo:false}));
+vi.mock("@/lib/data",()=>({getRepository:async()=>({isDemo:m.demo,getCurrentProfile:m.profile,getJob:m.job,getInvoice:m.invoice})}));
+vi.mock("@/lib/supabase/admin",()=>({createAdminClient:m.writer}));
+vi.mock("@/lib/operations/invoice-issue-store",()=>({InvoiceReviewChanged:class extends Error{},issueServiceInvoice:m.issue}));
+import {InvoiceReviewChanged} from "@/lib/operations/invoice-issue-store";
+import {POST} from "./route";
+const visit="11111111-1111-4111-8111-111111111111",invoice="22222222-2222-4222-8222-222222222222";
+const body={invoiceId:invoice,reviewedTotalCents:19900,dueOn:"2026-11-01",confirmed:true};
+const saved={issued:true,visitId:visit,invoiceId:invoice,totalCents:19900,dueOn:body.dueOn,issuedAt:"2026-10-28T16:00:00Z"};
+const call=(b:unknown=body,id=visit,origin="https://example.test")=>POST(new NextRequest(`https://example.test/api/admin/visits/${id}/invoice-issue`,{method:"POST",headers:{origin},body:JSON.stringify(b)}),{params:Promise.resolve({id})});
+beforeEach(()=>{vi.resetAllMocks();m.demo=false;m.profile.mockResolvedValue({id:"office",role:"admin"});m.job.mockResolvedValue({id:visit,customerId:"client",status:"complete"});m.invoice.mockResolvedValue({id:invoice,jobId:visit,customerId:"client",kind:"service",status:"draft"});m.writer.mockReturnValue({});m.issue.mockResolvedValue(saved);});
+describe("Management issuance access and review",()=>{
+ it.each([null,{role:"customer"},{role:"cleaner"}])("refuses non-Management %j before privileged access",async profile=>{m.profile.mockResolvedValue(profile);expect((await call()).ok).toBe(false);expect(m.writer).not.toHaveBeenCalled();expect(m.job).not.toHaveBeenCalled();});
+ it("refuses sample writes",async()=>{m.demo=true;expect((await call()).status).toBe(503);expect(m.writer).not.toHaveBeenCalled();});
+ it("refuses foreign origin",async()=>{expect((await call(body,visit,"https://other.test")).status).toBe(403);expect(m.writer).not.toHaveBeenCalled();});
+ it.each([{...body,confirmed:false},{...body,confirmed:undefined},{...body,reviewedTotalCents:-1},{...body,reviewedTotalCents:1.5},{...body,reviewedTotalCents:"19900"},{...body,reviewedTotalCents:2147483648},{...body,dueOn:"2026-02-30"},{...body,dueOn:"2026-11-01T00:00:00Z"},{...body,invoiceId:"wrong"}])("requires a complete valid review %j",async b=>{expect((await call(b)).status).toBe(400);expect(m.writer).not.toHaveBeenCalled();});
+ it("refuses malformed visit IDs",async()=>{expect((await call(body,"wrong")).status).toBe(400);expect(m.job).not.toHaveBeenCalled();});
+ it("requires a readable visit",async()=>{m.job.mockResolvedValue(null);expect((await call()).status).toBe(404);expect(m.writer).not.toHaveBeenCalled();});
+ it.each([null,{jobId:"other",customerId:"client",kind:"service"},{jobId:visit,customerId:"other",kind:"service"},{jobId:visit,customerId:"client",kind:"reschedule_fee"}])("requires this visit's readable service invoice",async i=>{m.invoice.mockResolvedValue(i);expect((await call()).status).toBe(404);expect(m.writer).not.toHaveBeenCalled();});
+ it("returns the durable receipt and never trusts an actor supplied by the browser",async()=>{const r=await call({...body,actorId:"forged"});expect(r.headers.get("cache-control")).toContain("no-store");expect(await r.json()).toEqual(saved);expect(m.issue).toHaveBeenCalledWith({},visit,invoice,"office",19900,body.dueOn);});
+ it("returns conflict for a stale locked review",async()=>{m.issue.mockRejectedValue(new InvoiceReviewChanged());expect((await call()).status).toBe(409);});
+ it("hides unexpected errors and does not claim issuance",async()=>{m.issue.mockRejectedValue(new Error("private diagnostics"));const r=await call();expect(r.status).toBe(503);expect(await r.text()).not.toContain("private diagnostics");});
+});

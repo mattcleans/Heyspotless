@@ -40,6 +40,11 @@ export function isBillingEnabled(): boolean {
   return hasStripeConfig();
 }
 
+/** Issued invoices never opt the business into automatic collection. */
+export function isAutochargeEnabled(): boolean {
+  return isBillingEnabled() && process.env.AUTOCHARGE_ENABLED === "1";
+}
+
 export function requireStripeConfig(): { secretKey: string } {
   const secretKey = stripeSecretKey();
   if (!secretKey) {
