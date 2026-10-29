@@ -3,6 +3,7 @@ import { getRepository } from "@/lib/data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { PhotoReceiptError, ServiceStore } from "@/lib/service/store";
 import { invoiceReadiness } from "@/lib/service/completion";
+import { readPhotoCapture, type PhotoCaptureReceipt } from "@/lib/service/photo-capture";
 import { roomsForVisit } from "@/lib/service/visit-room-scope";
 
 /**
@@ -14,28 +15,16 @@ import { roomsForVisit } from "@/lib/service/visit-room-scope";
  *
  * SAFE TO REPLAY, deliberately: the offline queue retries, and a cleaner who
  * loses signal mid-upload must be able to drain it later without billing the
- * customer twice. `record_job_photo` is idempotent per (job, room, kind), and
- * raising the invoice is guarded separately.
+ * customer twice. A capture receipt binds its revision, byte hash and exact object version;
+ * a delayed older capture cannot replace a later retake. Invoicing is guarded separately.
  */
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const KINDS = new Set(["before", "after", "issue"]);
-
 export async function POST(request: NextRequest) {
-  const body = await readJson(request);
-
-  const jobId = typeof body["jobId"] === "string" ? body["jobId"] : null;
-  const storagePath = typeof body["storagePath"] === "string" ? body["storagePath"] : null;
-  const kind = typeof body["kind"] === "string" ? body["kind"] : null;
-  const roomKey = typeof body["roomKey"] === "string" ? body["roomKey"] : null;
-
-  if (!jobId || !storagePath || !kind || !roomKey || !KINDS.has(kind)) {
-    return NextResponse.json(
-      { error: "jobId, storagePath, roomKey and a kind of before/after/issue are required" },
-      { status: 400 },
-    );
-  }
+  const capture = readPhotoCapture(await readJson(request));
+  if (!capture) return NextResponse.json({ recorded: false, message: "Refresh this visit before retrying. Keep the saved photo copy." }, { status: 409 });
+  const { jobId } = capture;
 
   const repo = await getRepository();
   const profile = await repo.getCurrentProfile();
@@ -46,17 +35,11 @@ export async function POST(request: NextRequest) {
   if (!cleaner) return NextResponse.json({ error: "no cleaner record" }, { status: 403 });
 
   const store = new ServiceStore(createAdminClient());
-  let photoId: string | null;
-  try { photoId = await store.recordPhoto({
-    jobId,
-    cleanerId: cleaner.id,
-    storagePath,
-    kind: kind as "before" | "after" | "issue",
-    roomKey,
-  }); } catch (error) {
+  let receipt: PhotoCaptureReceipt | null;
+  try { receipt = await store.recordPhoto({ ...capture, cleanerId: cleaner.id }); } catch (error) {
     return NextResponse.json({ recorded: false, message: error instanceof PhotoReceiptError ? error.message : "The photo receipt could not be confirmed. Keep the saved copy and try again." }, { status: error instanceof PhotoReceiptError ? 409 : 503 });
   }
-  if (!photoId) return NextResponse.json({ recorded: false, message: "The photo receipt could not be confirmed. Keep the saved copy and refresh this visit." }, { status: 409 });
+  if (!receipt) return NextResponse.json({ recorded: false, message: "The photo receipt could not be confirmed. Keep the saved copy and refresh this visit." }, { status: 409 });
 
   // What is still outstanding, so the queue can tell her rather than leaving
   // her to count.
@@ -68,12 +51,7 @@ export async function POST(request: NextRequest) {
     : { ready: false as const, reason: "not_complete" as const };
 
   return NextResponse.json({
-    recorded: true,
-    photoId,
-    jobId,
-    roomKey,
-    kind,
-    storagePath,
+    ...receipt,
     billable: readiness.ready,
     requirementsAvailable: counts !== null,
     outstanding:

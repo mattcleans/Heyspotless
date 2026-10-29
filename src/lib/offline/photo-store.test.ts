@@ -125,3 +125,43 @@ describe("retaking a room photo", () => {
     expect(await listOutstanding()).toHaveLength(1);
   });
 });
+
+describe("durable retake replacement identity", () => {
+  const first = "a1111111-1111-4111-8111-111111111111";
+  const second = "a2222222-2222-4222-8222-222222222222";
+  const third = "a3333333-3333-4333-8333-333333333333";
+
+  it("retains every replaced capture across reloads without using capture timestamps", async () => {
+    await enqueue(photo({ revision: first }));
+    await enqueue(photo({ revision: second, takenAt: 1, blob: new Blob(["second"]) }));
+    const [reopened] = await listForJob("job");
+    expect(reopened?.supersedes).toEqual([first]);
+    await enqueue(photo({ revision: third, takenAt: 1, blob: new Blob(["third"]) }));
+    expect(await forget(photo({ revision: first }))).toBe(false);
+    expect(await update(photo({ revision: second, state: "done" }))).toBe(false);
+    const [latest] = await listForJob("job");
+    expect(latest?.supersedes).toEqual([first, second]);
+    expect(await latest?.blob.text()).toBe("third");
+  });
+
+  it("refuses to reuse a capture identity for different bytes", async () => {
+    await enqueue(photo({ revision: first }));
+    await expect(enqueue(photo({ revision: first, blob: new Blob(["different bytes"]) }))).rejects.toThrow("same revision");
+    expect(await (await listForJob("job"))[0]?.blob.text()).toBe("original bytes");
+  });
+});
+
+describe("unresolved retake history limit", () => {
+  it("refuses another retake without truncating replacement history or discarding saved bytes", async () => {
+    for (let capture = 0; capture < 65; capture++) {
+      await enqueue(photo({ revision: crypto.randomUUID(), blob: new Blob([`capture ${capture}`]) }));
+    }
+    const [before] = await listForJob("job");
+    expect(before?.supersedes).toHaveLength(64);
+    await expect(enqueue(photo({ revision: crypto.randomUUID(), blob: new Blob(["one too many"]) }))).rejects.toThrow("Reconnect");
+    const [after] = await listForJob("job");
+    expect(after?.revision).toBe(before?.revision);
+    expect(after?.supersedes).toEqual(before?.supersedes);
+    expect(await after?.blob.text()).toBe("capture 64");
+  });
+});

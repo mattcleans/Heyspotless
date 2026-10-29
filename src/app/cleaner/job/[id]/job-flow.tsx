@@ -33,7 +33,7 @@ export interface JobFlowProps {
   initialStatus: Status;
   rooms: Room[];
   roomScopeAvailable?: boolean;
-  alreadyDone: { roomKey: string; kind: string }[];
+  alreadyDone: { roomKey: string; kind: string; revision?: string }[];
   backupBlocked?: boolean;
   ownerId?: string | null;
   checkedAt?: number;

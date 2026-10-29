@@ -110,7 +110,7 @@ export default async function CleanerJobPage({
     ? []
     : (await new ServiceStore(createAdminClient()).photosFor(id)).flatMap(
         (photo) =>
-          photo.roomKey ? [{ roomKey: photo.roomKey, kind: photo.kind }] : [],
+          photo.roomKey ? [{ roomKey: photo.roomKey, kind: photo.kind, ...(photo.revision ? { revision: photo.revision } : {}) }] : [],
       );
 
   const status = toFlowStatus(job.status);
