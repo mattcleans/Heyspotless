@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { ArrivalTextControls } from "./arrival-text-controls";
 import { VisitRefresh } from "@/components/visit-refresh";
 import { useMemo, useState } from "react";
@@ -33,7 +34,7 @@ export interface JobFlowProps {
   initialStatus: Status;
   rooms: Room[];
   roomScopeAvailable?: boolean;
-  alreadyDone: { roomKey: string; kind: string }[];
+  alreadyDone: { roomKey: string; kind: string; revision?: string }[];
   backupBlocked?: boolean;
   ownerId?: string | null;
   checkedAt?: number;
@@ -51,6 +52,7 @@ export function JobFlow({
   checkedAt = 0,
   scheduledAt = null,
 }: JobFlowProps) {
+  const router = useRouter();
   const [status, setStatus] = useState<Status>(initialStatus);
   const [blocked, setBlocked] = useState(backupBlocked);
   const [needsSignIn, setNeedsSignIn] = useState(false);
@@ -106,6 +108,7 @@ export function JobFlow({
       setStatus("in_progress");
       if (data.requirementsAvailable === false) setServerScopeAvailable(false);
       setVerifiedAt(Date.now());
+      router.refresh();
     } catch {
       setNote("Could not start the job. Check your signal and try again.");
     } finally {
@@ -161,6 +164,7 @@ export function JobFlow({
             }))
           : null,
       );
+      router.refresh();
     } catch {
       setNote("Could not mark this done. Check your signal and try again.");
     } finally {

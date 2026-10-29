@@ -5,7 +5,7 @@ export interface SavedWork {
   checkedAt: number;
   scheduledAt: string | null;
   rooms: { key: string; label: string }[];
-  confirmed: { roomKey: string; kind: string }[];
+  confirmed: { roomKey: string; kind: string; revision?: string; supersedes?: string[] }[];
 }
 export const MAX_WORK_AGE: number;
 export function openPhotoDatabase(): Promise<IDBDatabase>;
@@ -32,5 +32,13 @@ export function saveWorkPhoto(
 ): Promise<import("../src/lib/offline/photo-store").StoredPhoto>;
 export function markWorkPhotoConfirmed(
   tx: IDBTransaction,
-  photo: { jobId: string; roomKey: string; kind: string },
+  photo: { jobId: string; roomKey: string; kind: string; revision?: string; supersedes?: string[] },
 ): void;
+
+export function photoReplacements(
+  photo: { roomKey: string; kind: string; revision?: string; supersedes?: string[] },
+  previous?: import("../src/lib/offline/queue-policy").QueueItem,
+  confirmed?: SavedWork["confirmed"],
+): string[];
+
+export class RetakeHistoryFull extends Error {}

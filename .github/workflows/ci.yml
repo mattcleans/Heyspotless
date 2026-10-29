@@ -131,6 +131,12 @@ jobs:
       - name: Verify concurrent invoice issuance
         run: bash scripts/verify-invoice-issue-races.sh spotless_verify
 
+      - name: Verify version-bound capture receipts
+        run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-photo-capture-versions.sql
+
+      - name: Verify concurrent capture versions and object replacement
+        run: bash scripts/verify-photo-capture-races.sh spotless_verify
+
       - name: Verify office payment review access
         run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-payment-review-access.sql
 
