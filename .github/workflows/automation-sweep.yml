@@ -29,11 +29,22 @@ jobs:
   sweep:
     name: Run the automation sweep
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      APP_URL: ${{ secrets.APP_URL }}
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify scheduler authentication and production target
+        run: node --experimental-strip-types scripts/verify-scheduler-target.mjs
       - name: POST /api/automations/run
-        env:
-          APP_URL: ${{ secrets.APP_URL }}
-          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        shell: bash
         run: |
           if [ -z "$APP_URL" ] || [ -z "$CRON_SECRET" ]; then
             echo "APP_URL and CRON_SECRET must be set as repository secrets." >&2
@@ -43,7 +54,7 @@ jobs:
           curl --fail-with-body --silent --show-error \
             --max-time 120 \
             --retry 2 --retry-delay 10 --retry-connrefused \
-            -X POST "$APP_URL/api/automations/run" \
+            -X POST "${APP_URL%/}/api/automations/run" \
             -H "x-cron-secret: $CRON_SECRET" \
             | tee response.json
 

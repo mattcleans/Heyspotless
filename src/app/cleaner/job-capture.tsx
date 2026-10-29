@@ -29,7 +29,7 @@ export interface JobCaptureProps {
   jobId: string;
   rooms: Room[];
   /** Rooms already photographed on the server, so a reinstall does not start over. */
-  alreadyDone: { roomKey: string; kind: string }[];
+  alreadyDone: { roomKey: string; kind: string; revision?: string }[];
   ownerId?: string | null;
 }
 
@@ -166,7 +166,9 @@ export function JobCapture({
         // Never a silent failure. If it is not saved she has to know NOW,
         // while she is still standing in the room.
         setError(
-          caught instanceof store.QuotaExceeded
+          caught instanceof store.RetakeHistoryFull
+            ? caught.message
+            : caught instanceof store.QuotaExceeded
             ? "No space left on this phone to save the photo. Free some up and take it again."
             : "That photo did not save. Take it again.",
         );

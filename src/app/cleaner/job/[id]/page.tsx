@@ -6,6 +6,8 @@ import { getRepository } from "@/lib/data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ServiceStore } from "@/lib/service/store";
 import { roomsFor } from "@/lib/service/rooms";
+import { roomsForVisit } from "@/lib/service/visit-room-scope";
+import { VisitRoomScopeNote } from "@/components/visit-room-scope-note";
 import { createClient } from "@/lib/supabase/server";
 import { formatCents, formatHours } from "@/lib/money";
 import { formatDateTimeInZone } from "@/lib/time/zone";
@@ -97,9 +99,8 @@ export default async function CleanerJobPage({
   if (!job) notFound();
 
   const property = await repo.getProperty(job.propertyId);
-  const rooms = roomsFor(
-    property?.rooms ?? { bedrooms: job.bedrooms, bathrooms: job.bathrooms },
-  );
+  const scopeCounts = roomsForVisit(job, repo.isDemo ? property?.rooms : undefined);
+  const rooms = scopeCounts ? roomsFor(scopeCounts) : [];
 
   // What the server already has. A reinstalled app, or a second phone, must
   // not ask her to reshoot rooms that are already in.
@@ -109,7 +110,7 @@ export default async function CleanerJobPage({
     ? []
     : (await new ServiceStore(createAdminClient()).photosFor(id)).flatMap(
         (photo) =>
-          photo.roomKey ? [{ roomKey: photo.roomKey, kind: photo.kind }] : [],
+          photo.roomKey ? [{ roomKey: photo.roomKey, kind: photo.kind, ...(photo.revision ? { revision: photo.revision } : {}) }] : [],
       );
 
   const status = toFlowStatus(job.status);
@@ -201,12 +202,14 @@ export default async function CleanerJobPage({
               starting and finishing a job needs a live database.
             </p>
           )}
+          {!repo.isDemo && <VisitRoomScopeNote scope={job.roomScope} />}
           <JobFlow
             key={`${id}-${status}-${backupBlocked}`}
             jobId={id}
             initialStatus={status}
             backupBlocked={backupBlocked}
             rooms={rooms}
+            roomScopeAvailable={scopeCounts !== null}
             alreadyDone={alreadyDone}
             ownerId={
               !repo.isDemo && profile?.role === "cleaner" ? profile.id : null

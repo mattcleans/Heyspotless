@@ -77,17 +77,19 @@ export function PayInvoiceButton({
 export function SaveCardButton({
   hasCard,
   autopayEnabled,
+  allowAutopay = false,
 }: {
   hasCard: boolean;
   autopayEnabled: boolean;
+  allowAutopay?: boolean;
 }) {
-  const [autopay, setAutopay] = useState(autopayEnabled);
+  const [autopay, setAutopay] = useState(allowAutopay && autopayEnabled);
   const [state, setState] = useState<State>({ status: "idle" });
 
   async function save() {
     setState({ status: "working" });
     try {
-      window.location.href = await startSession("/api/billing/save-card", { autopay });
+      window.location.href = await startSession("/api/billing/save-card", allowAutopay ? { autopay } : {});
     } catch (error) {
       setState({ status: "error", error: error instanceof PaymentSessionError ? error : uncertainPayment() });
     }
@@ -100,7 +102,7 @@ export function SaveCardButton({
         consent to charge it, and the timestamp this writes is the evidence
         that the customer agreed — see the CHECK constraint in 0006.
       */}
-      <label className="flex cursor-pointer items-start gap-2.5 text-sm text-ink-2">
+      {allowAutopay ? <label className="flex cursor-pointer items-start gap-2.5 text-sm text-ink-2">
         <input
           type="checkbox"
           checked={autopay}
@@ -111,7 +113,7 @@ export function SaveCardButton({
           Charge this card automatically when a clean is invoiced. You can turn this off at
           any time.
         </span>
-      </label>
+      </label> : <p className="text-sm text-ink-2">Save a card for payments you choose to make. Automatic payments are paused.</p>}
 
       <button
         type="button"

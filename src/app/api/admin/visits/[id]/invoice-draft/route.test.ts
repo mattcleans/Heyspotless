@@ -1,0 +1,28 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
+const m = vi.hoisted(() => ({ profile: vi.fn(), job: vi.fn(), invoice: vi.fn(), writer: vi.fn(), prepare: vi.fn(), demo: false }));
+vi.mock("@/lib/data", () => ({ getRepository: async () => ({ isDemo: m.demo, getCurrentProfile: m.profile, getJob: m.job, getInvoice: m.invoice }) }));
+vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: m.writer }));
+vi.mock("@/lib/operations/invoice-draft-store", () => ({ DraftPriceChanged: class extends Error {}, prepareServiceDraft: m.prepare }));
+import { DraftPriceChanged } from "@/lib/operations/invoice-draft-store";
+import { POST } from "./route";
+const id = "f1000000-0000-4000-8000-000000000001", invoiceId = "f2000000-0000-4000-8000-000000000001";
+const job = { id, customerId: "client", status: "complete" };
+const invoice = { id: invoiceId, kind: "service", jobId: id, customerId: "client", status: "draft", voidedAt: null, amounts: { totalCents: 19900 } };
+const call = (body: unknown = { reviewedPriceCents: 19900 }, visit = id, origin = "https://example.test") => POST(new NextRequest(`https://example.test/api/admin/visits/${visit}/invoice-draft`, { method: "POST", headers: { origin }, body: JSON.stringify(body) }), { params: Promise.resolve({ id: visit }) });
+beforeEach(() => { vi.resetAllMocks(); m.demo = false; m.profile.mockResolvedValue({ role: "admin" }); m.job.mockResolvedValue(job); m.invoice.mockResolvedValue(invoice); m.writer.mockReturnValue({}); m.prepare.mockResolvedValue(invoiceId); });
+describe("Management service draft", () => {
+  it.each([null, { role: "cleaner" }, { role: "customer" }])("refuses %j before privileged writes", async profile => { m.profile.mockResolvedValue(profile); expect((await call()).ok).toBe(false); expect(m.job).not.toHaveBeenCalled(); expect(m.writer).not.toHaveBeenCalled(); });
+  it("blocks sample writes", async () => { m.demo = true; expect((await call()).status).toBe(503); expect(m.writer).not.toHaveBeenCalled(); });
+  it("rejects a foreign origin before writes", async () => { expect((await call(undefined, id, "https://other.test")).status).toBe(403); expect(m.writer).not.toHaveBeenCalled(); });
+  it.each([-1, 1.2, null, "19900", 2147483648])("rejects invalid reviewed price %j", async price => { expect((await call({ reviewedPriceCents: price })).status).toBe(400); expect(m.writer).not.toHaveBeenCalled(); });
+  it("rejects a malformed visit", async () => { expect((await call(undefined, "wrong")).status).toBe(400); expect(m.job).not.toHaveBeenCalled(); });
+  it("requires a readable visit", async () => { m.job.mockResolvedValue(null); expect((await call()).status).toBe(404); expect(m.writer).not.toHaveBeenCalled(); });
+  it("requires a completed visit", async () => { m.job.mockResolvedValue({ ...job, status: "assigned" }); expect((await call()).status).toBe(409); expect(m.writer).not.toHaveBeenCalled(); });
+  it("confirms the saved service draft and its actual total", async () => { const r = await call(); expect(r.headers.get("cache-control")).toContain("no-store"); expect(await r.json()).toMatchObject({ confirmed: true, visitId: id, invoiceId, status: "draft", totalCents: 19900 }); expect(m.prepare).toHaveBeenCalledWith({}, id, 19900); });
+  it("does not replace an existing issued invoice", async () => { m.invoice.mockResolvedValue({ ...invoice, status: "sent", amounts: { totalCents: 22000 } }); expect(await (await call()).json()).toMatchObject({ confirmed: true, totalCents: 22000, message: expect.stringContaining("Existing service invoice") }); });
+  it("reports a price changed under lock without claiming success", async () => { m.prepare.mockRejectedValue(new DraftPriceChanged()); const r = await call(); expect(r.status).toBe(409); expect(await r.json()).not.toHaveProperty("confirmed", true); expect(m.invoice).not.toHaveBeenCalled(); });
+  it("does not acknowledge an absent database receipt", async () => { m.prepare.mockResolvedValue(null); expect((await call()).status).toBe(409); expect(m.invoice).not.toHaveBeenCalled(); });
+  it.each([null, { ...invoice, customerId: "other" }, { ...invoice, jobId: "other" }, { ...invoice, status: "void" }, { ...invoice, kind: "reschedule_fee" }])("refuses an unverified invoice %j", async value => { m.invoice.mockResolvedValue(value); const r = await call(); expect(r.status).toBe(503); expect(await r.json()).not.toHaveProperty("confirmed", true); });
+  it("hides internal errors and gives read recovery", async () => { m.prepare.mockRejectedValue(new Error("sensitive diagnostics")); const r = await call(); expect(r.status).toBe(503); expect(await r.text()).not.toContain("sensitive diagnostics"); });
+});

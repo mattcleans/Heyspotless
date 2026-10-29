@@ -5,7 +5,7 @@ import { BillChangedError } from "@/lib/billing/types";
 import { type AutochargeDecision, nextAttemptAfter, planSweep } from "@/lib/billing/autocharge";
 import { chargeOffSession } from "@/lib/billing/gateway";
 import { reconcileInvoiceCollection } from "@/lib/billing/collection";
-import { cronSecretMatches, isBillingEnabled } from "@/lib/stripe/env";
+import { cronSecretMatches, isBillingEnabled, isAutochargeEnabled } from "@/lib/stripe/env";
 import { invoiceChargeDescription } from "@/lib/brand";
 
 /**
@@ -36,6 +36,9 @@ export async function POST(request: NextRequest) {
   }
   if (!isBillingEnabled()) {
     return NextResponse.json({ error: "billing is not enabled" }, { status: 503 });
+  }
+  if (!isAutochargeEnabled()) {
+    return NextResponse.json({ error: "automatic collection is not enabled" }, { status: 503 });
   }
 
   const store = new BillingStore(createAdminClient());

@@ -134,6 +134,18 @@ describe("recurring schedule review contracts", () => {
       }),
     ).toThrow();
   });
+  it("retains saved room counts in the reviewed agreement", () => {
+    const rooms = { bedrooms: 2, bathrooms: 1, halfBaths: 1, kitchens: 1, livingRooms: 1, utilityRooms: 0 };
+    expect(toScheduleQuote({ ...raw, review: { ...raw.review, room_counts: rooms, room_scope_source: "client_booking" } }).review.room_counts).toEqual(rooms);
+  });
+  it("rejects an invalid room list rather than silently accepting a changed scope", () => {
+    expect(() => toScheduleQuote({ ...raw, review: { ...raw.review, room_counts: { bedrooms: -1 }, room_scope_source: "client_booking" } })).toThrow();
+  });
+  it("does not match a receipt that drops or changes the room list", () => {
+    const quote = toScheduleQuote({ ...raw, review: { ...raw.review, room_counts: { bedrooms: 2, bathrooms: 1, halfBaths: 0, kitchens: 1, livingRooms: 1, utilityRooms: 0 }, room_scope_source: "client_booking" } });
+    const receipt = toScheduleReceipt({ id, confirmed_at: "2026-10-02T15:01:00Z", review: { ...raw.review, visits: [{ ...visit, job_id: job }] } });
+    expect(receiptMatchesQuote(receipt, quote)).toBe(false);
+  });
   it("drops unexpected private columns from client-visible review", () =>
     expect(
       JSON.stringify(

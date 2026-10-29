@@ -18,6 +18,21 @@ scheduler is best-effort and can run ten or fifteen minutes late under load —
 tolerable hourly, and far better than daily. If same-day backfills are
 regularly noticed late, that is the reason to pay for Vercel Cron.
 
+`APP_URL` must be `https://app.heyspotless.com`. Before either hourly sweep,
+the workflow makes a read-only `/api/health` request. A bare HTTP 200 is only
+liveness: the protected report must confirm the cron secret, Production
+environment and production Supabase project, with a reachable database.
+An authentication or target failure stops the workflow before its POST.
+Redirects are refused so the scheduler credential is never forwarded elsewhere.
+
+If the preflight reports an authentication failure, set the same strong secret
+in GitHub's repository `CRON_SECRET` and Vercel's **Production** `CRON_SECRET`.
+Redeploy production so the server receives the updated value, then rerun the
+workflow. Updating Vercel alone does not update GitHub, and saving an environment
+variable alone does not change an existing deployment. Keep Preview separate.
+Never print the secret in logs or paste it into an issue. This credential repair
+does not turn on billing, SMS or push; those retain their own controls.
+
 Times are UTC, because cron is. What they mean locally is the part worth
 checking, since the business runs on the America/Chicago calendar.
 

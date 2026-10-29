@@ -17,10 +17,14 @@ import {
 } from "@/lib/operations/visit-review";
 import { JOB_LABELS } from "@/lib/experience/schedule";
 import { FREQUENCY_LABELS, SERVICE_LABELS } from "@/lib/pricing/price-book";
-import { formatDateTimeInZone } from "@/lib/time/zone";
+import { formatDateTimeInZone,formatCalendarDate,toCalendarDate,todayIn } from "@/lib/time/zone";
 import { formatCents } from "@/lib/money";
 import { Pill } from "@/components/ui";
 import { VisitRefresh } from "@/components/visit-refresh";
+import { ServiceDraftAction } from "@/components/service-draft-action";
+import { InvoiceIssueAction } from "@/components/invoice-issue-action";
+import { roomsForVisit } from "@/lib/service/visit-room-scope";
+import { VisitRoomScopeNote } from "@/components/visit-room-scope-note";
 export const dynamic = "force-dynamic";
 export const metadata = { title: "Visit review | Hey Spotless management" };
 export default async function VisitReviewPage({
@@ -63,7 +67,8 @@ export default async function VisitReviewPage({
     throw new Error(
       "Home details are unavailable. Please refresh before reviewing photos.",
     );
-  const rooms = reviewRooms(home.rooms);
+  const scopeCounts = roomsForVisit(job, repo.isDemo ? home.rooms : undefined);
+  const rooms = scopeCounts ? reviewRooms(scopeCounts) : [];
   const facts: VisitFacts = repo.isDemo
     ? {
         startedAt: null,
@@ -84,8 +89,8 @@ export default async function VisitReviewPage({
               )
             : [],
       }
-    : await loadVisitFacts(await createClient(), id, home.rooms);
-  const review = reviewState(job.status, home.rooms, facts);
+    : await loadVisitFacts(await createClient(), id, scopeCounts);
+  const review = scopeCounts ? reviewState(job.status, scopeCounts, facts) : { key: "scope", label: "Saved room list needs review", gaps: [] };
   const photoLink = (photo: ReviewPhoto) =>
     repo.isDemo ? (
       <span className="text-xs text-ink-3">Sample record</span>
@@ -210,16 +215,25 @@ export default async function VisitReviewPage({
       <section className="visit-feature mt-5">
         <h2 className="font-semibold text-navy">{review.label}</h2>
         <p className="mt-2 text-sm text-ink-2">
-          {review.key === "photos"
+          {review.key === "scope" ? "The saved visit room list is unavailable. Review the original booking terms with the office before preparing a new invoice. Current home details cannot confirm this visit's photo requirements."
+            : review.key === "photos"
             ? "The visit is finished, but required photos have not all reached the server. Ask the assigned cleaner to reopen this visit and check the saved-photo queue."
             : review.key === "ready"
-              ? "The server has the photos required for this home's current room counts. No invoice record is loaded. Check billing follow-up before considering this visit settled."
+              ? "Required photo records are present for the saved visit room list. Prepare the service draft to verify the saved images and visit price."
               : review.key === "unavailable"
                 ? "The visit has an invoice timestamp, but its invoice record is unavailable. Refresh and check billing records."
                 : review.key === "recorded"
                   ? "An invoice record exists. Its balance and status below describe what is recorded; photo completeness does not confirm payment."
                   : "This visit has not been marked complete. Review the recorded times and assignment before following up."}
         </p>
+        {!repo.isDemo && <VisitRoomScopeNote scope={job.roomScope} office />}
+        {job.status === "complete" && !repo.isDemo && <ServiceDraftAction
+          visitId={id}
+          priceCents={job.priceCents}
+          canPrepare={facts.invoicedAt === null && Number.isSafeInteger(job.priceCents) && job.priceCents >= 0 &&
+            (review.key === "ready" || (facts.invoices.length === 1 && facts.invoices[0]?.status !== "void"))}
+          existingInvoice={facts.invoices.length > 0}
+        />}
         {facts.invoices.map((invoice) => (
           <div
             key={invoice.id}
@@ -233,6 +247,8 @@ export default async function VisitReviewPage({
             <p className="mt-1 break-all text-xs text-ink-3">
               Reference {invoice.id}
             </p>
+            {invoice.issuedAt && <p className="mt-2 text-sm">Issued {formatDateTimeInZone(invoice.issuedAt)}{toCalendarDate(invoice.dueOn)?` · Due ${formatCalendarDate(toCalendarDate(invoice.dueOn)!)}`:""}</p>}
+            {!repo.isDemo && job.status === "complete" && invoice.status === "draft" && invoice.kind === "service" && facts.invoices.filter(i=>i.kind==="service").length===1 && <InvoiceIssueAction visitId={id} invoiceId={invoice.id} totalCents={invoice.totalCents} defaultDueOn={toCalendarDate(invoice.dueOn) && invoice.dueOn! >= todayIn() ? invoice.dueOn! : todayIn()} minDueOn={todayIn()} />}
           </div>
         ))}
       </section>
@@ -271,8 +287,8 @@ export default async function VisitReviewPage({
       <section className="mt-6">
         <h2 className="font-semibold text-navy">Photo evidence</h2>
         <p className="mt-2 text-sm text-ink-2">
-          Required before and after photos for the current room counts of this
-          home. These are server records; photos waiting on a phone are not
+          Required before and after photos for this visit’s saved room list.
+          These are server records; photos waiting on a phone are not
           visible here.
         </p>
         {review.gaps.length > 0 && (
@@ -304,10 +320,10 @@ export default async function VisitReviewPage({
             </li>
           ))}
         </ul>
-        {rooms.length === 0 && (
+        {scopeCounts && rooms.length === 0 && (
           <p className="mt-3 text-sm text-ink-2">
-            No rooms require photos under the current room counts. Review the
-            home configuration if this is unexpected.
+            No rooms require photos under the saved visit room list. Review
+            its booking terms if this is unexpected.
           </p>
         )}
         {facts.issues.length > 0 && (

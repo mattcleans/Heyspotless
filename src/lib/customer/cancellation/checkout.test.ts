@@ -97,6 +97,29 @@ describe("canceled visit checkout", () => {
     expect(m.attach).not.toHaveBeenCalled();
     log.mockRestore();
   });
+  it("releases the claim when Stripe refused before creating a session", async () => {
+    m.begin.mockResolvedValue({ outcome: "started", idempotencyKey: "key:retry:1" });
+    m.checkout.mockRejectedValue(Object.assign(new Error("No such customer"), { type: "StripeInvalidRequestError", statusCode: 400 }));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const response = await pay();
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ status: "payment_unavailable", message: expect.stringContaining("No payment was taken") });
+    expect(m.resolve).toHaveBeenCalledWith("key:retry:1", "failed", expect.any(String));
+    expect(m.attach).not.toHaveBeenCalled();
+    log.mockRestore();
+  });
+  it.each([
+    ["a provider 5xx", { type: "StripeAPIError", statusCode: 500 }],
+    ["an idempotency conflict", { type: "StripeIdempotencyError", statusCode: 400 }],
+  ])("keeps the claim open after %s", async (_, detail) => {
+    m.checkout.mockRejectedValue(Object.assign(new Error("unconfirmed"), detail));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const response = await pay();
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ status: "payment_review_required" });
+    expect(m.resolve).not.toHaveBeenCalled();
+    log.mockRestore();
+  });
   it("does not resume a stored URL when the provider outcome is unconfirmed", async () => {
     m.reconcile.mockResolvedValue({ state: "in_flight", reviewRequired: true, redirectUrl: "https://checkout.example.test/stored", operation: { channel: "checkout", amountCents: 6000 } });
     const response = await pay();

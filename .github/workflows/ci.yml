@@ -92,6 +92,9 @@ jobs:
       - name: Verify completion invoice ordering
         run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-completion-invoicing.sql
 
+      - name: Verify read-only client projections
+        run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-client-projection-access.sql
+
       - name: Verify private Cleaner offer projection
         run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-cleaner-live-offers.sql
 
@@ -107,8 +110,32 @@ jobs:
       - name: Verify unresolved payment claims survive local expiry
         run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-unresolved-payment-claims.sql
 
+      - name: Verify Management release of unconfirmed payment claims
+        run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-released-payment-claims.sql
+
       - name: Verify assigned photo receipts and invoice evidence
         run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-photo-receipts.sql
+
+      - name: Verify reviewed Management service drafts
+        run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-service-draft.sql
+
+      - name: Verify concurrent Management draft preparation
+        run: bash scripts/verify-service-draft-races.sh spotless_verify
+
+      - name: Verify frozen visit room scopes and role access
+        run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-visit-room-scope.sql
+
+      - name: Verify reviewed manual invoice issuance
+        run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-invoice-issuance.sql
+
+      - name: Verify concurrent invoice issuance
+        run: bash scripts/verify-invoice-issue-races.sh spotless_verify
+
+      - name: Verify version-bound capture receipts
+        run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-photo-capture-versions.sql
+
+      - name: Verify concurrent capture versions and object replacement
+        run: bash scripts/verify-photo-capture-races.sh spotless_verify
 
       - name: Verify office payment review access
         run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-payment-review-access.sql

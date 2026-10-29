@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { toJob } from "@/lib/data/mappers";
 import type { RoomCounts } from "@/lib/pricing/quote";
+import { VISIT_ROOM_SCOPE_SELECT } from "@/lib/service/visit-room-scope";
 import { REVIEW_LIMIT, reviewRooms, type ReviewVisit, type VisitFacts, type ReviewPhoto } from "./visit-review";
 
 type Row = Record<string, unknown>;
@@ -31,16 +32,16 @@ function relation(value: unknown): Row {
 export async function listUninvoicedVisits(db: SupabaseClient): Promise<ReviewVisit[]> {
   const { data, error } = await db.from("jobs").select(`id, customer_id, property_id, status, service, freq,
     scheduled_start, completed_at, price_cents, estimated_clean_minutes,
-    customers(first_name,last_name), properties(street,city,zip,bedrooms,bathrooms)`)
+    customers(first_name,last_name), properties(street,city,zip,bedrooms,bathrooms), job_room_scopes(${VISIT_ROOM_SCOPE_SELECT})`)
     .eq("status", "complete").is("invoiced_at", null)
     .order("completed_at", { ascending: true, nullsFirst: true }).order("id", { ascending: true }).limit(REVIEW_LIMIT);
   return rows(data, error).map(row => ({ job: toJob(row), completedAt: date(row.completed_at) }));
 }
 
 /** Caller supplies the request-scoped client after checking the admin profile. */
-export async function loadVisitFacts(db: SupabaseClient, jobId: string, counts: RoomCounts): Promise<VisitFacts> {
+export async function loadVisitFacts(db: SupabaseClient, jobId: string, counts: RoomCounts | null): Promise<VisitFacts> {
   if (!jobId) throw new Error("Visit identity is required.");
-  const keys = reviewRooms(counts).map(room => room.key);
+  const keys = counts ? reviewRooms(counts).map(room => room.key) : [];
   // Required photos are unique per room and kind. Restrict to those keys so
   // arbitrary extra records cannot crowd required evidence out of a read.
   const [timing, photos, issues, assignments, invoices] = await Promise.all([
@@ -52,7 +53,7 @@ export async function loadVisitFacts(db: SupabaseClient, jobId: string, counts: 
       .order("taken_at", { ascending: false }).order("id", { ascending: false }).limit(20),
     db.from("job_assignments").select("cleaner_id,cleaners(id,full_name,profiles(phone))").eq("job_id", jobId)
       .order("id", { ascending: true }).limit(50),
-    db.from("invoices").select("id,status,total_cents,balance_cents").eq("job_id", jobId)
+    db.from("invoices").select("id,status,kind,total_cents,balance_cents,due_on,issued_at").eq("job_id", jobId)
       .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(200),
   ]);
   if (timing.error || !timing.data) throw new Error("Visit timing is unavailable. Please refresh.");
@@ -67,6 +68,7 @@ export async function loadVisitFacts(db: SupabaseClient, jobId: string, counts: 
       return { id: text(cleaner, "id"), name: text(cleaner, "full_name"), phone: typeof profile?.phone === "string" ? profile.phone : null };
     }),
     invoices: rows(invoices.data, invoices.error).map(row => ({ id: text(row, "id"), status: text(row, "status"),
-      totalCents: money(row, "total_cents"), balanceCents: money(row, "balance_cents") })),
+      totalCents: money(row, "total_cents"), balanceCents: money(row, "balance_cents"),kind:typeof row.kind==="string"?row.kind:undefined,
+      dueOn:typeof row.due_on==="string"?row.due_on:null,issuedAt:date(row.issued_at??null) })),
   };
 }
