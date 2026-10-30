@@ -173,7 +173,7 @@ export default async function CustomerPage() {
       )}
       <section className="mt-8">
         <h2 className="eyebrow">Outstanding</h2>
-        {drafts.length>0 && <p className="mt-2 max-w-xl text-sm text-ink-2">{drafts.length===1?"A visit is":"Visits are"} awaiting office invoice review. Unissued drafts are not included in your balance due. Issued bills will appear here.</p>}
+        {drafts.length>0 && <p className="mt-2 max-w-xl text-sm text-ink-2">{drafts.length===1?"An invoice is":"Invoices are"} awaiting office invoice review. Unissued drafts are not included in your balance due. Issued bills will appear here.</p>}
         {outstanding.length === 0 ? (
           <p className="mt-2 text-sm text-ink-3">Nothing to pay.</p>
         ) : (
@@ -187,7 +187,7 @@ export default async function CustomerPage() {
                   <p className="font-medium text-ink">
                     {invoice.kind === "reschedule_fee"
                       ? "Rescheduling fee · "
-                      : feeInvoices.has(invoice.id)
+                      : (invoice.kind === "cancellation_fee" || feeInvoices.has(invoice.id))
                         ? "Cancellation fee · "
                         : ""}
                     {formatCents(invoice.balanceCents)} due
@@ -288,7 +288,7 @@ export default async function CustomerPage() {
                   {formatDateInZone(invoice.issuedAt ?? invoice.createdAt)}
                   {invoice.kind === "reschedule_fee"
                     ? " · rescheduling fee"
-                    : ""}
+                    : invoice.kind === "cancellation_fee" ? " · cancellation fee" : ""}
                   {invoice.voidedAt ? " · invoice voided" : ""}
                   {invoice.amounts.refundedCents > 0
                     ? ` · ${formatCents(invoice.amounts.refundedCents)} refunded`
