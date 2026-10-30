@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { isJobReadReady } from "@/lib/data/job-read-readiness";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { hasSupabaseConfig, isDemoMode, supabaseUrl } from "@/lib/supabase/env";
 import {
@@ -50,6 +51,8 @@ export const dynamic = "force-dynamic";
 
 interface DatabaseReport {
   reachable: boolean;
+  /** Exact dispatch projection, including saved room scope, resolves with zero rows. */
+  jobReadReady: boolean;
   error?: string;
   /**
    * The highest migration this database has applied, as reported by
@@ -132,14 +135,14 @@ export async function GET(request: NextRequest) {
  */
 async function inspectDatabase(): Promise<DatabaseReport> {
   if (isDemoMode()) {
-    return { reachable: false, error: "demo mode — no database is connected", schemaVersion: null };
+    return { reachable: false, jobReadReady: false, error: "demo mode — no database is connected", schemaVersion: null };
   }
 
   let db;
   try {
     db = createAdminClient();
   } catch (error) {
-    return { reachable: false, error: messageOf(error), schemaVersion: null };
+    return { reachable: false, jobReadReady: false, error: messageOf(error), schemaVersion: null };
   }
 
   const TABLES = [
@@ -156,7 +159,8 @@ async function inspectDatabase(): Promise<DatabaseReport> {
     "push_subscriptions",
   ] as const;
 
-  const [version, ...counts] = await Promise.all([
+  const [jobReadReady, version, ...counts] = await Promise.all([
+    isJobReadReady(db),
     db.rpc("app_schema_version").then(
       ({ data, error }) => (error ? null : typeof data === "number" ? data : null),
       () => null,
@@ -184,6 +188,7 @@ async function inspectDatabase(): Promise<DatabaseReport> {
 
   return {
     reachable,
+    jobReadReady,
     ...(reachable ? {} : { error: "no table could be read" }),
     schemaVersion: version,
     rows,

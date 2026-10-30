@@ -6,6 +6,7 @@ export async function verifySchedulerTarget(
   appUrl: string | undefined,
   secret: string | undefined,
   fetcher: typeof fetch = fetch,
+  requirements: { dispatchRead?: boolean } = {},
 ): Promise<void> {
   if (!appUrl || !secret) {
     throw new Error("Set APP_URL and CRON_SECRET in GitHub repository secrets.");
@@ -63,5 +64,8 @@ export async function verifySchedulerTarget(
     report?.database?.reachable !== true
   ) {
     throw new Error("Production database is unavailable or incompletely configured. Sweep was not started.");
+  }
+  if (requirements.dispatchRead && report?.database?.jobReadReady !== true) {
+    throw new Error("Production dispatch job reads are not ready. Verify the deployed query and database migrations before running dispatch. Sweep was not started.");
   }
 }
