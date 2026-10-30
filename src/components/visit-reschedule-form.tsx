@@ -35,7 +35,7 @@ export function RescheduleReceiptDetails({
       </p>
       {receipt.feeCents > 0 && (
         <p className="mt-2 text-sm text-ink-2">
-          The fee has its own invoice in your account. Saving this change does
+          The fee has its own invoice for Management review. Pay it through Account once the bill is issued. Saving this change does
           not charge your card.
         </p>
       )}
