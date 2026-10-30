@@ -10,7 +10,7 @@ const healthy = () => ({
     projectUrl: "https://swxaupitauibkatljfnt.supabase.co",
     configured: true, serviceRoleKey: true, demoMode: false,
   },
-  database: { reachable: true },
+  database: { reachable: true, jobReadReady: true },
 });
 const reply = (body: unknown, status = 200) =>
   vi.fn<typeof fetch>().mockResolvedValue(Response.json(body, { status }));
@@ -67,6 +67,24 @@ describe("production scheduler preflight", () => {
     else if (field === "configured") body.supabase.configured = false;
     else body.supabase.serviceRoleKey = false;
     await expect(verifySchedulerTarget(origin, secret, reply(body))).rejects.toThrow("Sweep was not started");
+  });
+
+  it.each([false, undefined, null, "true"])("refuses dispatch when its projection is not confirmed (%s)", async (jobReadReady) => {
+    const body = { ...healthy(), database: { reachable: true, jobReadReady } };
+    const fetcher = reply(body);
+    await expect(verifySchedulerTarget(origin, secret, fetcher, { dispatchRead: true }))
+      .rejects.toThrow("dispatch job reads are not ready");
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(String(fetcher.mock.calls[0]![0])).toBe(`${origin}/api/health`);
+  });
+
+  it("accepts dispatch only with confirmed exact-query readiness", async () => {
+    await expect(verifySchedulerTarget(origin, secret, reply(healthy()), { dispatchRead: true })).resolves.toBeUndefined();
+  });
+
+  it("keeps the separate automation preflight independent of dispatch-only readiness", async () => {
+    const body = healthy(); body.database.jobReadReady = false;
+    await expect(verifySchedulerTarget(origin, secret, reply(body))).resolves.toBeUndefined();
   });
 
   it("does not echo an HTTP error body", async () => {
