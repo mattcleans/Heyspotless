@@ -34,7 +34,7 @@ export function CancellationReceiptDetails({
         {receipt.billingReview
           ? "The office needs to reconcile an existing payment or payment attempt before settling the balance. This cancellation did not start another payment."
           : receipt.feeCents
-            ? "The fee is on your account. Pay it through Account; it will not be charged automatically."
+            ? "The fee is recorded. Pay it through Account once Management has issued the bill; it will not be charged automatically."
             : "This confirmation did not start a payment."}
       </p>
       <p className="mt-2 text-sm text-ink-2">
@@ -249,7 +249,7 @@ export function VisitCancellationForm({
           </p>
           <p className="mt-2 text-sm text-ink-2">
             {quote.feeCents
-              ? `This fee will be recorded on ${office ? "the client’s" : "your"} account. Existing payments may require office reconciliation.`
+              ? `This fee will be saved for Management invoice review before it is due. Existing payments may require office reconciliation.`
               : "No cancellation fee applies to this review."}{" "}
             Confirmation cancels the appointment immediately.
           </p>
