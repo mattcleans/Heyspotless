@@ -11,6 +11,7 @@ import { PayInvoiceButton, SaveCardButton } from "./billing-actions";
 import { createClient } from "@/lib/supabase/server";
 import { cancellationsForInvoices } from "@/lib/customer/cancellation/store";
 import { clientInvoiceGroups } from "@/lib/billing/client-invoices";
+import { loadClientPaymentHistory } from "@/lib/billing/client-payment-history";
 
 export const metadata = { title: "Your account | Hey Spotless" };
 
@@ -39,6 +40,7 @@ export default async function CustomerPage() {
   const now = new Date();
   const upcoming = upcomingVisits(jobs, now).slice(0, 3);
   const {outstanding,settled,drafts}=clientInvoiceGroups(invoices);
+  const paymentHistory = await loadClientPaymentHistory(repo, invoices);
   const cancellations = repo.isDemo
     ? []
     : await cancellationsForInvoices(
@@ -275,9 +277,38 @@ export default async function CustomerPage() {
       </section>
 
       {/* ------------------------------------------------------- history --- */}
+      <section className="mt-8">
+        <h2 className="eyebrow">Payment history</h2>
+        <p className="mt-2 text-sm text-ink-3">Successful payments for your 20 most recent invoices. Times use Dallas time.</p>
+        {!paymentHistory.available ? (
+          <p role="status" className="mt-2 text-sm text-ink-2">Some payment history is unavailable. Refresh to check again, or call the office for a receipt.</p>
+        ) : paymentHistory.receipts.length === 0 ? (
+          <p className="mt-2 text-sm text-ink-3">No successful payment records for these invoices.</p>
+        ) : null}
+        <ul className="mt-2 space-y-2">
+          {paymentHistory.receipts.map(({ invoice, payment }) => (
+            <li key={payment.id} className="card px-4 py-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <p className="text-sm font-medium text-navy">
+                  {payment.succeededAt ? `Paid ${formatDateInZone(payment.succeededAt)}` : "Paid · payment date unavailable"}
+                </p>
+                <p className="nums text-sm font-semibold text-navy">{formatCents(payment.amountCents)}</p>
+              </div>
+              <p className="mt-1 text-sm text-ink-2">
+                {invoice.kind === "cancellation_fee" ? "Cancellation fee" : invoice.kind === "reschedule_fee" ? "Rescheduling fee" : "Cleaning invoice"}
+                {payment.isAutocharge ? " · automatic payment" : " · manual payment"}
+              </p>
+              <p className="mt-1 break-all text-xs text-ink-3">Receipt {payment.id}</p>
+              {invoice.amounts.refundedCents > 0 ? (
+                <p className="mt-1 text-sm text-ink-2">Refunds recorded for this invoice: {formatCents(invoice.amounts.refundedCents)}.</p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </section>
       {settled.length > 0 ? (
         <section className="mt-8">
-          <h2 className="eyebrow">Payment history</h2>
+          <h2 className="eyebrow">Closed invoices</h2>
           <ul className="mt-2 space-y-2">
             {settled.map((invoice) => (
               <li
@@ -285,7 +316,7 @@ export default async function CustomerPage() {
                 className="card flex items-center justify-between gap-4 px-4 py-3"
               >
                 <span className="text-sm text-ink-2">
-                  {formatDateInZone(invoice.issuedAt ?? invoice.createdAt)}
+                  {invoice.issuedAt ? `Invoice issued ${formatDateInZone(invoice.issuedAt)}` : `Invoice created ${formatDateInZone(invoice.createdAt)}`}
                   {invoice.kind === "reschedule_fee"
                     ? " · rescheduling fee"
                     : invoice.kind === "cancellation_fee" ? " · cancellation fee" : ""}
