@@ -2,7 +2,7 @@
  * Bring the business across from Housecall Pro.
  *
  *   npm run import:hcp -- --customers customers.csv --jobs jobs.csv --dry-run
- *   npm run import:hcp -- --customers customers.csv --jobs jobs.csv [--plans plans.csv]
+ *   npm run import:hcp -- --customers customers.csv --jobs jobs.csv [--plans plans.csv] --apply
  *
  * A SCRIPT RATHER THAN A SCREEN, deliberately. This runs a handful of times in
  * one week and then never again; a admin page for it would be a permanent
@@ -61,10 +61,14 @@ function parseArgs(argv: readonly string[]): Options {
     customers: null,
     jobs: null,
     plans: null,
-    dryRun: false,
+    dryRun: true,
     limit: null,
     today: null,
   };
+
+  if (argv.includes("--dry-run") && argv.includes("--apply")) {
+    throw new Error("Choose either --dry-run or --apply.");
+  }
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -72,6 +76,7 @@ function parseArgs(argv: readonly string[]): Options {
     else if (arg === "--jobs") options.jobs = argv[++i] ?? null;
     else if (arg === "--plans") options.plans = argv[++i] ?? null;
     else if (arg === "--dry-run") options.dryRun = true;
+    else if (arg === "--apply") options.dryRun = false;
     else if (arg === "--limit") options.limit = Number(argv[++i]);
     // For re-running a dry run as of a given day; defaults to today in Dallas.
     else if (arg === "--today") options.today = argv[++i] ?? null;
@@ -276,8 +281,8 @@ async function main() {
   if (!options.customers) {
     console.error(
       "Usage: npm run import:hcp -- --customers customers.csv [--jobs jobs.csv]\n" +
-        "         [--plans plans.csv] [--dry-run] [--limit N] [--today YYYY-MM-DD]\n\n" +
-        "Run it with --dry-run first. The interesting output of a migration is\n" +
+        "         [--plans plans.csv] [--dry-run | --apply] [--limit N] [--today YYYY-MM-DD]\n\n" +
+        "Dry run is the default. Use --apply only after reviewing the report. The interesting output of a migration is\n" +
         "the list of rows it could not read, and a dry run prints exactly that.\n" +
         (options.jobs
           ? "\nJobs are linked to customers from the customer export, so --customers is required.\n"
