@@ -4,6 +4,7 @@ import { myCrewOffers } from "@/lib/crew/store";
 import { OfferActions } from "./offer-actions";
 import { PushPrompt } from "./push-prompt";
 import { Pill } from "@/components/ui";
+import { VisitRefresh } from "@/components/visit-refresh";
 import { getRepository } from "@/lib/data";
 import { createClient } from "@/lib/supabase/server";
 import { formatCents, formatHours } from "@/lib/money";
@@ -239,6 +240,7 @@ export default async function CleanerPage() {
           <h2 id="offers-heading">Available offers</h2>
           <span className="text-sm text-ink-2">{offers.length} open</span>
         </div>
+        {cleaner && !repo.isDemo && <VisitRefresh label="Refresh offers" />}
         {offers.length ? (
           <ul className="space-y-3">
             {offers.map((offer) => (
