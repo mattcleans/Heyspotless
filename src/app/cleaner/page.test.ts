@@ -12,6 +12,7 @@ vi.mock("@/lib/supabase/server", () => ({
 vi.mock("@/lib/customer/reschedule/store", () => ({ releasedVisits: async () => [] }));
 vi.mock("@/lib/crew/store", () => ({ myCrewOffers: async () => [] }));
 vi.mock("./push-prompt", () => ({ PushPrompt: () => null }));
+vi.mock("@/components/visit-refresh", () => ({ VisitRefresh: () => null }));
 import CleanerHome from "./page";
 
 const visit = (id: string, start: string | null, status = "assigned") =>
