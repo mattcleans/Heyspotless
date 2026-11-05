@@ -73,6 +73,8 @@ for f in supabase/migrations/*.sql; do
 done
 echo "  all migrations applied"
 
+as_super $PSQL -d "$DB" -f scripts/verify-function-paths.sql
+
 # Historical Storage migrations intentionally skip the provider-owned schema
 # on bare Postgres. Add only the metadata model after those migrations.
 as_super $PSQL -d "$DB" <<'SQL'
