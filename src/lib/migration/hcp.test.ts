@@ -454,10 +454,23 @@ describe("the 2026 export's job columns", () => {
   });
 
   it("reads a missing scheduled date as null rather than a guess", () => {
-    const mapped = mapJob({ ...row, job_status: "Scheduled", job_scheduled_start_date: "" });
+    const mapped = mapJob({
+      ...row,
+      job_status: "Scheduled",
+      job_scheduled_start_date: "",
+      job_scheduled_end_date: "",
+    });
     if (!mapped.ok) throw new Error(mapped.problem);
     expect(mapped.value.scheduledStart).toBeNull();
+    expect(mapped.value.scheduledEnd).toBeNull();
     expect(mapped.value.scheduledDate).toBeNull();
+  });
+
+  it("reports a scheduled end with no start", () => {
+    expect(mapJob({ ...row, job_scheduled_start_date: "" })).toMatchObject({
+      ok: false,
+      reason: "invalid scheduled window",
+    });
   });
 
   it("refuses a job that names no customer in any way", () => {
