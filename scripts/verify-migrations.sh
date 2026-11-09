@@ -2696,6 +2696,7 @@ SQL
 echo "  recruiting funnel verified"
 
 echo "  checking the Housecall Pro import"
+as_super $PSQL -d "$DB" -f scripts/verify-imported-visit-replay.sql
 as_super $PSQL -d "$DB" <<'SQL'
 do $$
 declare
