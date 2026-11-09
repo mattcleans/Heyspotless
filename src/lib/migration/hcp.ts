@@ -90,6 +90,7 @@ export interface MappedJob {
   statusRaw: string | null;
   /** An exact instant, ISO. */
   scheduledStart: string | null;
+  scheduledEnd: string | null;
   /** The Dallas calendar day of `scheduledStart`. */
   scheduledDate: CalendarDate | null;
   completedAt: string | null;
@@ -526,6 +527,13 @@ export function mapJob(row: Record<string, string>): Mapped<MappedJob> {
   const scheduled = parseExportDate(
     pick(row, "job_scheduled_start_date", "scheduled_start", "start_date", "scheduled_date", "date"),
   );
+  const scheduledStart = resolveInstant(scheduled);
+  const endRaw = pick(row, "job_scheduled_end_date", "scheduled_end", "scheduled_end_date");
+  const end = parseExportDate(endRaw);
+  const scheduledEnd = end?.time ? resolveInstant(end) : null;
+  if (endRaw && (!scheduled?.time || !scheduledStart || !scheduledEnd || scheduledEnd <= scheduledStart)) {
+    return fail("invalid scheduled window", `job ${hcpId}`);
+  }
   const completed = parseExportDate(pick(row, "job_completed_date", "completed_at", "completed_date", "end_date"));
 
   const street = pick(row, "street");
@@ -546,7 +554,8 @@ export function mapJob(row: Record<string, string>): Mapped<MappedJob> {
       priceCents,
       status,
       statusRaw,
-      scheduledStart: resolveInstant(scheduled),
+      scheduledStart,
+      scheduledEnd,
       scheduledDate: (scheduled?.date as CalendarDate | undefined) ?? null,
       // Only a job that says it finished gets a completion time. Inferring one
       // from a past date would make every old scheduled job an incumbency.

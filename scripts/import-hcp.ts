@@ -2,7 +2,7 @@
  * Bring the business across from Housecall Pro.
  *
  *   npm run import:hcp -- --customers customers.csv --jobs jobs.csv --dry-run
- *   npm run import:hcp -- --customers customers.csv --jobs jobs.csv [--plans plans.csv]
+ *   npm run import:hcp -- --customers customers.csv --jobs jobs.csv [--plans plans.csv] --apply
  *
  * A SCRIPT RATHER THAN A SCREEN, deliberately. This runs a handful of times in
  * one week and then never again; a admin page for it would be a permanent
@@ -24,7 +24,7 @@
  * wrong is texting three hundred people at once, and a flag costs nothing.
  *
  * `--plans plans.csv` is optional: columns customer_email_or_phone, street,
- * freq, service, agreed_price, anchor_date, active. A row there always wins
+ * freq, service, agreed_price, anchor_date, start_time (Dallas HH:MM), active. A row there always wins
  * over a plan inferred from visit spacing. See `src/lib/migration/plans.ts`.
  */
 
@@ -32,7 +32,7 @@ import { readFileSync } from "node:fs";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { parseCsv, toRecords } from "../src/lib/migration/csv.ts";
 import { formatReport, prepareImport, type ImportPlan } from "../src/lib/migration/prepare.ts";
-import { todayIn, toCalendarDate, type CalendarDate } from "../src/lib/time/zone.ts";
+import { INVALID_PLAN_START } from "../src/lib/migration/plans.ts";
 
 interface Options {
   customers: string | null;
@@ -61,10 +61,14 @@ function parseArgs(argv: readonly string[]): Options {
     customers: null,
     jobs: null,
     plans: null,
-    dryRun: false,
+    dryRun: true,
     limit: null,
     today: null,
   };
+
+  if (argv.includes("--dry-run") && argv.includes("--apply")) {
+    throw new Error("Choose either --dry-run or --apply.");
+  }
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -72,6 +76,7 @@ function parseArgs(argv: readonly string[]): Options {
     else if (arg === "--jobs") options.jobs = argv[++i] ?? null;
     else if (arg === "--plans") options.plans = argv[++i] ?? null;
     else if (arg === "--dry-run") options.dryRun = true;
+    else if (arg === "--apply") options.dryRun = false;
     else if (arg === "--limit") options.limit = Number(argv[++i]);
     // For re-running a dry run as of a given day; defaults to today in Dallas.
     else if (arg === "--today") options.today = argv[++i] ?? null;
@@ -203,8 +208,7 @@ async function write(db: SupabaseClient, plan: ImportPlan, today: CalendarDate) 
       p_estimated_minutes: 0,
       p_status: j.job.status,
       p_scheduled_start: j.job.scheduledStart,
-      p_scheduled_end: null,
-      p_completed_at: j.job.completedAt,
+      p_scheduled_end: j.job.scheduledEnd,
       p_notes: j.job.notes,
     });
     if (error) {
@@ -236,6 +240,9 @@ async function write(db: SupabaseClient, plan: ImportPlan, today: CalendarDate) 
       p_service: p.service,
       p_agreed_price_cents: p.agreedPriceCents,
       p_estimated_minutes: 0,
+      p_anchor_date: p.anchorDate,
+      p_active: p.active,
+      ...(p.startTime === null ? {} : { p_start_time: p.startTime }),
       p_anchor_date: p.anchorDate,
       p_active: p.active,
     });
@@ -276,8 +283,8 @@ async function main() {
   if (!options.customers) {
     console.error(
       "Usage: npm run import:hcp -- --customers customers.csv [--jobs jobs.csv]\n" +
-        "         [--plans plans.csv] [--dry-run] [--limit N] [--today YYYY-MM-DD]\n\n" +
-        "Run it with --dry-run first. The interesting output of a migration is\n" +
+        "         [--plans plans.csv] [--dry-run | --apply] [--limit N] [--today YYYY-MM-DD]\n\n" +
+        "Dry run is the default. Use --apply only after reviewing the report. The interesting output of a migration is\n" +
         "the list of rows it could not read, and a dry run prints exactly that.\n" +
         (options.jobs
           ? "\nJobs are linked to customers from the customer export, so --customers is required.\n"
@@ -311,10 +318,11 @@ async function main() {
   console.log(formatReport(plan.report));
 
   if (options.dryRun) return;
-
-  console.log("\nwriting:");
-  await write(client(), plan, today);
-
+  if (plan.report.skipped.count(INVALID_PLAN_START) > 0) {
+    console.error("Correct the invalid recurring arrival times before importing.");
+    process.exitCode = 1;
+    return;
+  }
   console.log(
     "\nNext: check `recurring_price_audit` before anything regenerates a quote.\n" +
       "Every row in it is a customer whose agreed price differs from the book,\n" +

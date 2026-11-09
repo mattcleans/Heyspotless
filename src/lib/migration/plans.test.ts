@@ -177,6 +177,7 @@ describe("the plans override file", () => {
         service: "Standard",
         agreed_price: "$140.00",
         anchor_date: "2026-10-05",
+        start_time: "13:00",
         active: "true",
       },
     ]);
@@ -190,6 +191,7 @@ describe("the plans override file", () => {
         service: "standard",
         agreedPriceCents: 14000,
         anchorDate: "2026-10-05",
+        startTime: "13:00",
         active: true,
       },
     ]);
@@ -206,6 +208,7 @@ describe("the plans override file", () => {
     [{ customer_email_or_phone: "a@b.c", freq: "one-time" }, "plan override: freq must be weekly, biweekly or monthly"],
     [{ customer_email_or_phone: "a@b.c", freq: "weekly", agreed_price: "TBD" }, "plan override: unreadable agreed_price"],
     [{ customer_email_or_phone: "a@b.c", freq: "weekly", anchor_date: "10/5/2026" }, "plan override: anchor_date must be YYYY-MM-DD"],
+    [{ customer_email_or_phone: "a@b.c", freq: "weekly", start_time: "24:00" }, "plan override: start_time must be HH:MM in Dallas"],
     [{ customer_email_or_phone: "a@b.c", freq: "weekly", service: "carpets" }, "plan override: unrecognised service"],
   ])("refuses %o", (row, reason) => {
     const { overrides, problems } = parsePlanOverrides([row]);
@@ -227,6 +230,7 @@ describe("buildPlans — an override always wins", () => {
           service: null,
           agreedPriceCents: null,
           anchorDate: null,
+          startTime: null,
           active: null,
           customerHcpId: "c1",
           ...fields,
@@ -248,14 +252,14 @@ describe("buildPlans — an override always wins", () => {
     expect(plans[0]).toMatchObject({ freq: "weekly", source: "override", agreedPriceCents: 15000 });
   });
 
-  it("over price, service, anchor and active, each on its own", () => {
+  it("over price, service, anchor, arrival and active, each on its own", () => {
     const jobs = [...every(14, 3).map((d, i) => planJob(i, d)), planJob(9, "2026-10-12", { job_status: "Scheduled" })];
     const [plan] = buildPlans(
       jobs,
-      override({ freq: "biweekly", agreedPriceCents: 13500, service: "deep", anchorDate: "2026-11-02" as CalendarDate, active: false }),
+      override({ freq: "biweekly", agreedPriceCents: 13500, service: "deep", anchorDate: "2026-11-02" as CalendarDate, startTime: "13:00", active: false }),
       TODAY,
     ).plans;
-    expect(plan).toMatchObject({ agreedPriceCents: 13500, service: "deep", anchorDate: "2026-11-02", active: false });
+    expect(plan).toMatchObject({ agreedPriceCents: 13500, service: "deep", anchorDate: "2026-11-02", startTime: "13:00", active: false });
   });
 
   it("even with no recurring jobs behind it, when it states a price and an anchor", () => {

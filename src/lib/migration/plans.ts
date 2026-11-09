@@ -41,6 +41,7 @@ export interface PlanOverride {
   service: ServiceType | null;
   agreedPriceCents: number | null;
   anchorDate: CalendarDate | null;
+  startTime: string | null;
   active: boolean | null;
 }
 
@@ -52,6 +53,7 @@ export interface PlannedPlan {
   service: ServiceType;
   agreedPriceCents: number;
   anchorDate: CalendarDate;
+  startTime: string | null;
   active: boolean;
   source: "override" | "inferred";
   jobCount: number;
@@ -70,6 +72,7 @@ export interface PlanGap {
 
 /** Consecutive visits the median is taken over — recent enough to be the current cadence. */
 export const RECENT_VISITS = 6;
+export const INVALID_PLAN_START = "plan override: start_time must be HH:MM in Dallas";
 export const MIN_VISITS = 3;
 
 /**
@@ -100,7 +103,7 @@ export function medianGapDays(dates: readonly CalendarDate[]): number | null {
 
 /**
  * The overrides file: `customer_email_or_phone, street, freq, service,
- * agreed_price, anchor_date, active`. Only the customer and `freq` are
+ * agreed_price, anchor_date, start_time, active`. Only the customer and `freq` are
  * required; a blank anything-else is filled from the jobs, exactly as an
  * inferred plan would be.
  */
@@ -147,6 +150,11 @@ export function parsePlanOverrides(
     }
 
     const activeRaw = pick(record, "active");
+    const startTime = pick(record, "start_time");
+    if (startTime && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(startTime)) {
+      problems.push({ row, reason: INVALID_PLAN_START, raw: startTime });
+      return;
+    }
 
     overrides.push({
       row,
@@ -156,6 +164,7 @@ export function parsePlanOverrides(
       service,
       agreedPriceCents: price,
       anchorDate: anchor,
+      startTime,
       active: activeRaw === null ? null : parseFlag(activeRaw),
     });
   });
@@ -232,6 +241,7 @@ export function buildPlans(
       service: override?.service ?? group.at(-1)?.job.service ?? "standard",
       agreedPriceCents: price,
       anchorDate: anchor,
+      startTime: override?.startTime ?? null,
       active: override?.active ?? upcoming !== undefined,
       source: override ? "override" : "inferred",
       jobHcpIds: group.map((g) => g.job.hcpId),
