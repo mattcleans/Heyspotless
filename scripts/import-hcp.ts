@@ -24,7 +24,7 @@
  * wrong is texting three hundred people at once, and a flag costs nothing.
  *
  * `--plans plans.csv` is optional: columns customer_email_or_phone, street,
- * freq, service, agreed_price, anchor_date, active. A row there always wins
+ * freq, service, agreed_price, anchor_date, start_time (Dallas HH:MM), active. A row there always wins
  * over a plan inferred from visit spacing. See `src/lib/migration/plans.ts`.
  */
 
@@ -32,6 +32,7 @@ import { readFileSync } from "node:fs";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { parseCsv, toRecords } from "../src/lib/migration/csv.ts";
 import { formatReport, prepareImport, type ImportPlan } from "../src/lib/migration/prepare.ts";
+import { INVALID_PLAN_START } from "../src/lib/migration/plans.ts";
 import { todayIn, toCalendarDate, type CalendarDate } from "../src/lib/time/zone.ts";
 
 interface Options {
@@ -238,6 +239,7 @@ async function write(db: SupabaseClient, plan: ImportPlan, today: CalendarDate) 
       p_estimated_minutes: 0,
       p_anchor_date: p.anchorDate,
       p_active: p.active,
+      ...(p.startTime === null ? {} : { p_start_time: p.startTime }),
     });
     if (error || typeof planId !== "string") {
       plans.failed += 1;
@@ -311,6 +313,11 @@ async function main() {
   console.log(formatReport(plan.report));
 
   if (options.dryRun) return;
+  if (plan.report.skipped.count(INVALID_PLAN_START) > 0) {
+    console.error("Correct the invalid recurring arrival times before importing.");
+    process.exitCode = 1;
+    return;
+  }
 
   console.log("\nwriting:");
   await write(client(), plan, today);
