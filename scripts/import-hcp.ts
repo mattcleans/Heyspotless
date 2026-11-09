@@ -203,7 +203,7 @@ async function write(db: SupabaseClient, plan: ImportPlan, today: CalendarDate) 
       p_estimated_minutes: 0,
       p_status: j.job.status,
       p_scheduled_start: j.job.scheduledStart,
-      p_scheduled_end: null,
+      p_scheduled_end: j.job.scheduledEnd,
       p_completed_at: j.job.completedAt,
       p_notes: j.job.notes,
     });
