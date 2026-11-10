@@ -183,7 +183,7 @@ describe("the webhook's response to Stripe", () => {
   }
   it("matches a delayed intent capture to its stored Checkout session", async () => {
     const h = harness(); pendingCheckout(h);
-    const lookup = vi.spyOn(gateway, "lookUpCheckoutSession").mockResolvedValue({ state: "paid", paymentIntentId: "pi_1", amountCents: 17000, chargeId: "ch_1" });
+    const lookup = vi.spyOn(gateway, "lookUpCheckoutSession").mockResolvedValue({ state: "paid", paymentIntentId: "pi_1", amountCents: 17000, tipCents: 0, chargeId: "ch_1" });
     const result = await handleStripeEvent(h.store, paymentEvent("evt_delayed"));
     expect(result.status).toBe(200);
     expect(h.store.resolvePaymentOperation).toHaveBeenCalledWith("key", "succeeded");
@@ -192,7 +192,7 @@ describe("the webhook's response to Stripe", () => {
   });
   it("retries an uncertain Checkout association without recording the capture twice", async () => {
     const h = harness(); pendingCheckout(h);
-    const lookup = vi.spyOn(gateway, "lookUpCheckoutSession").mockRejectedValueOnce(new Error("provider unreachable")).mockResolvedValueOnce({ state: "paid", paymentIntentId: "pi_1", amountCents: 17000, chargeId: "ch_1" });
+    const lookup = vi.spyOn(gateway, "lookUpCheckoutSession").mockRejectedValueOnce(new Error("provider unreachable")).mockResolvedValueOnce({ state: "paid", paymentIntentId: "pi_1", amountCents: 17000, tipCents: 0, chargeId: "ch_1" });
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     expect((await handleStripeEvent(h.store, paymentEvent("evt_delayed"))).status).toBe(500);
     expect(h.store.resolvePaymentOperation).not.toHaveBeenCalled();
@@ -203,7 +203,7 @@ describe("the webhook's response to Stripe", () => {
   });
   it("does not close a different Checkout capture under an unrelated intent event", async () => {
     const h = harness(); pendingCheckout(h);
-    const lookup = vi.spyOn(gateway, "lookUpCheckoutSession").mockResolvedValue({ state: "paid", paymentIntentId: "pi_other", amountCents: 17000, chargeId: null });
+    const lookup = vi.spyOn(gateway, "lookUpCheckoutSession").mockResolvedValue({ state: "paid", paymentIntentId: "pi_other", amountCents: 17000, tipCents: 0, chargeId: null });
     expect((await handleStripeEvent(h.store, paymentEvent("evt_delayed"))).status).toBe(200);
     expect(h.store.resolvePaymentOperation).not.toHaveBeenCalled();
     lookup.mockRestore();

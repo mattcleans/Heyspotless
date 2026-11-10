@@ -315,6 +315,7 @@ describe("reconciling an attempt whose outcome we never learned", () => {
       state: "paid",
       paymentIntentId: "pi_1",
       amountCents: 17000,
+      tipCents: 0,
       chargeId: "ch_1",
     });
 
@@ -325,6 +326,32 @@ describe("reconciling an attempt whose outcome we never learned", () => {
     expect(l.payments).toEqual([{ intent: "pi_1", amountCents: 17000 }]);
     expect(l.operations[0]?.state).toBe("succeeded");
     look.mockRestore();
+  });
+
+  it("preserves the provider tip when recovery wins the race with the webhook", async () => {
+    const l = ledger();
+    const key = "checkout:inv-1:17000:2000";
+    await l.store.beginPaymentOperation({
+      invoiceId: "inv-1", channel: "checkout", idempotencyKey: key, amountCents: 19000,
+      expectedBalanceCents: 17000, expectedCustomerId: "customer", tipCents: 2000,
+    });
+    await l.store.attachPaymentOperation({
+      idempotencyKey: key, stripeObjectKind: "checkout_session", stripeObjectId: "cs_tip",
+    });
+    const captured = {
+      state: "paid" as const, paymentIntentId: "pi_tip", amountCents: 19000,
+      chargeId: null, tipCents: 2000,
+    };
+    const lookup = vi.spyOn(gateway, "lookUpCheckoutSession").mockResolvedValue(captured);
+    const record = vi.spyOn(l.store, "recordPayment");
+    try {
+      expect((await reconcileInvoiceCollection(l.store, "inv-1")).state).toBe("settled");
+      expect(record).toHaveBeenCalledWith(expect.objectContaining({
+        stripePaymentIntentId: "pi_tip", amountCents: 19000, tipCents: 2000,
+      }));
+    } finally {
+      lookup.mockRestore();
+    }
   });
 
   it("does not double-record a payment the webhook already applied", async () => {
@@ -352,6 +379,7 @@ describe("reconciling an attempt whose outcome we never learned", () => {
       state: "paid",
       paymentIntentId: "pi_1",
       amountCents: 17000,
+      tipCents: 0,
       chargeId: null,
     });
 

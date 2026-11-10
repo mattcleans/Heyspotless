@@ -4,7 +4,7 @@ import Stripe from "stripe";
 import { beforeAll, describe, expect, it } from "vitest";
 import { CUSTOMER_BRAND } from "../brand";
 import { toTransition, type StripeEventLike } from "./events";
-import { listChargeRefunds } from "./gateway";
+import { listChargeRefunds, lookUpPaymentIntent } from "./gateway";
 
 /**
  * The gate nothing else closes: real Stripe objects, real Postgres.
@@ -250,6 +250,56 @@ describe.skipIf(!CONFIGURED)("against Stripe test mode and real Postgres", () =>
          where invoice_id = '${invoiceId}' and category = 'goodwill'`,
       ),
     ).toBe("2500");
+  }, 90_000);
+
+  it("recovers a real tipped capture without creating another collection", async () => {
+    const tippedInvoice = sql(
+      `insert into invoices(customer_id,status,subtotal_cents,total_cents)
+       values ('${customerId}','sent',17000,17000) returning id`,
+    );
+    const key = `sandbox-tipped-recovery:${tippedInvoice}`;
+    expect(sql(
+      `select outcome from begin_reviewed_payment_operation(
+        '${tippedInvoice}','checkout','${key}',19000,17000,'${customerId}',2000)`,
+    )).toBe("started");
+
+    const intent = await stripe.paymentIntents.create({
+      amount: 19000,
+      currency: "usd",
+      payment_method: "pm_card_visa",
+      confirm: true,
+      automatic_payment_methods: { enabled: true, allow_redirects: "never" },
+      metadata: { invoice_id: tippedInvoice, tip_cents: "2000" },
+    }, { idempotencyKey: key });
+    expect(intent.livemode).toBe(false);
+    expect(intent.status).toBe("succeeded");
+
+    // Simulate a response that was lost before the local operation could save its provider reference.
+    sql(`update payment_operations set expires_at=now()-interval '1 second' where idempotency_key='${key}'`);
+    expect(sql(
+      `select outcome from begin_reviewed_payment_operation(
+        '${tippedInvoice}','autocharge','${key}:second',17000,17000,'${customerId}')`,
+    )).toBe("blocked");
+
+    const event = await latestEvent(stripe, "payment_intent.succeeded", (o) => o["id"] === intent.id);
+    const transition = toTransition(event);
+    if (transition.kind !== "payment_succeeded") throw new Error("tipped capture did not map");
+    expect(transition).toMatchObject({
+      invoiceId: tippedInvoice, paymentIntentId: intent.id, amountCents: 19000, tipCents: 2000,
+    });
+    sql(`select attach_payment_operation('${key}','payment_intent','${intent.id}',null)`);
+    const recovered = await lookUpPaymentIntent(intent.id);
+    if (recovered.state !== "paid") throw new Error("tipped capture did not recover");
+    expect(recovered).toMatchObject({ amountCents: 19000, tipCents: 2000, paymentIntentId: intent.id });
+    for (const receipt of [recovered, transition]) {
+      sql(`select record_payment('${tippedInvoice}',${receipt.amountCents},${receipt.tipCents},
+          '${intent.id}',null,null,false,'card');
+        select settle_payment_operation_by_ref('${tippedInvoice}','${intent.id}')`);
+    }
+    expect(sql(`select status,tip_cents,total_cents,amount_paid_cents,balance_cents
+      from invoices where id='${tippedInvoice}'`)).toBe("paid|2000|19000|19000|0");
+    expect(sql(`select count(*) from payments where invoice_id='${tippedInvoice}'`)).toBe("1");
+    expect(sql(`select state from payment_operations where invoice_id='${tippedInvoice}'`)).toBe("succeeded");
   }, 90_000);
 
   /**

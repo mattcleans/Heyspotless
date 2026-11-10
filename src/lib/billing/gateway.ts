@@ -200,11 +200,18 @@ export async function refundPaymentIntent(args: {
 /** What became of a collection attempt, as far as Stripe is concerned. */
 export type CollectionOutcome =
   /** Money was taken. `paymentIntentId` is what to record it against. */
-  | { state: "paid"; paymentIntentId: string | null; amountCents: number; chargeId: string | null }
+  | { state: "paid"; paymentIntentId: string | null; amountCents: number; tipCents: number; chargeId: string | null }
   /** Still live or unresolved; a URL exists only for an active Checkout page. */
   | { state: "open"; url: string | null }
   /** Stripe is done with it and no money moved. */
   | { state: "dead"; reason: string };
+
+function capturedTip(raw: string | undefined, amountCents: number): number | null {
+  if (raw === undefined) return 0;
+  if (!/^\d+$/.test(raw)) return null;
+  const cents = Number(raw);
+  return Number.isSafeInteger(cents) && cents <= amountCents ? cents : null;
+}
 
 /**
  * What happened to a Checkout session.
@@ -221,13 +228,16 @@ export async function lookUpCheckoutSession(sessionId: string): Promise<Collecti
   if (session.payment_status === "paid") {
     // Without an immutable capture identity, retries could record this same
     // receipt twice. Missing or malformed provider evidence stays unresolved.
-    if (!intentId || !Number.isSafeInteger(session.amount_total) || (session.amount_total ?? 0) <= 0) {
+    const amountCents = session.amount_total ?? 0;
+    const tipCents = capturedTip(session.metadata?.tip_cents, amountCents);
+    if (!intentId || !Number.isSafeInteger(amountCents) || amountCents <= 0 || tipCents === null) {
       return { state: "open", url: null };
     }
     return {
       state: "paid",
       paymentIntentId: intentId,
-      amountCents: session.amount_total!,
+      amountCents,
+      tipCents,
       chargeId: null,
     };
   }
@@ -251,13 +261,15 @@ export async function lookUpPaymentIntent(paymentIntentId: string): Promise<Coll
   const intent = await getStripe().paymentIntents.retrieve(paymentIntentId);
 
   if (intent.status === "succeeded") {
-    if (!intent.id || !Number.isSafeInteger(intent.amount_received) || intent.amount_received <= 0) {
+    const tipCents = capturedTip(intent.metadata?.tip_cents, intent.amount_received);
+    if (!intent.id || !Number.isSafeInteger(intent.amount_received) || intent.amount_received <= 0 || tipCents === null) {
       return { state: "open", url: null };
     }
     return {
       state: "paid",
       paymentIntentId: intent.id,
       amountCents: intent.amount_received,
+      tipCents,
       chargeId: typeof intent.latest_charge === "string" ? intent.latest_charge : null,
     };
   }
