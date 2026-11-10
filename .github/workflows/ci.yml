@@ -107,6 +107,9 @@ jobs:
       - name: Verify reviewed collection balances
         run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-reviewed-collection.sql
 
+      - name: Verify concurrent refund settlement
+        run: bash scripts/verify-refund-settlement-race.sh spotless_verify
+
       - name: Verify unresolved payment claims survive local expiry
         run: psql -v ON_ERROR_STOP=1 -d spotless_verify -f scripts/verify-unresolved-payment-claims.sql
 

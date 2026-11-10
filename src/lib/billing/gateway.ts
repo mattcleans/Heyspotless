@@ -164,6 +164,15 @@ export async function chargeOffSession(args: {
   };
 }
 
+/** Charge events carry cumulative totals. Read each current Refund by ID instead. */
+export async function listChargeRefunds(chargeId: string, stripe = getStripe()) {
+  const refunds = [];
+  for await (const refund of stripe.refunds.list({ charge: chargeId, limit: 100 })) {
+    refunds.push({ id: refund.id, amount: refund.amount, status: refund.status });
+  }
+  return refunds;
+}
+
 /** Refund against a payment intent. The webhook records it; this only asks. */
 export async function refundPaymentIntent(args: {
   paymentIntentId: string;

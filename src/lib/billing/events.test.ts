@@ -156,36 +156,13 @@ describe("payment methods", () => {
 });
 
 describe("charge.refunded", () => {
-  /**
-   * The trap this guards: `amount_refunded` on the charge is CUMULATIVE. Two
-   * $50 refunds on a $170 charge arrive as amount_refunded 5000 then 10000, so
-   * applying that field as a delta refunds $150 against a $100 reality.
-   */
-  it("applies the newest refund, not the cumulative total", () => {
-    const charge = {
-      id: "ch_1",
-      payment_intent: "pi_1",
-      amount_refunded: 10000,
-      refunds: { data: [{ id: "re_2", amount: 5000 }, { id: "re_1", amount: 5000 }] },
-    };
-    expect(toTransition(event("charge.refunded", charge))).toEqual({
-      kind: "refund_succeeded",
-      paymentIntentId: "pi_1",
-      chargeId: "ch_1",
-      amountCents: 5000,
-      stripeRefundId: "re_2",
-    });
+  it("uses the charge identity even when only a cumulative total is supplied", () => {
+    expect(toTransition(event("charge.refunded", {
+      id: "ch_1", payment_intent: "pi_1", amount_refunded: 5000,
+    }))).toEqual({ kind: "charge_refunds_changed", chargeId: "ch_1", paymentIntentId: "pi_1" });
   });
 
-  it("falls back to amount_refunded when the refund list is absent", () => {
-    const charge = { id: "ch_1", payment_intent: "pi_1", amount_refunded: 5000 };
-    expect(toTransition(event("charge.refunded", charge))).toMatchObject({
-      amountCents: 5000,
-      stripeRefundId: null,
-    });
-  });
-
-  it("ignores a refund carrying no amount", () => {
+  it("ignores a charge without a payment intent", () => {
     expect(toTransition(event("charge.refunded", { id: "ch_1" }))).toMatchObject({
       kind: "ignored",
     });
