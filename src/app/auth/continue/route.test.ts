@@ -69,8 +69,20 @@ describe("post-login routing", () => {
   });
   it("distinguishes a database failure from missing setup", async () => {
     session("admin", true, true);
-    expect((await GET(request())).headers.get("location")).toContain(
-      "error=service_unavailable",
+    expect((await GET(request())).headers.get("location")).toBe(
+      "https://app.example.test/login?next=%2Fadmin&error=service_unavailable",
+    );
+  });
+  it("keeps the requested Management page when the auth provider is unavailable", async () => {
+    client.mockResolvedValue({
+      auth: { getUser: async () => ({
+        data: { user: null },
+        error: { name: "AuthRetryableFetchError", status: 503 },
+      }) },
+    });
+    const response = await GET(request("%2Fadmin%2Fpayments"));
+    expect(response.headers.get("location")).toBe(
+      "https://app.example.test/login?next=%2Fadmin%2Fpayments&error=service_unavailable",
     );
   });
   it("requires a validated session", async () => {

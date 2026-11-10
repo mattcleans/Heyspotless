@@ -26,6 +26,12 @@ export async function middleware(request: NextRequest) {
   // Demo mode has no auth at all, so every surface is open. That is what lets
   // the app be reviewed with no credentials.
   if (isDemoMode()) return NextResponse.next();
+  const path = request.nextUrl.pathname;
+  // The continuation route can refresh cookies itself. The login error page
+  // renders without Auth so it remains available during an outage.
+  if (path === "/auth/continue" || (path === "/login" && request.nextUrl.searchParams.get("error"))) {
+    return NextResponse.next();
+  }
 
   const url = supabaseUrl();
   const anonKey = supabaseAnonKey();
@@ -56,7 +62,6 @@ export async function middleware(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const path = request.nextUrl.pathname;
   const area = AREA_ROLES.find(
     (a) => path === a.prefix || path.startsWith(`${a.prefix}/`),
   );
