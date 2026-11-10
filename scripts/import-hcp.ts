@@ -33,6 +33,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { parseCsv, toRecords } from "../src/lib/migration/csv.ts";
 import { formatReport, prepareImport, type ImportPlan } from "../src/lib/migration/prepare.ts";
 import { INVALID_PLAN_START } from "../src/lib/migration/plans.ts";
+import { todayIn, toCalendarDate, type CalendarDate } from "../src/lib/time/zone.ts";
 
 interface Options {
   customers: string | null;
@@ -243,8 +244,6 @@ async function write(db: SupabaseClient, plan: ImportPlan, today: CalendarDate) 
       p_anchor_date: p.anchorDate,
       p_active: p.active,
       ...(p.startTime === null ? {} : { p_start_time: p.startTime }),
-      p_anchor_date: p.anchorDate,
-      p_active: p.active,
     });
     if (error || typeof planId !== "string") {
       plans.failed += 1;
