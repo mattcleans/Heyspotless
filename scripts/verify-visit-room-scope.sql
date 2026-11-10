@@ -104,6 +104,17 @@ begin
  values(other_c,other_h,'scheduled','standard','one_time',10000,60) returning id into legacy;
  delete from public.job_room_scopes where job_id=legacy;perform spotless_private.capture_job_room_scope(legacy,true);
  if not exists(select 1 from public.job_room_scopes where job_id=legacy and source='legacy_home' and kitchens=2) then raise exception 'Legacy baseline was mislabeled as an agreement';end if;
+
+ other_h:=public.import_property('synthetic-home-'||gen_random_uuid(),other_c,'SYNTHETIC ONLY','Dallas','75201');
+ legacy:=public.import_job('synthetic-scope-'||gen_random_uuid(),other_c,other_h,'standard','one_time',10000,60,'scheduled');
+ booked_plan:=public.import_recurring_plan('synthetic-plan-'||gen_random_uuid(),other_c,other_h,
+   'weekly','standard',10000,60,(clock_timestamp() at time zone 'America/Chicago')::date+90,false,'10:00'::time);
+ insert into public.jobs(customer_id,property_id,recurring_plan_id,status,service,freq,price_cents,estimated_clean_minutes)
+ values(other_c,other_h,booked_plan,'scheduled','standard','weekly',10000,60) returning id into booked_job;
+ if not exists(select 1 from public.job_room_scopes where job_id=legacy and source='legacy_home' and kitchens=1)
+  or not exists(select 1 from public.recurring_plan_room_scopes where plan_id=booked_plan and source='legacy_home' and kitchens=1)
+  or not exists(select 1 from public.job_room_scopes where job_id=booked_job and source='legacy_home' and kitchens=1)
+ then raise exception 'Imported scope was not marked as a home baseline';end if;
  if has_table_privilege('authenticated','public.recurring_plan_room_scopes','INSERT,UPDATE,DELETE,TRUNCATE') or has_table_privilege('service_role','public.recurring_plan_room_scopes','INSERT,UPDATE,DELETE,TRUNCATE') or has_table_privilege('anon','public.recurring_plan_room_scopes','SELECT') or has_table_privilege('authenticated','public.job_room_scopes','INSERT,UPDATE,DELETE,TRUNCATE') or has_table_privilege('service_role','public.job_room_scopes','INSERT,UPDATE,DELETE,TRUNCATE') or has_table_privilege('anon','public.job_room_scopes','SELECT') then raise exception 'Saved scopes allow direct app writes or anonymous reads';end if;
  perform set_config('scope_test.client',u[1]::text,true);perform set_config('scope_test.other_client',u[2]::text,true);
  perform set_config('scope_test.admin',u[3]::text,true);perform set_config('scope_test.cleaner',u[4]::text,true);perform set_config('scope_test.other_cleaner',u[5]::text,true);
