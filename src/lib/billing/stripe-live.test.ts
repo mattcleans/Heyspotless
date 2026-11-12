@@ -25,6 +25,8 @@ import { listChargeRefunds, lookUpPaymentIntent } from "./gateway";
  *   STRIPE_SECRET_KEY     a test-mode key (sk_test_…). Refuses a live key.
  *   SPOTLESS_VERIFY_DB    a database with every migration applied —
  *                         ./scripts/verify-migrations.sh leaves one behind.
+ *   PGHOST               optional absolute path to a local PostgreSQL socket.
+ *                         Uses the current OS user and libpq environment.
  *
  *   STRIPE_SECRET_KEY=sk_test_… SPOTLESS_VERIFY_DB=spotless_verify \
  *     npx vitest run src/lib/billing/stripe-live.test.ts
@@ -45,13 +47,19 @@ if (KEY !== "" && !KEY.startsWith("sk_test_")) {
   );
 }
 
-/** One psql round trip. Shelling out keeps this dependency-free, as verify-migrations.sh is. */
+const socket = process.env.PGHOST;
+
+if (CONFIGURED && (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(DB) ||
+    (socket && (!socket.startsWith("/") || socket.includes(","))) ||
+    process.env.PGHOSTADDR || process.env.PGSERVICE)) {
+  throw new Error("Use a disposable database name and a local PostgreSQL socket.");
+}
+
 function sql(statement: string): string {
-  return execFileSync(
-    "sudo",
-    ["-u", "postgres", "psql", "-v", "ON_ERROR_STOP=1", "-tAqc", statement, "-d", DB],
-    { encoding: "utf8" },
-  ).trim();
+  const args = ["-X", "-v", "ON_ERROR_STOP=1", "-tAqc", statement, "-d", DB];
+  return socket
+    ? execFileSync("psql", ["-h", socket, ...args], { encoding: "utf8" }).trim()
+    : execFileSync("sudo", ["-u", "postgres", "psql", ...args], { encoding: "utf8" }).trim();
 }
 
 /** The most recent event of a type, as Stripe itself emitted it. */
