@@ -3,7 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import type { BillingStore } from "./store";
 import { type BillingTransition, type StripeEventLike, toTransition } from "./events";
-import { lookUpCheckoutSession } from "./gateway";
+import { listChargeRefunds, lookUpCheckoutSession } from "./gateway";
 
 /**
  * What the Stripe webhook does once the signature has been verified.
@@ -194,23 +194,36 @@ async function apply(store: BillingStore, transition: BillingTransition): Promis
       return promoted ? "applied_promoted" : "applied_no_card_left";
     }
 
-    case "refund_succeeded": {
-      if (!transition.paymentIntentId) return "ignored_no_payment_intent";
-      const refundId = await store.recordRefund({
-        stripePaymentIntentId: transition.paymentIntentId,
-        amountCents: transition.amountCents,
-        stripeRefundId: transition.stripeRefundId,
-        // A refund we did not initiate — someone pressed refund in the Stripe
-        // dashboard — arrives with no stated intent. `unattributed` gives the
-        // money back without turning the invoice into something the sweep
-        // will collect again, AND records honestly that nobody said why: it
-        // is credited in full but attributed half to service failure, half to
-        // goodwill (0013). Calling it pure goodwill would have quietly
-        // reported every botched clean as generosity. An admin who knows
-        // better records it through the refund route, which asks.
-        kind: "unattributed",
-      });
-      return refundId ? "applied" : "already_recorded";
+    case "charge_refunds_changed": {
+      const { chargeId, paymentIntentId } = transition;
+      if (await store.hasUnlinkedStripeRefund(paymentIntentId)) {
+        throw new Error("A prior refund has no Stripe refund reference and needs reconciliation");
+      }
+
+      const refunds = await listChargeRefunds(chargeId);
+      if (refunds.length === 0) throw new Error("Stripe has not returned the charge refunds yet");
+
+      // Release any failed pending refunds before recording newer refunds.
+      for (const { id, status } of refunds) {
+        if (status === "failed" || status === "canceled") await store.settleRefund(id, status);
+      }
+      for (const { id, amount, status } of refunds) {
+        if (status === "failed" || status === "canceled") continue;
+        if (status !== "succeeded" && status !== "pending" && status !== "requires_action") {
+          throw new Error("Stripe returned an unrecognized refund status");
+        }
+
+        // Dashboard refunds lack a recorded reason. Keep any existing attribution.
+        const recorded = await store.recordRefund({
+          stripePaymentIntentId: paymentIntentId,
+          amountCents: amount,
+          stripeRefundId: id,
+          kind: "unattributed",
+          status: status === "succeeded" ? "succeeded" : "pending",
+        });
+        if (!recorded && status === "succeeded") await store.settleRefund(id, status);
+      }
+      return "refunds_reconciled";
     }
 
     case "refund_settled": {

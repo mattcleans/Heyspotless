@@ -243,7 +243,7 @@ export function toCleaner(row: Row): Cleaner {
 export function toInvoice(row: Row): Invoice {
   return {
     id: str(row, "id"),
-    kind: row.kind === "reschedule_fee" ? "reschedule_fee" : "service",
+    kind: row.kind === "cancellation_fee" ? "cancellation_fee" : row.kind === "reschedule_fee" ? "reschedule_fee" : "service",
     customerId: str(row, "customer_id"),
     jobId: strOrNull(row, "job_id"),
     status: str(row, "status") as InvoiceStatus,

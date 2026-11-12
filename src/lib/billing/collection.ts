@@ -89,6 +89,7 @@ export async function reconcileInvoiceCollection(
     const paymentId = await store.recordPayment({
       invoiceId,
       amountCents: outcome.amountCents,
+      tipCents: outcome.tipCents,
       stripePaymentIntentId: outcome.paymentIntentId,
       stripeChargeId: outcome.chargeId,
       method: "card",

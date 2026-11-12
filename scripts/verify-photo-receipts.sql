@@ -61,7 +61,7 @@ begin
  if public.settle_job_invoice(j) is not null or (select count(*) from public.invoices where job_id=j and kind='service')<>1 then raise exception 'Voided service invoice replaced';end if;
  if not exists(select 1 from public.invoices where id=fee_id and kind='reschedule_fee' and total_cents=6000 and status='sent') then raise exception 'Service gate changed the fee';end if;
  if has_table_privilege('authenticated','public.job_photos','INSERT,UPDATE,DELETE,TRUNCATE') or has_table_privilege('anon','public.job_photos','SELECT') or not has_table_privilege('authenticated','public.job_photos','SELECT') then raise exception 'Direct photo writes or anonymous reads remain';end if;
- if has_function_privilege('authenticated','public.record_job_photo(uuid,uuid,text,text,text)','execute') or has_function_privilege('anon','public.settle_job_invoice(uuid)','execute') or not has_function_privilege('service_role','public.record_job_photo(uuid,uuid,text,text,text)','execute') then raise exception 'Photo execution grants changed';end if;
+ if has_function_privilege('authenticated','public.record_job_photo(uuid,uuid,text,text,text)','execute') or has_function_privilege('anon','public.settle_job_invoice(uuid)','execute') or has_function_privilege('service_role','public.record_job_photo(uuid,uuid,text,text,text)','execute') or not has_function_privilege('service_role','public.record_job_photo_capture(uuid,uuid,text,text,text,uuid,text,uuid[],uuid,text,bigint)','execute') then raise exception 'Photo execution grants changed';end if;
  raise notice 'Photo receipts passed: assignment, canonical slot, actual object, no false bill, idempotent receipt and draft price.';
 end $$;
 rollback;

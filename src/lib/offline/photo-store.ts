@@ -17,6 +17,8 @@ import type { QueueItem } from "./queue-policy";
 import {
   openPhotoDatabase,
   markWorkPhotoConfirmed,
+  photoReplacements,
+  safeWork,
 } from "../../../public/offline-work.js";
 
 const STORE = "queue";
@@ -26,6 +28,7 @@ export interface StoredPhoto extends QueueItem {
 }
 
 export class QuotaExceeded extends Error {}
+export { RetakeHistoryFull } from "../../../public/offline-work.js";
 
 const open = openPhotoDatabase;
 
@@ -65,10 +68,11 @@ export async function enqueue(photo: StoredPhoto): Promise<void> {
   const db = await open();
   try {
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE, "readwrite");
+      const tx = db.transaction([STORE, "work"], "readwrite");
       const store = tx.objectStore(STORE);
       const previous = store.get(photo.id);
       let conflict = false;
+      let failure: unknown;
       previous.onsuccess = () => {
         if (
           previous.result?.ownerId &&
@@ -78,7 +82,17 @@ export async function enqueue(photo: StoredPhoto): Promise<void> {
           tx.abort();
           return;
         }
-        store.put(photo);
+        const savedWork = tx.objectStore("work").get(photo.jobId);
+        savedWork.onsuccess = () => {
+          try {
+            const work = safeWork(savedWork.result);
+            const confirmed = work?.ownerId === photo.ownerId ? work?.confirmed : [];
+            store.put({ ...photo, supersedes: photoReplacements(photo, previous.result, confirmed) });
+          } catch (error) {
+            failure = error;
+            tx.abort();
+          }
+        };
       };
       tx.oncomplete = () => resolve();
       tx.onabort = () =>
@@ -87,7 +101,7 @@ export async function enqueue(photo: StoredPhoto): Promise<void> {
             ? new Error(
                 "A photo from another sign-in is still saved. Reconnect or call the office before replacing it.",
               )
-            : storageError(tx.error),
+            : failure ?? storageError(tx.error),
         );
     });
   } finally {
@@ -223,4 +237,25 @@ export async function isAvailable(): Promise<boolean> {
   } finally {
     db?.close();
   }
+}
+
+/** Upgrade old durable rows before their first version-specific network call. */
+export async function ensureCaptureRevision(photo: StoredPhoto): Promise<boolean> {
+  if (photo.revision) return true;
+  const db = await open();
+  try {
+    return await new Promise<boolean>((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      const queue = tx.objectStore(STORE);
+      const read = queue.get(photo.id) as IDBRequest<StoredPhoto | undefined>;
+      let changed = false;
+      read.onsuccess = () => {
+        if (!read.result || !samePhoto(read.result, photo)) return;
+        queue.put({ ...read.result, revision: crypto.randomUUID(), supersedes: [] });
+        changed = true;
+      };
+      tx.oncomplete = () => resolve(changed);
+      tx.onabort = () => reject(storageError(tx.error));
+    });
+  } finally { db.close(); }
 }

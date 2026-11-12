@@ -173,7 +173,7 @@ describe("device identity and durable captures", () => {
     );
     expect(await forget(retake)).toBe(true);
     expect((await listWork())[0]?.confirmed).toEqual([
-      { roomKey: "kitchen_1", kind: "before" },
+      { roomKey: "kitchen_1", kind: "before", revision: retake.revision, supersedes: retake.supersedes },
     ]);
     await saveWork(work({ checkedAt: Date.now() + 1 }));
     expect((await listWork())[0]?.confirmed).toHaveLength(1);
@@ -229,5 +229,53 @@ describe("device identity and durable captures", () => {
     expect(await (await listForJob(job))[0]!.blob.text()).toBe("legacy bytes");
     expect(await readWorkPhotos(job, owner)).toEqual([]);
     expect(await listOutstanding()).toHaveLength(1);
+  });
+});
+
+describe("replacement identity across foreground and recovery captures", () => {
+  it("keeps confirmed revisions after queue deletion and includes them in the next retake", async () => {
+    await saveWork(work());
+    const first = await saveWorkPhoto(job, owner, "kitchen_1", "before", new Blob(["first"]));
+    expect(await forget(first)).toBe(true);
+    expect((await listWork())[0]?.confirmed).toEqual([{ roomKey: "kitchen_1", kind: "before", revision: first.revision }]);
+    const second = await saveWorkPhoto(job, owner, "kitchen_1", "before", new Blob(["second"]));
+    expect(second.supersedes).toEqual([first.revision]);
+    expect(await forget(first)).toBe(false);
+    expect(await (await listForJob(job))[0]?.blob.text()).toBe("second");
+  });
+
+  it("shares replacement history between recovery and authenticated capture without losing local bytes", async () => {
+    await saveWork(work());
+    const first = await saveWorkPhoto(job, owner, "kitchen_1", "before", new Blob(["first"]));
+    const revision = crypto.randomUUID();
+    await enqueue({ ...first, revision, blob: new Blob(["foreground retake"]) });
+    const third = await saveWorkPhoto(job, owner, "kitchen_1", "before", new Blob(["recovery retake"]));
+    expect(third.supersedes).toEqual([first.revision, revision]);
+    expect(await forget(first)).toBe(false);
+    expect(await third.blob.text()).toBe("recovery retake");
+  });
+});
+
+describe("confirmed version retention", () => {
+  it("does not erase an acknowledged capture when an older page saves path-only checklist data", async () => {
+    await saveWork(work());
+    const capture = await saveWorkPhoto(job, owner, "kitchen_1", "before", new Blob(["confirmed"]));
+    await forget(capture);
+    await saveWork(work({ checkedAt: Date.now(), confirmed: [{ roomKey: "kitchen_1", kind: "before" }] }));
+    expect((await listWork())[0]?.confirmed[0]?.revision).toBe(capture.revision);
+  });
+});
+
+describe("known older server observations", () => {
+  it("does not downgrade a locally acknowledged retake to its known predecessor", async () => {
+    await saveWork(work());
+    const first = await saveWorkPhoto(job, owner, "kitchen_1", "before", new Blob(["first"]));
+    await forget(first);
+    const retake = await saveWorkPhoto(job, owner, "kitchen_1", "before", new Blob(["retake"]));
+    await forget(retake);
+    await saveWork(work({ checkedAt: Date.now(), confirmed: [{ roomKey: "kitchen_1", kind: "before", revision: first.revision }] }));
+    const [saved] = await listWork();
+    expect(saved?.confirmed[0]?.revision).toBe(retake.revision);
+    expect(saved?.confirmed[0]?.supersedes).toEqual([first.revision]);
   });
 });

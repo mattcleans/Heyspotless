@@ -169,6 +169,17 @@ export class BillingStore {
     return typeof data === "string" ? data : null;
   }
 
+  async hasUnlinkedStripeRefund(paymentIntentId: string): Promise<boolean> {
+    const { data, error } = await this.db.from("refunds")
+      .select("id,payments!inner(stripe_payment_intent_id)")
+      .eq("payments.stripe_payment_intent_id", paymentIntentId)
+      .is("stripe_refund_id", null)
+      .in("status", ["pending", "succeeded"])
+      .limit(1);
+    if (error) throw new Error(`hasUnlinkedStripeRefund: ${error.message}`);
+    return (data?.length ?? 0) > 0;
+  }
+
   /**
    * Record a refund. Returns the new refund id, or null when this Stripe
    * refund id has already been recorded.
@@ -551,7 +562,7 @@ export class BillingStore {
          autocharge_paused_at, autocharge_paused_reason, created_at,
          customers!inner ( autopay_enabled, autopay_authorized_at )`,
       )
-      .neq("kind", "reschedule_fee")
+      .eq("kind", "service")
       .in("status", ["sent", "overdue"])
       .is("voided_at", null)
       .is("autocharge_paused_at", null)

@@ -14,6 +14,7 @@ export default async function ReviewPage() {
   const visits = repo.isDemo ? demoReviewVisits(await repo.listJobs()) : await listUninvoicedVisits(await createClient());
   return <>
     <div className="flex flex-wrap items-center justify-between gap-4"><h1 className="text-3xl font-semibold tracking-tight text-navy">Completed visit review</h1><Link href="/admin/schedule" className="secondary-action">Full schedule</Link></div>
+    <p className="mt-4 text-sm"><Link className="secondary-action inline-flex" href="/admin/invoices">Review cancellation and rescheduling fees</Link></p>
     <p className="mt-3 max-w-2xl text-sm text-ink-2">Finished work can still need follow-up. Review required photos, the assigned cleaner, and the invoice record before treating a visit as settled.</p>
     <p className="mt-3 text-xs text-ink-2">Up to {REVIEW_LIMIT} completed visits without an invoice timestamp. Missing completion dates appear first, then the oldest finished visits. Times use Dallas time. Refresh to check for newly uploaded photos.</p>
     <p className="mt-5 text-sm font-semibold text-navy">{visits.length} visit{visits.length === 1 ? "" : "s"} to review{visits.length === REVIEW_LIMIT ? " · Limit reached; review older records first" : ""}</p>

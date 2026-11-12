@@ -44,7 +44,7 @@ jobs:
         with:
           node-version: 22
       - name: Verify scheduler authentication and production target
-        run: node --experimental-strip-types scripts/verify-scheduler-target.mjs
+        run: node --experimental-strip-types scripts/verify-scheduler-target.mjs --require-dispatch-read
       - name: POST /api/dispatch/run
         shell: bash
         run: |

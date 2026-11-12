@@ -1,0 +1,23 @@
+import { NextRequest } from "next/server";
+import { beforeEach,describe,expect,it,vi } from "vitest";
+const m=vi.hoisted(()=>({profile:vi.fn(),load:vi.fn(),issue:vi.fn(),admin:vi.fn(),demo:false}));
+vi.mock("@/lib/data",()=>({getRepository:async()=>({getCurrentProfile:m.profile,isDemo:m.demo})}));
+vi.mock("@/lib/supabase/admin",()=>({createAdminClient:m.admin}));
+vi.mock("@/lib/operations/change-fee-store",()=>({loadChangeFeeReview:m.load,issueChangeFee:m.issue}));
+vi.mock("@/lib/operations/invoice-issue-store",()=>({InvoiceReviewChanged:class extends Error{}}));
+import { InvoiceReviewChanged } from "@/lib/operations/invoice-issue-store";
+import { POST } from "./route";
+const id="fa600000-0000-4000-8000-000000000001",change="fa700000-0000-4000-8000-000000000001",actor="fa100000-0000-4000-8000-000000000002";
+const review={invoiceId:id,changeId:change,kind:"cancellation_fee",totalCents:6000};
+const body={changeId:change,kind:"cancellation_fee",reviewedTotalCents:6000,dueOn:"2026-10-30",confirmed:true};
+const call=(value:unknown=body,origin="https://preview.example.test")=>POST(new NextRequest(`https://preview.example.test/api/admin/invoices/${id}/issue`,{method:"POST",headers:{origin,"content-type":"application/json"},body:JSON.stringify(value)}),{params:Promise.resolve({id})});
+beforeEach(()=>{vi.clearAllMocks();m.demo=false;m.profile.mockResolvedValue({id:actor,role:"admin"});m.admin.mockReturnValue({test:true});m.load.mockResolvedValue(review);m.issue.mockResolvedValue({issued:true,...review});});
+describe("Management fee issuance authorization and reviewed identity",()=>{
+ it.each([null,{role:"customer"},{role:"cleaner"}])("does not read service data for an unauthorized caller %j",async profile=>{m.profile.mockResolvedValue(profile);expect((await call()).status).toBe(profile?403:401);expect(m.admin).not.toHaveBeenCalled();expect(m.issue).not.toHaveBeenCalled();});
+ it("refuses demo fees and cross-origin requests",async()=>{m.demo=true;expect((await call()).status).toBe(503);m.demo=false;expect((await call(body,"https://elsewhere.example.test")).status).toBe(403);expect(m.issue).not.toHaveBeenCalled();});
+ it.each([{...body,confirmed:false},{...body,changeId:"invalid"},{...body,kind:"service"},{...body,reviewedTotalCents:6001},{...body,dueOn:"2026-02-30"}])("requires the exact explicit review %j",async b=>{expect((await call(b)).status).toBe(400);expect(m.issue).not.toHaveBeenCalled();});
+ it("uses the signed-in Management actor and fresh fee record",async()=>{expect((await call({...body,actor:"forged"})).status).toBe(200);expect(m.issue).toHaveBeenCalledWith({test:true},review,actor,body.dueOn);});
+ it("requires the persisted change and kind to match the reviewed fee",async()=>{m.load.mockResolvedValue({...review,changeId:"fa700000-0000-4000-8000-000000000002"});expect((await call()).status).toBe(409);expect(m.issue).not.toHaveBeenCalled();});
+ it("does not issue an unavailable fee",async()=>{m.load.mockResolvedValue(null);expect((await call()).status).toBe(404);expect(m.issue).not.toHaveBeenCalled();});
+ it("returns a recoverable conflict or uncertainty without leaking diagnostics",async()=>{m.issue.mockRejectedValue(new InvoiceReviewChanged());expect((await call()).status).toBe(409);m.issue.mockRejectedValue(new Error("private diagnostic"));const r=await call();expect(r.status).toBe(503);expect(await r.text()).not.toContain("private diagnostic");});
+});

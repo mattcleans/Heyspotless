@@ -1,5 +1,13 @@
 # Money policy
 
+## December pilot: reviewed invoice issuance
+
+Matt confirmed on October 28, 2026 that Management reviews and issues each pilot invoice manually. Completed work can produce a draft; a draft is not an issued bill. Management reviews the exact service invoice reference, amount and Dallas-calendar due date, then explicitly chooses Issue invoice. The database rechecks the completed visit, saved room list, active photo evidence, ownership and unchanged agreed price under locks before saving the issuance time, due date and office actor. Repeated confirmation of the same review returns the original receipt; a changed review or voided invoice requires office recovery instead of reissuance.
+
+Issuance does not call Stripe, send email/SMS, create a payment attempt or record money received. Client checkout remains controlled by the billing switch. Automatic collection additionally requires `AUTOCHARGE_ENABLED=1`, which is off by default and must remain off for this pilot. Saved autopay consent can remain on file while collection is paused; card saving without a new consent choice preserves that consent. The account shows the paused state rather than promising an automatic charge.
+
+The service-only issuance routine refuses unfinished work, unknown room scope, missing/archived/deleted photo objects, ambiguous service invoices, altered draft money, collection already in progress, and stale reviewed totals. SQL and real concurrent-session regressions cover these boundaries. Live billing activation, outbound messages and production rollout require their separate approvals.
+
 What the system does with money, stated once, in the language of the business
 rather than of the schema. Every rule here is enforced in SQL and asserted in
 `scripts/verify-migrations.sh`; where a rule and the code disagree, the code

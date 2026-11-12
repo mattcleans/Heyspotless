@@ -86,7 +86,8 @@ export async function POST(request: NextRequest) {
   const rescheduleFee = invoice.kind === "reschedule_fee";
   if (rescheduleFee && tipCents > 0)
     return NextResponse.json({ error: "A rescheduling fee does not include a cleaner tip." }, { status: 400 });
-  let cancellationFee = false;
+  let cancellationFee = invoice.kind === "cancellation_fee";
+  if (cancellationFee && tipCents > 0) return NextResponse.json({ error: "A cancellation fee does not include a cleaner tip." }, { status: 400 });
   if (job?.status === "canceled") {
     let cancellation;
     try {

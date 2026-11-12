@@ -6,7 +6,7 @@ import { roomsFor } from "@/lib/service/rooms";
 export const REVIEW_LIMIT = 200;
 export const isReviewId = (id: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 export interface ReviewPhoto extends JobPhoto { id: string; takenAt: Date; }
-export interface ReviewInvoice { id: string; status: string; totalCents: number; balanceCents: number; }
+export interface ReviewInvoice { id: string; status: string; totalCents: number; balanceCents: number; kind?: string; dueOn?: string | null; issuedAt?: Date | null; }
 export interface VisitFacts {
   startedAt: Date | null;
   completedAt: Date | null;

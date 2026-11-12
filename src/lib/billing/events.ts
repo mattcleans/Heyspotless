@@ -54,13 +54,7 @@ export type BillingTransition =
       expYear: number | null;
     }
   | { kind: "card_detached"; paymentMethodId: string }
-  | {
-      kind: "refund_succeeded";
-      paymentIntentId: string | null;
-      chargeId: string | null;
-      amountCents: number;
-      stripeRefundId: string | null;
-    }
+  | { kind: "charge_refunds_changed"; chargeId: string; paymentIntentId: string }
   /**
    * A refund whose outcome changed after the fact — Stripe can fail a refund
    * days later when the issuer rejects it. Without this the money had already
@@ -132,8 +126,12 @@ export function toTransition(event: StripeEventLike): BillingTransition {
       return { kind: "card_detached", paymentMethodId };
     }
 
-    case "charge.refunded":
-      return fromChargeRefunded(event.type, o);
+    case "charge.refunded": {
+      const chargeId = str(o, "id");
+      const paymentIntentId = str(o, "payment_intent");
+      if (!chargeId || !paymentIntentId) return ignored(event.type, "no charge or payment intent id");
+      return { kind: "charge_refunds_changed", chargeId, paymentIntentId };
+    }
 
     // Stripe reports a refund's own lifecycle separately from the charge.
     // `refund.updated` is the modern event; `charge.refund.updated` is the
@@ -185,29 +183,6 @@ function fromCheckoutSession(type: string, o: Obj): BillingTransition {
     // The session's own id: that is what the checkout route recorded the
     // attempt against, before any payment intent existed.
     collectionRef: str(o, "id"),
-  };
-}
-
-/**
- * `charge.refunded` fires for partial refunds too, and the charge's cumulative
- * `amount_refunded` is NOT what we want — applying that as a delta would
- * double-count the earlier refund. The newest entry in `refunds.data` is this
- * refund, so that is what gets applied.
- */
-function fromChargeRefunded(type: string, o: Obj): BillingTransition {
-  const list = obj(o, "refunds");
-  const data = Array.isArray(list["data"]) ? (list["data"] as unknown[]) : [];
-  const latest = data.length > 0 ? (data[0] as Obj) : null;
-
-  const amountCents = latest ? (int(latest, "amount") ?? 0) : (int(o, "amount_refunded") ?? 0);
-  if (amountCents <= 0) return ignored(type, "refund carries no amount");
-
-  return {
-    kind: "refund_succeeded",
-    paymentIntentId: str(o, "payment_intent"),
-    chargeId: str(o, "id"),
-    amountCents,
-    stripeRefundId: latest ? str(latest, "id") : null,
   };
 }
 

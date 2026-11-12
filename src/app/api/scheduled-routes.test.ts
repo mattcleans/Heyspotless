@@ -6,7 +6,7 @@ vi.mock("@/lib/recurring/store", () => ({ RecurringStore: class { listActivePlan
 vi.mock("@/lib/billing/store", () => ({ BillingStore: class { listAutochargeCandidates = m.candidates; } }));
 import { GET as recurringGet, POST as recurringPost } from "./recurring/generate/route";
 import { GET as billingGet, POST as billingPost } from "./billing/autocharge/route";
-beforeEach(() => { vi.clearAllMocks(); vi.stubEnv("CRON_SECRET","test-secret"); vi.stubEnv("BILLING_ENABLED","0"); vi.stubEnv("DEMO_MODE","0"); m.plans.mockResolvedValue([]); m.candidates.mockResolvedValue([]); });
+beforeEach(() => { vi.clearAllMocks(); vi.stubEnv("CRON_SECRET","test-secret"); vi.stubEnv("BILLING_ENABLED","0"); vi.stubEnv("AUTOCHARGE_ENABLED","0"); vi.stubEnv("DEMO_MODE","0"); m.plans.mockResolvedValue([]); m.candidates.mockResolvedValue([]); });
 afterEach(() => { vi.unstubAllEnvs(); });
 describe("configured scheduled routes", () => {
   it.each([[recurringGet,"GET"],[recurringPost,"POST"],[billingGet,"GET"],[billingPost,"POST"]] as const)("denies an unauthenticated invocation", async (handler,method) => { expect((await handler(new NextRequest("https://app.example.test/api/sweep",{method}))).status).toBe(401); expect(m.admin).not.toHaveBeenCalled(); });
@@ -17,6 +17,7 @@ describe("configured scheduled routes", () => {
     const r=await billingGet(new NextRequest("https://app.example.test/api/billing/autocharge",{headers:{authorization:"Bearer test-secret"}})); expect(r.status).toBe(503); expect(m.admin).not.toHaveBeenCalled();
   });
   it("reaches the existing empty billing sweep only when enabled and authenticated", async () => {
-    vi.stubEnv("BILLING_ENABLED","1"); const r=await billingGet(new NextRequest("https://app.example.test/api/billing/autocharge",{headers:{authorization:"Bearer test-secret"}})); expect(r.status).toBe(200); expect((await r.json()).swept).toBe(0);
+    vi.stubEnv("BILLING_ENABLED","1"); vi.stubEnv("AUTOCHARGE_ENABLED","1"); const r=await billingGet(new NextRequest("https://app.example.test/api/billing/autocharge",{headers:{authorization:"Bearer test-secret"}})); expect(r.status).toBe(200); expect((await r.json()).swept).toBe(0);
   });
+  it("keeps authenticated GET closed when customer billing is on but automatic collection is off",async()=>{vi.stubEnv("BILLING_ENABLED","1");const r=await billingGet(new NextRequest("https://app.example.test/api/billing/autocharge",{headers:{authorization:"Bearer test-secret"}}));expect(r.status).toBe(503);expect(m.admin).not.toHaveBeenCalled();expect(m.candidates).not.toHaveBeenCalled();});
 });

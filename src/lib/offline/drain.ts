@@ -14,6 +14,7 @@
 
 import { createClient } from "../supabase/client";
 import { fetchWithTimeout } from "../http/fetch-with-timeout";
+import { readPhotoCaptureReceipt, type PhotoCapture } from "../service/photo-capture";
 import { PHOTO_BUCKET } from "./bucket";
 import * as store from "./photo-store";
 import {
@@ -107,6 +108,11 @@ async function drainLoop(): Promise<void> {
     const next = nextToUpload(recovered, now, online);
     if (!next) return;
 
+    if (!next.revision) {
+      const legacy = (await store.listForJob(next.jobId)).find(p => p.id === next.id);
+      if (legacy) await store.ensureCaptureRevision(legacy);
+      continue;
+    }
     if (!(await store.update(beginUpload(next)))) continue;
     startedAt.set(next.id, now);
 
@@ -138,13 +144,17 @@ async function drainLoop(): Promise<void> {
 /**
  * Put the bytes in storage, then tell the server about them.
  *
- * In that order, and both idempotent. The storage path is derived from (job,
- * room, kind) so a retry overwrites rather than orphaning, and
- * `record_job_photo` is unique on the same triple — so an upload that
- * succeeded but whose response was lost costs one wasted PUT and nothing else.
+ * Each capture gets its own immutable path. A retry never overwrites it.
+ * An already-existing object still needs server byte/version verification;
+ * a storage conflict by itself cannot acknowledge or discard local bytes.
  */
 async function upload(photo: store.StoredPhoto): Promise<void> {
-  const path = storagePathFor(photo.jobId, photo.roomKey, photo.kind);
+  if (!photo.revision) throw new Error("record: capture identity missing");
+  const path = storagePathFor(photo.jobId, photo.roomKey, photo.kind, photo.revision);
+  const digest = await crypto.subtle.digest("SHA-256", await photo.blob.arrayBuffer());
+  const sha256 = Array.from(new Uint8Array(digest), b => b.toString(16).padStart(2, "0")).join("");
+  const capture: PhotoCapture = { jobId: photo.jobId, roomKey: photo.roomKey, kind: photo.kind,
+    storagePath: path, revision: photo.revision, sha256, supersedes: photo.supersedes ?? [] };
   const supabase = createClient();
   if (photo.ownerId) {
     const { data, error } = await supabase.auth.getUser();
@@ -160,9 +170,10 @@ async function upload(photo: store.StoredPhoto): Promise<void> {
     .from(PHOTO_BUCKET)
     .upload(path, photo.blob, {
       contentType: photo.blob.type || "image/jpeg",
-      upsert: true,
+      upsert: false,
     });
-  if (error) {
+  const exists = error && "statusCode" in error && (Number(error.statusCode) === 409 || (Number(error.statusCode) === 400 && "error" in error && error.error === "Duplicate"));
+  if (error && !exists) {
     if ("statusCode" in error && Number(error.statusCode) === 401)
       throw new Error("storage: 401");
     throw new Error(`storage: ${error.message}`);
@@ -171,29 +182,14 @@ async function upload(photo: store.StoredPhoto): Promise<void> {
   const response = await fetchWithTimeout("/api/jobs/photo", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      jobId: photo.jobId,
-      roomKey: photo.roomKey,
-      kind: photo.kind,
-      storagePath: path,
-    }),
+    body: JSON.stringify(capture),
   });
 
   if (!response.ok) {
     throw new Error(`record: ${response.status}`);
   }
   const payload: unknown = await response.json();
-  if (
-    !payload ||
-    typeof payload !== "object" ||
-    !("recorded" in payload) ||
-    payload.recorded !== true ||
-    !("photoId" in payload) || typeof payload.photoId !== "string" || !payload.photoId ||
-    !("jobId" in payload) || payload.jobId !== photo.jobId ||
-    !("roomKey" in payload) || payload.roomKey !== photo.roomKey ||
-    !("kind" in payload) || payload.kind !== photo.kind ||
-    !("storagePath" in payload) || payload.storagePath !== path
-  ) {
+  if (!readPhotoCaptureReceipt(payload, capture)) {
     throw new Error("record: unconfirmed");
   }
 }

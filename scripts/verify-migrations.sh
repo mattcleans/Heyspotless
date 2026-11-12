@@ -73,6 +73,8 @@ for f in supabase/migrations/*.sql; do
 done
 echo "  all migrations applied"
 
+as_super $PSQL -d "$DB" -f scripts/verify-function-paths.sql
+
 # Historical Storage migrations intentionally skip the provider-owned schema
 # on bare Postgres. Add only the metadata model after those migrations.
 as_super $PSQL -d "$DB" <<'SQL'
@@ -2696,6 +2698,7 @@ SQL
 echo "  recruiting funnel verified"
 
 echo "  checking the Housecall Pro import"
+as_super $PSQL -d "$DB" -f scripts/verify-imported-visit-replay.sql
 as_super $PSQL -d "$DB" <<'SQL'
 do $$
 declare
@@ -3246,3 +3249,7 @@ as_super $PSQL -d "$DB" -f scripts/verify-client-booking-matching.sql
 as_super $PSQL -d "$DB" -f scripts/verify-matching-worker.sql
 as_super bash scripts/verify-matching-worker-races.sh "$DB"
 as_super $PSQL -d "$DB" -f scripts/verify-office-matching-health.sql
+
+# Client visit changes must not bypass Management invoice issuance.
+as_super $PSQL -d "$DB" -f scripts/verify-change-fee-issuance.sql
+as_super bash scripts/verify-change-fee-issue-races.sh "$DB"

@@ -13,7 +13,7 @@
  */
 
 // Bump this when recovery assets change so an updated install replaces them.
-const WORK_CACHE = "spotless-work-shell-20261003-2";
+const WORK_CACHE = "spotless-work-shell-20261029-photo-versions-1";
 const WORK_ASSETS = [
   "/offline-cleaner.html",
   "/offline-cleaner.js",

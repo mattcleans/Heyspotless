@@ -13,7 +13,9 @@ do $$ begin
 end $$;
 insert into auth.users(id,email) values
  ('c1000000-0000-0000-0000-000000000001','fee-a@example.test'),
- ('c1000000-0000-0000-0000-000000000002','fee-b@example.test');
+ ('c1000000-0000-0000-0000-000000000002','fee-b@example.test'),
+ ('c1000000-0000-0000-0000-000000000003','fee-admin@example.test');
+update profiles set role='admin' where id='c1000000-0000-0000-0000-000000000003';
 insert into customers(id,profile_id,first_name,last_name) values
  ('c2000000-0000-0000-0000-000000000001','c1000000-0000-0000-0000-000000000001','Fee','A'),
  ('c2000000-0000-0000-0000-000000000002','c1000000-0000-0000-0000-000000000002','Fee','B');
@@ -46,10 +48,12 @@ do $$ declare v_invoice uuid;begin
  select (r->>'invoice_id')::uuid into v_invoice from fee_receipts where kind='paid';
  if (select count(*) from invoices where kind='reschedule_fee' and customer_id='c2000000-0000-0000-0000-000000000001')<>1 then raise exception 'duplicate fee invoice';end if;
  if not exists(select 1 from invoices where id=v_invoice and customer_id='c2000000-0000-0000-0000-000000000001' and job_id is null
-  and kind='reschedule_fee' and total_cents=6000 and tip_cents=0 and status='sent' and autocharge_paused_at is not null) then raise exception 'fee invoice shape wrong';end if;
+  and kind='reschedule_fee' and total_cents=6000 and tip_cents=0 and status='draft' and issued_at is null and autocharge_paused_at is not null) then raise exception 'fee invoice shape wrong';end if;
  if not exists(select 1 from invoices where id='c7000000-0000-0000-0000-000000000001' and status='paid' and amount_paid_cents=20000) then raise exception 'service payment changed';end if;
  if exists(select 1 from visit_cancellations where job_id='c5000000-0000-0000-0000-000000000001') then raise exception 'move canceled visit';end if;
  begin perform begin_payment_operation(v_invoice,'autocharge','fee-auto',6000,900);raise exception 'fee autocharge allowed';exception when check_violation then null;end;
+ begin perform begin_payment_operation(v_invoice,'checkout','fee-before-review',6000,900);raise exception 'draft fee collectible';exception when check_violation then null;end;
+ perform issue_reviewed_change_fee(v_invoice,(select (r->>'id')::uuid from fee_receipts where kind='paid'),'reschedule_fee','c1000000-0000-0000-0000-000000000003',6000,(clock_timestamp() at time zone 'America/Chicago')::date);
  perform begin_payment_operation(v_invoice,'checkout','fee-checkout',6000,900);
  if (select count(*) from payment_operations where invoice_id=v_invoice)<>1 then raise exception 'fee collection lock failed';end if;
 end $$;

@@ -361,6 +361,7 @@ describe("the 2026 export's job columns", () => {
     job_status: "Completed",
     job_amount: "$154.00",
     job_scheduled_start_date: "2022-03-24T10:00:00-05:00",
+    job_scheduled_end_date: "3/24/2022 12:30 PM",
     job_completed_date: "2022-03-24T12:40:00-05:00",
     recurring: "true",
     street: "100 Oak St",
@@ -385,12 +386,29 @@ describe("the 2026 export's job columns", () => {
       status: "complete",
       statusRaw: "Completed",
       scheduledStart: "2022-03-24T15:00:00.000Z",
+      scheduledEnd: "2022-03-24T17:30:00.000Z",
       scheduledDate: "2022-03-24",
       completedAt: "2022-03-24T17:40:00.000Z",
       notes: "Use the side gate",
       address: { line1: "100 Oak St", street: "100 Oak St", city: "Fort Worth", state: "TX", zip: "76129" },
     });
   });
+
+  it("keeps older exports without a scheduled end", () => {
+    const mapped = mapJob({ ...row, job_scheduled_end_date: "" });
+    if (!mapped.ok) throw new Error(mapped.problem);
+    expect(mapped.value.scheduledEnd).toBeNull();
+  });
+
+  it.each(["soon", "2022-03-24", "2022-03-24T15:00:00Z", "2022-03-24T14:00:00Z"])(
+    "reports an invalid scheduled end of %s",
+    (end) => {
+      expect(mapJob({ ...row, job_scheduled_end_date: end })).toMatchObject({
+        ok: false,
+        reason: "invalid scheduled window",
+      });
+    },
+  );
 
   /** The export has no customer id; the job is linked on these instead (see link.ts). */
   it("maps a job with no customer id when it names its customer", () => {
@@ -436,10 +454,23 @@ describe("the 2026 export's job columns", () => {
   });
 
   it("reads a missing scheduled date as null rather than a guess", () => {
-    const mapped = mapJob({ ...row, job_status: "Scheduled", job_scheduled_start_date: "" });
+    const mapped = mapJob({
+      ...row,
+      job_status: "Scheduled",
+      job_scheduled_start_date: "",
+      job_scheduled_end_date: "",
+    });
     if (!mapped.ok) throw new Error(mapped.problem);
     expect(mapped.value.scheduledStart).toBeNull();
+    expect(mapped.value.scheduledEnd).toBeNull();
     expect(mapped.value.scheduledDate).toBeNull();
+  });
+
+  it("reports a scheduled end with no start", () => {
+    expect(mapJob({ ...row, job_scheduled_start_date: "" })).toMatchObject({
+      ok: false,
+      reason: "invalid scheduled window",
+    });
   });
 
   it("refuses a job that names no customer in any way", () => {

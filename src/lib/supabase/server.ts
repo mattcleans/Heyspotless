@@ -8,11 +8,12 @@ import { requireSupabaseConfig } from "./env";
  * Server client bound to the request's cookies, so it acts as the signed-in
  * user and RLS applies. This is the default for anything server-rendered.
  */
-export async function createClient() {
+export async function createClient(options?: { fetch?: typeof fetch }) {
   const { url, anonKey } = requireSupabaseConfig();
   const cookieStore = await cookies();
 
   return createServerClient(url, anonKey, {
+    global: { fetch: options?.fetch },
     cookies: {
       getAll() {
         return cookieStore.getAll();

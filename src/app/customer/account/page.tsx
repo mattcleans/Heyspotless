@@ -6,10 +6,12 @@ import type { PaymentMethod } from "@/lib/data/types";
 import { FREQUENCY_LABELS, SERVICE_LABELS } from "@/lib/pricing/price-book";
 import { formatCents } from "@/lib/money";
 import { formatCalendarDate, formatDateInZone } from "@/lib/time/zone";
-import { isBillingEnabled } from "@/lib/stripe/env";
+import { isBillingEnabled,isAutochargeEnabled } from "@/lib/stripe/env";
 import { PayInvoiceButton, SaveCardButton } from "./billing-actions";
 import { createClient } from "@/lib/supabase/server";
 import { cancellationsForInvoices } from "@/lib/customer/cancellation/store";
+import { clientInvoiceGroups } from "@/lib/billing/client-invoices";
+import { loadClientPaymentHistory } from "@/lib/billing/client-payment-history";
 
 export const metadata = { title: "Your account | Hey Spotless" };
 
@@ -37,7 +39,8 @@ export default async function CustomerPage() {
 
   const now = new Date();
   const upcoming = upcomingVisits(jobs, now).slice(0, 3);
-  const outstanding = invoices.filter((i) => i.balanceCents > 0 && !i.voidedAt);
+  const {outstanding,settled,drafts}=clientInvoiceGroups(invoices);
+  const paymentHistory = await loadClientPaymentHistory(repo, invoices);
   const cancellations = repo.isDemo
     ? []
     : await cancellationsForInvoices(
@@ -50,12 +53,12 @@ export default async function CustomerPage() {
   const reviewJobs = new Set(
     (cancellations ?? []).filter((c) => c.billingReview).map((c) => c.jobId),
   );
-  const settled = invoices.filter((i) => i.balanceCents <= 0 || i.voidedAt);
   const owedCents = outstanding.reduce((sum, i) => sum + i.balanceCents, 0);
 
   const defaultCard = cards.find((c) => c.isDefault) ?? cards[0] ?? null;
   const billingLive = isBillingEnabled();
   const autopayOn = Boolean(customer?.autopayEnabled);
+  const automaticCollection = isAutochargeEnabled();
   // Autopay that WE switched off, rather than the customer. Removing your
   // last card gets you here, and it withdraws consent with it — so the state
   // to explain is not "paused", it is "off, and here is why, and turning it
@@ -97,9 +100,7 @@ export default async function CustomerPage() {
           {customer?.autopayEndedReason
             ? `We switched autopay off because ${customer.autopayEndedReason}.`
             : "We switched autopay off because there is no card on file."}{" "}
-          Save a card below and you can turn it back on. We will ask you to
-          authorise it again rather than reusing your old permission — it
-          applied to a card you have since removed.
+          {automaticCollection ? "Save a card below and you can turn it back on with fresh authorization." : "Automatic payments are paused. Saving a card does not enable them."}
         </Callout>
       ) : null}
 
@@ -122,7 +123,7 @@ export default async function CustomerPage() {
           tone={owedCents > 0 ? "warn" : "good"}
           note={
             outstanding.length === 0
-              ? "Nothing outstanding"
+              ? "No issued bills outstanding"
               : `${outstanding.length} invoice${outstanding.length === 1 ? "" : "s"}`
           }
         />
@@ -133,10 +134,10 @@ export default async function CustomerPage() {
         />
         <Stat
           label="Autopay"
-          value={autopayOn ? "On" : "Off"}
-          tone={autopayOn ? "good" : autopayEndedByUs ? "warn" : "default"}
+          value={autopayOn ? automaticCollection ? "On" : "Paused" : "Off"}
+          tone={autopayOn && automaticCollection ? "good" : autopayEndedByUs ? "warn" : "default"}
           note={
-            autopayOn
+            !automaticCollection ? "Automatic payments are paused. You pay each issued invoice yourself." : autopayOn
               ? "Charged when a clean is invoiced"
               : autopayEndedByUs
                 ? "Switched off when your last card was removed — turn it back on any time"
@@ -174,6 +175,7 @@ export default async function CustomerPage() {
       )}
       <section className="mt-8">
         <h2 className="eyebrow">Outstanding</h2>
+        {drafts.length>0 && <p className="mt-2 max-w-xl text-sm text-ink-2">{drafts.length===1?"An invoice is":"Invoices are"} awaiting office invoice review. Unissued drafts are not included in your balance due. Issued bills will appear here.</p>}
         {outstanding.length === 0 ? (
           <p className="mt-2 text-sm text-ink-3">Nothing to pay.</p>
         ) : (
@@ -187,7 +189,7 @@ export default async function CustomerPage() {
                   <p className="font-medium text-ink">
                     {invoice.kind === "reschedule_fee"
                       ? "Rescheduling fee · "
-                      : feeInvoices.has(invoice.id)
+                      : (invoice.kind === "cancellation_fee" || feeInvoices.has(invoice.id))
                         ? "Cancellation fee · "
                         : ""}
                     {formatCents(invoice.balanceCents)} due
@@ -268,15 +270,45 @@ export default async function CustomerPage() {
             <SaveCardButton
               hasCard={Boolean(defaultCard)}
               autopayEnabled={autopayOn}
+              allowAutopay={automaticCollection}
             />
           ) : null}
         </div>
       </section>
 
       {/* ------------------------------------------------------- history --- */}
+      <section className="mt-8">
+        <h2 className="eyebrow">Payment history</h2>
+        <p className="mt-2 text-sm text-ink-3">Successful payments for your 20 most recent invoices. Times use Dallas time.</p>
+        {!paymentHistory.available ? (
+          <p role="status" className="mt-2 text-sm text-ink-2">Some payment history is unavailable. Refresh to check again, or call the office for a receipt.</p>
+        ) : paymentHistory.receipts.length === 0 ? (
+          <p className="mt-2 text-sm text-ink-3">No successful payment records for these invoices.</p>
+        ) : null}
+        <ul className="mt-2 space-y-2">
+          {paymentHistory.receipts.map(({ invoice, payment }) => (
+            <li key={payment.id} className="card px-4 py-3">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <p className="text-sm font-medium text-navy">
+                  {payment.succeededAt ? `Paid ${formatDateInZone(payment.succeededAt)}` : "Paid · payment date unavailable"}
+                </p>
+                <p className="nums text-sm font-semibold text-navy">{formatCents(payment.amountCents)}</p>
+              </div>
+              <p className="mt-1 text-sm text-ink-2">
+                {invoice.kind === "cancellation_fee" ? "Cancellation fee" : invoice.kind === "reschedule_fee" ? "Rescheduling fee" : "Cleaning invoice"}
+                {payment.isAutocharge ? " · automatic payment" : " · manual payment"}
+              </p>
+              <p className="mt-1 break-all text-xs text-ink-3">Receipt {payment.id}</p>
+              {invoice.amounts.refundedCents > 0 ? (
+                <p className="mt-1 text-sm text-ink-2">Refunds recorded for this invoice: {formatCents(invoice.amounts.refundedCents)}.</p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </section>
       {settled.length > 0 ? (
         <section className="mt-8">
-          <h2 className="eyebrow">Payment history</h2>
+          <h2 className="eyebrow">Closed invoices</h2>
           <ul className="mt-2 space-y-2">
             {settled.map((invoice) => (
               <li
@@ -284,10 +316,10 @@ export default async function CustomerPage() {
                 className="card flex items-center justify-between gap-4 px-4 py-3"
               >
                 <span className="text-sm text-ink-2">
-                  {formatDateInZone(invoice.issuedAt ?? invoice.createdAt)}
+                  {invoice.issuedAt ? `Invoice issued ${formatDateInZone(invoice.issuedAt)}` : `Invoice created ${formatDateInZone(invoice.createdAt)}`}
                   {invoice.kind === "reschedule_fee"
                     ? " · rescheduling fee"
-                    : ""}
+                    : invoice.kind === "cancellation_fee" ? " · cancellation fee" : ""}
                   {invoice.voidedAt ? " · invoice voided" : ""}
                   {invoice.amounts.refundedCents > 0
                     ? ` · ${formatCents(invoice.amounts.refundedCents)} refunded`

@@ -34,6 +34,7 @@ interface Harness {
   recorded: {
     paymentIntents: string[];
     refundKinds: string[];
+    refundAmounts: Map<string, number>;
     settlements: string[];
     settledOperations: string[];
     failedOperations: string[];
@@ -49,6 +50,7 @@ function harness(
   const recorded = {
     paymentIntents: [] as string[],
     refundKinds: [] as string[],
+    refundAmounts: new Map<string, number>(),
     settlements: [] as string[],
     settledOperations: [] as string[],
     failedOperations: [] as string[],
@@ -133,9 +135,14 @@ function harness(
     async detachCard(): Promise<string | null> {
       return "pm_2";
     },
-    async recordRefund(args: { kind?: string }): Promise<string | null> {
-      recorded.refundKinds.push(args.kind ?? "unstated");
-      return "ref_1";
+    async hasUnlinkedStripeRefund(): Promise<boolean> {
+      return false;
+    },
+    async recordRefund(args: { kind: string; stripeRefundId: string; amountCents: number }): Promise<string | null> {
+      if (recorded.refundAmounts.has(args.stripeRefundId)) return null;
+      recorded.refundAmounts.set(args.stripeRefundId, args.amountCents);
+      recorded.refundKinds.push(args.kind);
+      return args.stripeRefundId;
     },
     async settleRefund(_id: string, status: string): Promise<string> {
       recorded.settlements.push(status);
@@ -176,7 +183,7 @@ describe("the webhook's response to Stripe", () => {
   }
   it("matches a delayed intent capture to its stored Checkout session", async () => {
     const h = harness(); pendingCheckout(h);
-    const lookup = vi.spyOn(gateway, "lookUpCheckoutSession").mockResolvedValue({ state: "paid", paymentIntentId: "pi_1", amountCents: 17000, chargeId: "ch_1" });
+    const lookup = vi.spyOn(gateway, "lookUpCheckoutSession").mockResolvedValue({ state: "paid", paymentIntentId: "pi_1", amountCents: 17000, tipCents: 0, chargeId: "ch_1" });
     const result = await handleStripeEvent(h.store, paymentEvent("evt_delayed"));
     expect(result.status).toBe(200);
     expect(h.store.resolvePaymentOperation).toHaveBeenCalledWith("key", "succeeded");
@@ -185,7 +192,7 @@ describe("the webhook's response to Stripe", () => {
   });
   it("retries an uncertain Checkout association without recording the capture twice", async () => {
     const h = harness(); pendingCheckout(h);
-    const lookup = vi.spyOn(gateway, "lookUpCheckoutSession").mockRejectedValueOnce(new Error("provider unreachable")).mockResolvedValueOnce({ state: "paid", paymentIntentId: "pi_1", amountCents: 17000, chargeId: "ch_1" });
+    const lookup = vi.spyOn(gateway, "lookUpCheckoutSession").mockRejectedValueOnce(new Error("provider unreachable")).mockResolvedValueOnce({ state: "paid", paymentIntentId: "pi_1", amountCents: 17000, tipCents: 0, chargeId: "ch_1" });
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     expect((await handleStripeEvent(h.store, paymentEvent("evt_delayed"))).status).toBe(500);
     expect(h.store.resolvePaymentOperation).not.toHaveBeenCalled();
@@ -196,7 +203,7 @@ describe("the webhook's response to Stripe", () => {
   });
   it("does not close a different Checkout capture under an unrelated intent event", async () => {
     const h = harness(); pendingCheckout(h);
-    const lookup = vi.spyOn(gateway, "lookUpCheckoutSession").mockResolvedValue({ state: "paid", paymentIntentId: "pi_other", amountCents: 17000, chargeId: null });
+    const lookup = vi.spyOn(gateway, "lookUpCheckoutSession").mockResolvedValue({ state: "paid", paymentIntentId: "pi_other", amountCents: 17000, tipCents: 0, chargeId: null });
     expect((await handleStripeEvent(h.store, paymentEvent("evt_delayed"))).status).toBe(200);
     expect(h.store.resolvePaymentOperation).not.toHaveBeenCalled();
     lookup.mockRestore();
@@ -375,27 +382,53 @@ describe("the webhook's response to Stripe", () => {
 });
 
 describe("refunds arriving through the webhook", () => {
-  it("records a dashboard refund as unattributed, so it cannot become a charge", async () => {
-    // A refund we did not initiate carries no stated intent. Reading it as a
-    // correction would restore the balance and — with autopay on — take the
-    // money straight back off the customer's card. Reading it as pure
-    // goodwill would be safe for the customer but would quietly file every
-    // botched clean under generosity, so the business never sees them.
-    const h = harness();
-    const result = await handleStripeEvent(h.store, {
-      id: "evt_r",
-      type: "charge.refunded",
-      data: {
-        object: {
-          id: "ch_1",
-          payment_intent: "pi_1",
-          refunds: { data: [{ id: "re_1", amount: 5000 }] },
-        },
-      },
-    });
+  function chargeEvent(id: string, cumulative: number): StripeEventLike {
+    return { id, type: "charge.refunded", data: {
+      object: { id: "ch_1", payment_intent: "pi_1", amount_refunded: cumulative },
+    } };
+  }
 
-    expect(result.status).toBe(200);
-    expect(h.recorded.refundKinds).toEqual(["unattributed"]);
+  it("reconciles distinct refunds once across duplicate and reverse-order notifications", async () => {
+    const h = harness();
+    const lookup = vi.spyOn(gateway, "listChargeRefunds").mockResolvedValue([
+      { id: "re_2", amount: 3000, status: "succeeded" },
+      { id: "re_1", amount: 2000, status: "succeeded" },
+    ]);
+    try {
+      for (const event of [chargeEvent("new", 5000), chargeEvent("old", 2000), chargeEvent("new", 5000)]) {
+        expect((await handleStripeEvent(h.store, event)).status).toBe(200);
+      }
+      expect(lookup).toHaveBeenCalledTimes(2);
+      expect(h.recorded.refundAmounts).toEqual(new Map([["re_2", 3000], ["re_1", 2000]]));
+      expect(h.recorded.refundKinds).toEqual(["unattributed", "unattributed"]);
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("retries an unavailable refund lookup without recording a cumulative amount", async () => {
+    const h = harness();
+    const lookup = vi.spyOn(gateway, "listChargeRefunds")
+      .mockRejectedValueOnce(new Error("provider unavailable"))
+      .mockResolvedValueOnce([{ id: "re_1", amount: 2000, status: "succeeded" }]);
+    const event = chargeEvent("retry", 2000);
+    try {
+      expect((await handleStripeEvent(h.store, event)).status).toBe(500);
+      expect(h.recorded.refundAmounts.size).toBe(0);
+      expect((await handleStripeEvent(h.store, event)).status).toBe(200);
+      expect(h.recorded.refundAmounts.get("re_1")).toBe(2000);
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
+  it("does not acknowledge a charge with an unlinked historical refund", async () => {
+    const h = harness();
+    vi.spyOn(h.store, "hasUnlinkedStripeRefund").mockResolvedValue(true);
+    const result = await handleStripeEvent(h.store, chargeEvent("unlinked", 5000));
+    expect(result.status).toBe(500);
+    expect(h.events.get("unlinked")?.state).toBe("failed");
+    expect(h.recorded.refundAmounts.size).toBe(0);
   });
 
   it("passes a later failure through to settlement rather than ignoring it", async () => {

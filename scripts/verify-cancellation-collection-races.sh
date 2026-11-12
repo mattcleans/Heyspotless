@@ -159,9 +159,11 @@ do $$ declare c record;begin
  if exists(select 1 from invoices where id::text like 'd1700000-%' and job_id<>'d1500000-0000-0000-0000-000000000004' and status<>'void') then raise exception 'Original clean remains collectible';end if;
  for c in select * from visit_cancellations where job_id::text like 'd1500000-%' loop
   if c.billing_review or c.fee_cents<>6000 or c.invoice_id is null then raise exception 'Fee receipt incomplete';end if;
-  if (select count(*) from invoices where job_id=c.job_id and voided_at is null)<>1 then raise exception 'Fee obligation duplicated';end if;
+  if (select count(*) from invoices where id=c.invoice_id and job_id is null and kind='cancellation_fee' and status='draft' and issued_at is null)<>1 or exists(select 1 from invoices where job_id=c.job_id and voided_at is null) then raise exception 'Fee obligation duplicated or issued without review';end if;
   if not exists(select 1 from invoices where id=c.invoice_id and total_cents=6000 and amount_paid_cents=0 and autocharge_paused_at is not null and next_attempt_at is null) then raise exception 'Fee lost explicit checkout boundary';end if;
   begin perform begin_payment_operation(c.invoice_id,'autocharge','cancel-race-auto-'||c.id,6000,900);raise exception 'Fee autocharged under clean consent';exception when check_violation then null;end;
+  begin perform begin_payment_operation(c.invoice_id,'checkout','cancel-race-before-review-'||c.id,6000,900);raise exception 'Draft fee collectible';exception when check_violation then null;end;
+  perform issue_reviewed_change_fee(c.invoice_id,c.id,'cancellation_fee','d1100000-0000-0000-0000-000000000002',6000,(clock_timestamp() at time zone 'America/Chicago')::date);
   perform begin_payment_operation(c.invoice_id,'checkout','cancel-race-checkout-'||c.id,6000,900);
  end loop;
  if exists(select 1 from payments where customer_id='d1200000-0000-0000-0000-000000000001') then raise exception 'Payment invented';end if;

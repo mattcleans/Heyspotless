@@ -95,8 +95,8 @@ do $$ declare r record; v_signature text; begin
  if (select status from offers where id='86000000-0000-0000-0000-000000000001')<>'withdrawn' then raise exception 'inactive cleaner offer not withdrawn'; end if;
  if respond_to_offer('86000000-0000-0000-0000-000000000001','84000000-0000-0000-0000-000000000001',true,null)<>'superseded' then raise exception 'canceled offer accepted'; end if;
  if (select status from invoices where id='87000000-0000-0000-0000-000000000001')<>'void' then raise exception 'unperformed clean still collectible'; end if;
- if (select count(*) from invoices where job_id='85000000-0000-0000-0000-000000000002')<>1 then raise exception 'duplicate fee invoice'; end if;
- if (select total_cents from invoices where job_id='85000000-0000-0000-0000-000000000002')<>6000 then raise exception 'wrong fee invoice'; end if;
+ if (select count(*) from invoices where kind='cancellation_fee' and id=(select invoice_id from visit_cancellations where job_id='85000000-0000-0000-0000-000000000002'))<>1 then raise exception 'duplicate fee invoice'; end if;
+ if (select total_cents from invoices where id=(select invoice_id from visit_cancellations where job_id='85000000-0000-0000-0000-000000000002'))<>6000 then raise exception 'wrong fee invoice'; end if;
  if (select autocharge_paused_at from invoices where id='87000000-0000-0000-0000-000000000003') is null then raise exception 'paid invoice not paused'; end if;
  if (select amount_paid_cents from invoices where id='87000000-0000-0000-0000-000000000003')<>20000 then raise exception 'cancellation rewrote captured payment'; end if;
  begin
@@ -111,6 +111,9 @@ do $$ declare r record; v_signature text; begin
  update invoices set autocharge_paused_at=null,autocharge_paused_reason=null,next_attempt_at=clock_timestamp() where id=(select invoice_id from visit_cancellations where job_id='85000000-0000-0000-0000-000000000002');
  if (select autocharge_paused_at from invoices where id=(select invoice_id from visit_cancellations where job_id='85000000-0000-0000-0000-000000000002')) is null then raise exception 'Cancellation fee could be unpaused';end if;
  begin perform begin_payment_operation((select invoice_id from visit_cancellations where job_id='85000000-0000-0000-0000-000000000002'),'autocharge','fee-autocharge',6000,900);raise exception 'Cancellation fee charged under clean consent';exception when check_violation then null;end;
+ if not exists(select 1 from invoices where id=(select invoice_id from visit_cancellations where job_id='85000000-0000-0000-0000-000000000002') and status='draft' and issued_at is null and job_id is null) then raise exception 'Client cancellation issued its fee';end if;
+ begin perform begin_payment_operation((select invoice_id from visit_cancellations where job_id='85000000-0000-0000-0000-000000000002'),'checkout','fee-before-review',6000,900);raise exception 'unissued fee collectible';exception when check_violation then null;end;
+ perform issue_reviewed_change_fee((select invoice_id from visit_cancellations where job_id='85000000-0000-0000-0000-000000000002'),(select id from visit_cancellations where job_id='85000000-0000-0000-0000-000000000002'),'cancellation_fee','81000000-0000-0000-0000-000000000003',6000,(clock_timestamp() at time zone 'America/Chicago')::date);
  perform begin_payment_operation((select invoice_id from visit_cancellations where job_id='85000000-0000-0000-0000-000000000002'),'checkout','fee-checkout',6000,900);
  begin
   update jobs set status='assigned' where id='85000000-0000-0000-0000-000000000002';

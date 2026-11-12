@@ -123,7 +123,7 @@ export function safeWork(value) {
           (p) =>
             p && keys.has(p.roomKey) && ["before", "after"].includes(p.kind),
         )
-        .map((p) => ({ roomKey: p.roomKey, kind: p.kind }))
+        .map((p) => ({ roomKey: p.roomKey, kind: p.kind, ...(typeof p.revision === "string" && UUID.test(p.revision) ? { revision: p.revision, ...(Array.isArray(p.supersedes) && p.supersedes.length <= 64 && p.supersedes.every(r => typeof r === "string" && UUID.test(r)) ? { supersedes: p.supersedes } : {}) } : {}) }))
     : [];
   const scheduledAt =
     typeof value.scheduledAt === "string" &&
@@ -164,11 +164,16 @@ export async function saveWork(value) {
         const saved = safeWork(previous.result);
         if (saved?.checkedAt > work.checkedAt) return done(false);
         const confirmed = [...(saved?.confirmed ?? []), ...work.confirmed];
-        const unique = new Map(
-          confirmed
-            .filter((p) => work.rooms.some((r) => r.key === p.roomKey))
-            .map((p) => [`${p.roomKey}:${p.kind}`, p]),
-        );
+        const unique = new Map();
+        for (const photo of confirmed) {
+          if (!work.rooms.some((r) => r.key === photo.roomKey)) continue;
+          const key = `${photo.roomKey}:${photo.kind}`;
+          // A stale legacy page has no version proof and cannot erase one
+          // already acknowledged on this device.
+          if (unique.get(key)?.revision && !photo.revision) continue;
+          if (photo.revision && unique.get(key)?.supersedes?.includes(photo.revision)) continue;
+          unique.set(key, photo);
+        }
         store.put({ ...work, confirmed: [...unique.values()] });
         done(true);
       };
@@ -218,6 +223,25 @@ export async function readWorkPhotos(jobId, ownerId) {
         done(request.result.filter((p) => p.ownerId === ownerId));
     };
   });
+}
+
+// A new capture carries the revisions it replaces, not a device-clock order.
+// Keep this in the same durable transaction as the new bytes in both UIs.
+export class RetakeHistoryFull extends Error {}
+
+export function photoReplacements(photo, previous, confirmed = []) {
+  if (previous && previous.revision && previous.revision === photo.revision)
+    throw new Error("A saved capture cannot be replaced using the same revision");
+  const prior = confirmed.find((p) => p.roomKey === photo.roomKey && p.kind === photo.kind);
+  const revisions = [...new Set([
+    ...(Array.isArray(previous?.supersedes) ? previous.supersedes : []),
+    previous?.revision,
+    prior?.revision,
+  ].filter((revision) => typeof revision === "string" && revision !== photo.revision))];
+  // Never truncate an unresolved chain and silently lose replacement ordering.
+  if (revisions.length > 64)
+    throw new RetakeHistoryFull("Reconnect and finish saved uploads before taking more retakes. Earlier saved photos are still on this phone.");
+  return revisions;
 }
 
 export async function saveWorkPhoto(jobId, ownerId, roomKey, kind, blob) {
@@ -273,8 +297,13 @@ export async function saveWorkPhoto(jobId, ownerId, roomKey, kind, blob) {
                   "A photo from an earlier session is still saved. Reconnect or call the office before replacing it",
                 ),
               );
-            queue.put(photo);
-            done(photo);
+            try {
+              photo.supersedes = photoReplacements(photo, previous.result, work.confirmed);
+              queue.put(photo);
+              done(photo);
+            } catch (error) {
+              fail(error);
+            }
           };
         };
       };
@@ -293,18 +322,13 @@ export function markWorkPhotoConfirmed(tx, photo) {
       !["before", "after"].includes(photo.kind)
     )
       return;
-    if (
-      !work.confirmed.some(
-        (p) => p.roomKey === photo.roomKey && p.kind === photo.kind,
-      )
-    ) {
-      tx.objectStore("work").put({
-        ...work,
-        confirmed: [
-          ...work.confirmed,
-          { roomKey: photo.roomKey, kind: photo.kind },
-        ],
-      });
-    }
+    tx.objectStore("work").put({
+      ...work,
+      confirmed: [
+        ...work.confirmed.filter((p) => p.roomKey !== photo.roomKey || p.kind !== photo.kind),
+        { roomKey: photo.roomKey, kind: photo.kind,
+          ...(typeof photo.revision === "string" && UUID.test(photo.revision) ? { revision: photo.revision, ...(photo.supersedes?.length ? { supersedes: photo.supersedes } : {}) } : {}) },
+      ],
+    });
   };
 }

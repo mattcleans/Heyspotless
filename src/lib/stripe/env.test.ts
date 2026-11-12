@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { cronSecretMatches, hasStripeConfig, isBillingEnabled } from "./env";
+import { cronSecretMatches, hasStripeConfig, isBillingEnabled,isAutochargeEnabled } from "./env";
 
-const KEYS = ["DEMO_MODE", "BILLING_ENABLED", "STRIPE_SECRET_KEY", "CRON_SECRET"] as const;
+const KEYS = ["DEMO_MODE", "BILLING_ENABLED", "AUTOCHARGE_ENABLED", "STRIPE_SECRET_KEY", "CRON_SECRET"] as const;
 const saved = new Map<string, string | undefined>();
 
 function set(env: Partial<Record<(typeof KEYS)[number], string | undefined>>): void {
@@ -22,6 +22,9 @@ afterEach(() => {
 });
 
 describe("billing enablement", () => {
+  it("allows customer billing without enabling automatic charges",()=>{set({BILLING_ENABLED:"1",STRIPE_SECRET_KEY:"sk_test_synthetic"});expect(isBillingEnabled()).toBe(true);expect(isAutochargeEnabled()).toBe(false);});
+  it.each([undefined,"0","true","yes"])("requires an explicit autocharge opt-in (%s)",flag=>{set({BILLING_ENABLED:"1",AUTOCHARGE_ENABLED:flag});expect(isAutochargeEnabled()).toBe(false);});
+  it("requires both billing and autocharge, with demo taking precedence",()=>{set({BILLING_ENABLED:"1",AUTOCHARGE_ENABLED:"1"});expect(isAutochargeEnabled()).toBe(true);set({BILLING_ENABLED:"0",AUTOCHARGE_ENABLED:"1"});expect(isAutochargeEnabled()).toBe(false);set({BILLING_ENABLED:"1",AUTOCHARGE_ENABLED:"1",DEMO_MODE:"1"});expect(isAutochargeEnabled()).toBe(false);});
   it("is off with no Stripe key", () => {
     set({});
     expect(hasStripeConfig()).toBe(false);

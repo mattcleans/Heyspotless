@@ -3,7 +3,7 @@ import { getRepository } from "@/lib/data";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { BillingStore } from "@/lib/billing/store";
 import { createSetupSession, ensureStripeCustomer } from "@/lib/billing/gateway";
-import { isBillingEnabled } from "@/lib/stripe/env";
+import { isBillingEnabled,isAutochargeEnabled } from "@/lib/stripe/env";
 
 /**
  * Save a card, and optionally switch autopay on in the same act.
@@ -27,6 +27,8 @@ export async function POST(request: NextRequest) {
   const repo = await getRepository();
   const profile = await repo.getCurrentProfile();
   if (!profile) return NextResponse.json({ error: "not signed in" }, { status: 401 });
+  if (profile.role !== "customer") return NextResponse.json({ error: "Client access required" }, { status: 403 });
+  if (autopay === true && !isAutochargeEnabled()) return NextResponse.json({ error: "Automatic payments are paused. Save the card without enabling automatic payments." }, { status: 409 });
 
   const customer = await repo.getCustomerByProfile(profile.id);
   if (!customer) return NextResponse.json({ error: "no customer record" }, { status: 404 });

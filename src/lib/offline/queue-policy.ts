@@ -1,3 +1,5 @@
+import { capturePath } from "../service/photo-capture";
+
 /**
  * When to try an upload again, and when to stop pretending it is fine.
  *
@@ -32,6 +34,8 @@ export interface QueueItem {
   takenAt: number;
   /** Identifies this capture independently of the room's stable queue key. */
   revision?: string;
+  /** Earlier captures replaced by these bytes; persisted without relying on clocks. */
+  supersedes?: string[];
   state: QueueItemState;
   attempts: number;
   /** When it may next be tried. Epoch ms. */
@@ -190,6 +194,7 @@ export function storagePathFor(
   jobId: string,
   roomKey: string,
   kind: string,
+  revision?: string,
 ): string {
-  return `jobs/${jobId}/${roomKey}-${kind}.jpg`;
+  return revision ? capturePath(jobId, roomKey, kind, revision) : `jobs/${jobId}/${roomKey}-${kind}.jpg`;
 }
