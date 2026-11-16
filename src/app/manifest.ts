@@ -12,8 +12,8 @@ export default function manifest(): MetadataRoute.Manifest {
     description: `Book and manage cleans, follow visits, and coordinate your team with ${CUSTOMER_BRAND}.`,
     start_url: "/",
     display: "standalone",
-    background_color: "#f6f9fb",
-    theme_color: "#173c58",
+    background_color: "#fbfcfd",
+    theme_color: "#055c80",
     orientation: "portrait",
     icons: [
       { src: "/icon.svg", sizes: "any", type: "image/svg+xml", purpose: "any" },
