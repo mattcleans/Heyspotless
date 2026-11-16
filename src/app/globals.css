@@ -1,35 +1,39 @@
 @import "tailwindcss";
 
 /*
- * Spotless Ops design system. Palette carried over from the build plan artifact
- * so the app and the document read as one thing: deep navy, sky blue, and a
- * cream accent, on a cool off-white ground.
+ * Hey Spotless design system. Token values come from the official brand kit
+ * (HeySpotless-BrandGuide): deep ocean blue #055C80, sky blue #87CDEA, sunny
+ * yellow #F8E27E, cream #F9F0BD, on clean white / faint cool paper. The token
+ * NAMES are unchanged — navy/sky/cream classes throughout the app now resolve
+ * to the brand's exact hex values. Status colors are kept at their darker,
+ * text-safe values (the brand-kit status colors fail contrast as text).
  */
 @theme {
-  --color-ground: #f6f9fb;
+  --color-ground: #fbfcfd;
   --color-surface: #ffffff;
-  --color-surface-2: #eef4f8;
-  --color-sunk: #e3ecf2;
+  --color-surface-2: #eff7fb;
+  --color-sunk: #dceef6;
 
-  --color-ink: #1b2830;
-  --color-ink-2: #4a5b67;
-  --color-ink-3: #7c8d99;
+  --color-ink: #1f2023;
+  --color-ink-2: #4d575f;
+  --color-ink-3: #6b7882;
 
-  --color-navy: #245478;
-  --color-navy-deep: #173c58;
-  --color-sky: #90cce4;
-  --color-sky-deep: #4e9bbe;
-  --color-cream: #e8c63b;
-  --color-cream-soft: #f7eebe;
+  --color-navy: #055c80;
+  --color-navy-deep: #044a68;
+  --color-sky: #87cdea;
+  --color-sky-deep: #1e6e92;
+  --color-cream: #e9cc54;
+  --color-cream-soft: #f9f0bd;
 
   --color-good: #2e7d5b;
   --color-warn: #a96c05;
   --color-bad: #ae3d2c;
 
-  --color-line: #d6e2ea;
-  --color-line-soft: #e7eff4;
+  --color-line: #d6dee4;
+  --color-line-soft: #e8edf1;
 
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-sans: var(--font-poppins, ui-sans-serif), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: var(--font-baloo, var(--font-sans)), "Trebuchet MS", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
@@ -72,7 +76,7 @@
 /* The client flow's ocean blue and sunshine, with clear, touch-sized actions. */
 @layer base {
   :focus-visible {
-    outline: 3px solid #076b8c;
+    outline: 3px solid #055c80;
     outline-offset: 4px;
   }
   @media (prefers-reduced-motion: reduce) {
@@ -102,19 +106,20 @@
     border-bottom: 1px solid #e2edf0;
   }
   .brand-lockup {
+    font-family: var(--font-display);
     display: flex;
     align-items: center;
     gap: 10px;
     font-size: 19px;
     font-weight: 800;
-    color: #075e7b;
+    color: #055c80;
     letter-spacing: -0.5px;
   }
   .brand-mark {
     display: grid;
     place-items: center;
-    background: #fae47a;
-    color: #075e7b;
+    background: #f8e27e;
+    color: #055c80;
     width: 36px;
     height: 36px;
     border-radius: 50%;
@@ -122,7 +127,7 @@
   .help-link {
     font-size: 13px;
     font-weight: 650;
-    color: #075e7b;
+    color: #055c80;
     padding: 12px 4px;
     text-decoration: underline;
     text-underline-offset: 4px;
@@ -167,12 +172,13 @@
     border-radius: 12px;
   }
   .app-tabs a[aria-current="page"] {
-    background: #e8f5f8;
-    color: #075e7b;
+    background: #e1f3fa;
+    color: #055c80;
     font-weight: 750;
   }
   .welcome-title {
-    color: #075e7b;
+    font-family: var(--font-display);
+    color: #055c80;
     font-size: clamp(28px, 5vw, 38px);
     font-weight: 750;
     letter-spacing: -1.2px;
@@ -181,13 +187,14 @@
   .booking-feature {
     position: relative;
     overflow: hidden;
-    background: #075e7b;
+    background: #055c80;
     color: white;
     padding: 28px;
     margin-top: 24px;
     border-radius: 24px 24px 48px 24px;
   }
   .booking-feature h2 {
+    font-family: var(--font-display);
     font-size: clamp(27px, 5vw, 36px);
     max-width: 14ch;
     line-height: 1.12;
@@ -196,7 +203,7 @@
   }
   .booking-feature p {
     max-width: 36ch;
-    color: #daedf3;
+    color: #c4e8f5;
     margin: 12px 0 22px;
     line-height: 1.6;
     font-size: 14px;
@@ -207,9 +214,9 @@
     align-items: center;
     min-height: 48px;
     padding: 12px 22px;
-    background: #fae47a;
+    background: #f8e27e;
     border-radius: 100px;
-    color: #16485b;
+    color: #044a68;
     font-size: 14px;
     font-weight: 750;
   }
@@ -221,7 +228,7 @@
     padding: 10px 16px;
     border: 1px solid #bdd5df;
     border-radius: 100px;
-    color: #075e7b;
+    color: #055c80;
     font-size: 13px;
     font-weight: 650;
   }
@@ -234,13 +241,13 @@
   }
   .section-heading h2 {
     font-size: 18px;
-    color: #174d63;
+    color: #044a68;
     font-weight: 700;
     letter-spacing: -0.3px;
   }
   .section-heading a {
     font-size: 13px;
-    color: #075e7b;
+    color: #055c80;
     text-decoration: underline;
     text-underline-offset: 4px;
   }
@@ -259,7 +266,7 @@
     padding: 16px 12px;
     border: 1px solid #dce8ed;
     border-radius: 16px;
-    color: #174d63;
+    color: #044a68;
     font-size: 13px;
     font-weight: 650;
   }
@@ -267,7 +274,7 @@
     margin-bottom: 14px;
   }
   .service-option:hover {
-    background: #e8f5f8;
+    background: #e1f3fa;
   }
   .care-note {
     margin-top: 28px;
@@ -281,7 +288,7 @@
   }
   .care-note strong {
     display: block;
-    color: #174d63;
+    color: #044a68;
     margin-bottom: 3px;
   }
   .skip-link {
@@ -291,7 +298,7 @@
     z-index: 50;
     padding: 12px;
     background: white;
-    color: #075e7b;
+    color: #055c80;
   }
   .skip-link:focus {
     top: 12px;
@@ -306,9 +313,9 @@
     flex-wrap: wrap;
     gap: 10px;
     padding: 14px 24px;
-    background: #f0f7f9;
+    background: #eff7fb;
     border-bottom: 1px solid #dce8ed;
-    color: #174d63;
+    color: #044a68;
     font-size: 12px;
   }
   .workspace-identity > div {
@@ -318,8 +325,8 @@
     align-items: center;
   }
   .workspace-role {
-    background: #dceff4;
-    color: #075e7b;
+    background: #dceef6;
+    color: #055c80;
     border-radius: 6px;
     padding: 4px 8px;
     font-weight: 750;
@@ -335,7 +342,7 @@
   }
   .management-app {
     min-height: 100dvh;
-    background: #f6f9fb;
+    background: #fbfcfd;
   }
   .management-header {
     display: flex;
@@ -369,7 +376,7 @@
     padding: 8px 12px;
     border: 1px solid #bdd5df;
     border-radius: 8px;
-    color: #075e7b;
+    color: #055c80;
     background: #fff;
     font-size: 13px;
   }
@@ -403,12 +410,12 @@
     font-size: 14px;
   }
   .management-navigation a[aria-current="page"] {
-    background: #075e7b;
+    background: #055c80;
     color: white;
     font-weight: 650;
   }
   .management-navigation a:hover:not([aria-current="page"]) {
-    background: #e8f5f8;
+    background: #e1f3fa;
   }
   @media (min-width: 1024px) {
     .management-app {

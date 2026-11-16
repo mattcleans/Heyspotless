@@ -6,6 +6,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { isDemoMode } from "@/lib/supabase/env";
 import { formatCents, formatPct } from "@/lib/money";
 import { formatDateInZone } from "@/lib/time/zone";
+import { CLEANER_SHARE_OF_TICKET } from "@/lib/pricing/payout";
 
 /**
  * What a clean actually earned, and who has quietly stopped booking.
@@ -85,7 +86,12 @@ export default async function ReportingPage() {
   }
 
   const db = createAdminClient();
-  const [margins, risks] = await Promise.all([loadMargins(db), loadRisk(db)]);
+  const [margins, risks, oversight, escalated] = await Promise.all([
+    loadMargins(db),
+    loadRisk(db),
+    loadOversight(db),
+    loadEscalatedPairings(db),
+  ]);
 
   const completed = margins.filter((m) => m.completedAt !== null);
   const revenue = completed.reduce((sum, m) => sum + m.revenueCents, 0);
@@ -182,6 +188,71 @@ export default async function ReportingPage() {
         )}
       </section>
 
+      <section className="mb-8">
+        <p className="eyebrow mb-2">Dispatch oversight · last 30 days</p>
+        <p className="mb-3 max-w-2xl text-sm text-ink-2">
+          The north-star here is <strong>manager interventions per 100 completed cleans</strong>:
+          how often a person had to decide what the engine should have. Escalated pairings are
+          relationships where the same cleaner keeps accepting the same customer only above the
+          standard {formatPct(CLEANER_SHARE_OF_TICKET, 0)} share — a share below market for that
+          home, to re-agree deliberately rather than re-escalate weekly.
+        </p>
+        <div className="mb-4 grid gap-3 sm:grid-cols-3">
+          <Stat
+            label="Interventions / 100 cleans"
+            value={
+              oversight.completedCleans === 0
+                ? "—"
+                : ((oversight.interventions / oversight.completedCleans) * 100).toFixed(1)
+            }
+            note={`${oversight.interventions} interventions · ${oversight.completedCleans} completed cleans`}
+            tone={
+              oversight.completedCleans > 0 &&
+              oversight.interventions / oversight.completedCleans > 0.2
+                ? "warn"
+                : "default"
+            }
+          />
+          <Stat
+            label="Engine decisions"
+            value={`${oversight.engineDecisions}`}
+            note="Dispatch decisions the engine made alone."
+          />
+          <Stat
+            label="Escalated pairings"
+            value={`${escalated.length}`}
+            note="Cleaner–customer pairs with 2+ accepted offers above the standard share."
+            tone={escalated.length > 0 ? "warn" : "default"}
+          />
+        </div>
+        {escalated.length > 0 ? (
+          <ul className="space-y-2">
+            {escalated.map((row) => (
+              <li
+                key={`${row.cleanerId}:${row.customerId}`}
+                className="card flex flex-wrap items-center justify-between gap-4 p-4"
+              >
+                <div>
+                  <span className="font-medium">{row.cleanerName}</span>
+                  <span className="text-ink-3"> cleaning for </span>
+                  <Link
+                    href={`/admin/customers/${row.customerId}`}
+                    className="font-medium text-navy underline"
+                  >
+                    {row.customerName}
+                  </Link>
+                  <p className="mt-0.5 text-sm text-ink-3">
+                    {row.acceptedAboveShare} accepted above share · latest{" "}
+                    {row.latestAcceptedAt ? formatDateInZone(row.latestAcceptedAt) : "—"}
+                  </p>
+                </div>
+                <Pill tone="warn">up to {formatPct(row.maxPct, 0)}</Pill>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </section>
+
       <section>
         <p className="eyebrow mb-2">At risk</p>
         <p className="mb-3 max-w-2xl text-sm text-ink-2">
@@ -230,6 +301,146 @@ function Th({ children, right = false }: { children: React.ReactNode; right?: bo
 
 function Td({ children, right = false }: { children: React.ReactNode; right?: boolean }) {
   return <td className={`px-3 py-2 ${right ? "nums text-right" : ""}`}>{children}</td>;
+}
+
+interface OversightStats {
+  interventions: number;
+  engineDecisions: number;
+  completedCleans: number;
+}
+
+interface EscalatedPairing {
+  cleanerId: string;
+  customerId: string;
+  cleanerName: string;
+  customerName: string;
+  acceptedAboveShare: number;
+  maxPct: number;
+  latestAcceptedAt: Date | null;
+}
+
+const OVERSIGHT_WINDOW_DAYS = 30;
+
+function oversightSince(): string {
+  return new Date(Date.now() - OVERSIGHT_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+}
+
+/**
+ * The numerator is dispatch_decisions.decided_by — null means the engine
+ * decided, set means a person did. The column has been populated since the
+ * first decision recorded precisely so this metric could exist; this is the
+ * first place that reads it.
+ */
+async function loadOversight(db: ReturnType<typeof createAdminClient>): Promise<OversightStats> {
+  const since = oversightSince();
+
+  const [interventions, engine, completed] = await Promise.all([
+    db
+      .from("dispatch_decisions")
+      .select("id", { count: "exact", head: true })
+      .not("decided_by", "is", null)
+      .gte("decided_at", since),
+    db
+      .from("dispatch_decisions")
+      .select("id", { count: "exact", head: true })
+      .is("decided_by", null)
+      .gte("decided_at", since),
+    db
+      .from("jobs")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "completed")
+      .gte("completed_at", since),
+  ]);
+
+  for (const r of [interventions, engine, completed]) {
+    if (r.error) throw new Error(`dispatch oversight: ${r.error.message}`);
+  }
+
+  return {
+    interventions: interventions.count ?? 0,
+    engineDecisions: engine.count ?? 0,
+    completedCleans: completed.count ?? 0,
+  };
+}
+
+/**
+ * An escalated rung is a one-off for that visit; the standard share stands
+ * next time. A pairing that keeps accepting only above the standard share is
+ * one whose share is below market for that customer — it should be re-agreed
+ * by a person (agreed_payout_share exists for exactly that) rather than
+ * re-escalated every week. The data has been in offers.payout_pct all along;
+ * this surfaces it.
+ */
+async function loadEscalatedPairings(
+  db: ReturnType<typeof createAdminClient>,
+): Promise<EscalatedPairing[]> {
+  // Strictly above the standard share, with a small tolerance for the
+  // numeric(6,5) column so 0.33000 itself never counts as escalated.
+  const threshold = CLEANER_SHARE_OF_TICKET + 0.005;
+
+  const { data, error } = await db
+    .from("offers")
+    .select(
+      "cleaner_id, payout_pct, responded_at, " +
+        "cleaners(first_name, last_name), " +
+        "jobs(customer_id, customers(first_name, last_name))",
+    )
+    .eq("status", "accepted")
+    .gt("payout_pct", threshold)
+    .gte("responded_at", oversightSince())
+    .order("responded_at", { ascending: false })
+    .limit(500);
+
+  if (error) throw new Error(`escalated pairings: ${error.message}`);
+
+  const rows = (Array.isArray(data) ? data : []) as unknown as Record<string, unknown>[];
+  const pairs = new Map<string, EscalatedPairing>();
+
+  for (const row of rows) {
+    const cleanerId = String(row["cleaner_id"]);
+    const job = row["jobs"] as Record<string, unknown> | null;
+    if (!job) continue;
+    const customerId = String(job["customer_id"]);
+    const key = `${cleanerId}:${customerId}`;
+    const pct = Number(row["payout_pct"] ?? 0);
+    const at = row["responded_at"] ? new Date(String(row["responded_at"])) : null;
+
+    const existing = pairs.get(key);
+    if (existing) {
+      existing.acceptedAboveShare += 1;
+      existing.maxPct = Math.max(existing.maxPct, pct);
+      if (at && (!existing.latestAcceptedAt || at > existing.latestAcceptedAt)) {
+        existing.latestAcceptedAt = at;
+      }
+      continue;
+    }
+
+    const cleaner = row["cleaners"] as Record<string, unknown> | null;
+    const customer = (job["customers"] ?? null) as Record<string, unknown> | null;
+    pairs.set(key, {
+      cleanerId,
+      customerId,
+      cleanerName: personName(cleaner, "Cleaner"),
+      customerName: personName(customer, "Customer"),
+      acceptedAboveShare: 1,
+      maxPct: pct,
+      latestAcceptedAt: at,
+    });
+  }
+
+  return [...pairs.values()]
+    .filter((p) => p.acceptedAboveShare >= 2)
+    .sort((a, b) => b.acceptedAboveShare - a.acceptedAboveShare)
+    .slice(0, 20);
+}
+
+function personName(row: Record<string, unknown> | null, fallback: string): string {
+  if (!row) return fallback;
+  return (
+    [row["first_name"], row["last_name"]]
+      .filter((p): p is string => typeof p === "string" && p.length > 0)
+      .join(" ") || fallback
+  );
 }
 
 async function loadMargins(db: ReturnType<typeof createAdminClient>): Promise<MarginRow[]> {
