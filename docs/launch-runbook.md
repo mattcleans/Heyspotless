@@ -32,7 +32,7 @@ Everything here is reversible and touches no customer. Do it in one sitting.
    sign-in emails are capped at two per hour and only reach team addresses.
    This silently blocks every other acceptance test, so it goes first.
    Steps: `setup.md` § Custom SMTP.
-2. **Stripe account** under BLISS CLEANS LLC (dba Hey Spotless).
+2. **Stripe account** under Hey Spotless LLC.
    Publishable + secret keys into Vercel, webhook endpoint with the eight
    events, signing secret into `STRIPE_WEBHOOK_SECRET`. Leave
    `BILLING_ENABLED=0`. Steps: `setup.md` § 2.

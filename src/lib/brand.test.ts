@@ -13,11 +13,18 @@ const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const SRC = join(ROOT, "src");
 
 /**
- * Bliss is ownership truth in brand.ts / this test / docs/setup.md (Stripe
- * and Twilio underwriting). It must not appear in this app's source as
- * customer-facing copy. The Webflow marketing site is a different repo.
+ * The registered entity is Hey Spotless LLC (Matt, 16 November 2026). The
+ * repo previously held Bliss Cleans LLC as ownership truth, and one
+ * registration made under that name (the Twilio A2P brand) is recorded in
+ * docs/setup.md until it is updated with the carrier. Bliss may appear in
+ * that historical note and in the brand module's own comment, and nowhere
+ * else — above all never in customer-facing copy.
  */
-const BLISS_ALLOWLIST = new Set(["src/lib/brand.ts", "src/lib/brand.test.ts"]);
+const BLISS_ALLOWLIST = new Set([
+  "src/lib/brand.ts",
+  "src/lib/brand.test.ts",
+  "docs/setup.md",
+]);
 
 const TEXT_EXT = new Set([
   ".ts",
@@ -59,8 +66,8 @@ describe("the brand split", () => {
     expect(CUSTOMER_BRAND).not.toMatch(/LLC/i);
   });
 
-  it("keeps BLISS CLEANS LLC as the legal entity, which is ownership truth", () => {
-    expect(LEGAL_ENTITY).toBe("BLISS CLEANS LLC");
+  it("keeps Hey Spotless LLC as the legal entity, which is ownership truth", () => {
+    expect(LEGAL_ENTITY).toBe("Hey Spotless LLC");
   });
 
   it("prints a card-statement descriptor a customer would recognise", () => {
@@ -78,24 +85,24 @@ describe("the brand split", () => {
   });
 });
 
-describe("this app does not market Bliss or invent a second LLC", () => {
+describe("this app does not market the entity string or resurrect Bliss", () => {
   const repoFiles = walk(ROOT).filter((path) => relative(ROOT, path) !== "package-lock.json");
   const appFiles = walk(SRC);
 
-  it("contains no 'Hey Spotless LLC' — that company is not the registered entity", () => {
+  it("keeps the entity string out of customer-facing source — brands have no LLC", () => {
     const hits: string[] = [];
-    for (const path of repoFiles) {
+    for (const path of appFiles) {
       const rel = relative(ROOT, path);
-      if (rel === "src/lib/brand.test.ts") continue;
+      if (rel === "src/lib/brand.ts" || rel === "src/lib/brand.test.ts") continue;
       const body = readFileSync(path, "utf8");
       if (/Hey Spotless LLC/i.test(body)) hits.push(rel);
     }
     expect(hits).toEqual([]);
   });
 
-  it("keeps Bliss out of this app's source, except the legal-entity constant", () => {
+  it("keeps Bliss out of the repo, except the recorded history it still explains", () => {
     const hits: string[] = [];
-    for (const path of appFiles) {
+    for (const path of repoFiles) {
       const rel = relative(ROOT, path);
       if (BLISS_ALLOWLIST.has(rel)) continue;
       const body = readFileSync(path, "utf8");
@@ -108,6 +115,5 @@ describe("this app does not market Bliss or invent a second LLC", () => {
     const setup = readFileSync(join(ROOT, "docs/setup.md"), "utf8");
     expect(setup).toContain(LEGAL_ENTITY);
     expect(setup).toContain(CUSTOMER_BRAND);
-    expect(setup).not.toMatch(/Hey Spotless LLC/i);
   });
 });
