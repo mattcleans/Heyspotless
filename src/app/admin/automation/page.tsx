@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { isDemoMode } from "@/lib/supabase/env";
-import { isBillingEnabled } from "@/lib/stripe/env";
+import { isAutochargeEnabled, isBillingEnabled } from "@/lib/stripe/env";
 import { isMessagingEnabled } from "@/lib/messaging/env";
 import { formatDateTimeInZone } from "@/lib/time/zone";
 import {readMatchingHealth,type MatchingHealth} from "@/lib/operations/matching-health";
@@ -159,8 +159,9 @@ export default async function AutomationPage() {
               : "Stripe payments are inactive."}
           </p>
           <p className="mt-2 text-sm leading-relaxed text-ink-2">
-            Payment activation is a separate launch step. This screen does not
-            enable billing or charge a customer.
+            {isAutochargeEnabled()
+              ? "Automatic collection is on for eligible invoices with Client authorization."
+              : "Automatic collection is off."}
           </p>
           <Link href="/admin/payments" className="secondary-action mt-5">Review unresolved payments</Link>
         </section>
