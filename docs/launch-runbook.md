@@ -46,18 +46,40 @@ Everything here is reversible and touches no customer. Do it in one sitting.
    every five minutes instead of daily; verify on `/admin/automation`.
    Steps: `matching-worker.md`.
 
-## Phase B — Stripe test mode, end to end
+## Phase B — Stripe, end to end
 
 The one open billing gate: no card, webhook or auto-charge has ever run
-against Stripe itself. In **test mode**, before any live key:
+against Stripe itself. Chosen path (18 November 2026): verify in **live
+mode** with a $1 invoice on the test customer, paid with a real card and
+then refunded. The cost is the Stripe fee on $1, which a refund does not
+return.
 
-- Checkout with `4242 4242 4242 4242`; watch the webhook settle the invoice.
-- Save `4000 0000 0000 0341`, let auto-charge fail off-session, watch the
-  retry schedule hold (1 / 3 / 7 days).
-- Issue a refund; watch `refund.updated` move it out of pending.
+- Pay the $1 invoice through Checkout; watch the webhook settle it to paid
+  with exactly one payment row.
+- Refund it from Management; watch `refund.updated` move it out of pending.
+- Auto-charge stays off (`AUTOCHARGE_ENABLED=0`) for the pilot. Its
+  off-session failure path (`4000 0000 0000 0341`) needs test mode and is
+  deferred until autopay is offered.
 
-When all three behave, and the money-policy worked examples are approved
-(phase E), switch to live keys and `BILLING_ENABLED=1`.
+### Switching modes: three keys, one redeploy, and stale ids
+
+Stripe keeps test and live as two separate worlds. Each switch is:
+
+1. Swap `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `STRIPE_SECRET_KEY` **and**
+   `STRIPE_WEBHOOK_SECRET` in Vercel. The webhook endpoint exists once per
+   mode, each with its own signing secret. Swapping only the API keys means
+   every webhook fails its signature check.
+2. Redeploy. Environment changes never reach a running deployment.
+3. Clear stored Stripe references made in the other mode:
+   `customers.stripe_customer_id` and active `payment_methods` rows. A
+   customer or card id from one mode is unknown in the other, and Checkout
+   fails with "Stripe refused Checkout creation" until they are cleared.
+4. Resolve any payment attempt still open from the other mode. The app
+   cannot see the other mode's sessions, so it holds the invoice blocked
+   ("Your previous payment request could not be confirmed"). Switch the
+   keys back long enough to use **Check payment status** on
+   `/admin/payments`, or confirm in that mode's Stripe dashboard that no
+   charge exists and use **Release request**.
 
 ## Phase C — the Housecall Pro import
 
