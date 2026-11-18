@@ -217,10 +217,10 @@ jobs. `street` is needed when the customer has more than one address. Then:
 ```bash
 export NEXT_PUBLIC_SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=...
 npm run import:hcp -- --customers customers.csv --jobs jobs.csv --plans plans.csv --dry-run
-npm run import:hcp -- --customers customers.csv --jobs jobs.csv --plans plans.csv
+npm run import:hcp -- --customers customers.csv --jobs jobs.csv --plans plans.csv --apply
 ```
 
-The service-role key only on a laptop, never in CI. It is safe to run again:
+The import previews by default. Use `--apply` after reviewing the report and confirming the target database. Keep the service-role key on a laptop, never in CI. It is safe to run again:
 every import keys on the Housecall Pro id (a job's `Job #`, a customer's `ID`,
 a property's customer and street), so a second run updates what the first
 wrote — and a room count somebody has since verified on site, or a note typed
