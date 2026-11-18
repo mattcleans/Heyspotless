@@ -6,7 +6,7 @@ Vercel identifies main commit `eb6e603` as Current Production. It includes the N
 
 ## A. Accounts and wiring
 
-- **Sign-in email.** Configure a verified sender through custom SMTP and test a recovery email to an approved pilot account on its intended device. A free Resend account is an option. Existing test accounts can continue password sign-in during setup. [Custom SMTP](setup.md#custom-smtp-without-upgrading-the-preview-database)
+- **Sign-in email.** Production Supabase has custom SMTP enabled with Resend on port 465 and the sender name Hey Spotless, verified November 18. Test delivery and the recovery link on an approved pilot account and its intended device. Existing test accounts can continue password sign-in during setup. [Custom SMTP](setup.md#custom-smtp-without-upgrading-the-preview-database)
 - **Stripe.** Use the existing Hey Spotless LLC account. Verify the sandbox keys, webhook signing secret and eight event subscriptions on the isolated preview. Verify the Vercel app and Supabase worker settings separately. [Stripe setup](setup.md#2-stripe)
 - **Twilio.** Matt reports the campaign is approved and the registered A2P brand still uses the old Bliss Cleans LLC name. Have the account owner reconcile the registration with Hey Spotless LLC before relying on carrier delivery. Verify the credentials, Messaging Service, inbound webhook and Advanced Opt-Out. Keep messaging free for this pilot. The staffed reminder process is available while SMS delivery is pending. [Twilio setup](setup.md)
 - **Web Push.** Check for an existing VAPID key pair before generating one. Verify subscription and delivery on a consenting tester’s phone. [Web Push setup](setup.md#11-web-push--optional-and-the-cheapest-thing-on-this-page)
