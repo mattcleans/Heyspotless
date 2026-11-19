@@ -3,7 +3,7 @@ import "server-only";
 import { getStripe } from "../stripe/client";
 import type { Customer } from "../data/types";
 import { STATEMENT_DESCRIPTOR } from "../brand";
-import { BillingError } from "./types";
+import { BillingError, REFUND_KINDS, type RefundKind } from "./types";
 
 /**
  * Every call this app makes TO Stripe, in one place.
@@ -168,9 +168,32 @@ export async function chargeOffSession(args: {
 export async function listChargeRefunds(chargeId: string, stripe = getStripe()) {
   const refunds = [];
   for await (const refund of stripe.refunds.list({ charge: chargeId, limit: 100 })) {
-    refunds.push({ id: refund.id, amount: refund.amount, status: refund.status });
+    refunds.push({
+      id: refund.id,
+      amount: refund.amount,
+      status: refund.status,
+      kind: refundKindFromMetadata(refund.metadata),
+    });
   }
   return refunds;
+}
+
+/**
+ * The Stripe metadata key that carries the reason Management chose.
+ *
+ * The charge.refunded webhook can arrive before the refund route has saved
+ * its own row. Whichever records first wins, and record_refund is a no-op for
+ * the second, so the reason has to travel with the refund itself or a
+ * webhook that wins the race records it as unattributed.
+ */
+export const REFUND_KIND_METADATA_KEY = "hs_refund_kind";
+
+/** The stated refund kind, or null for a refund nobody explained. */
+export function refundKindFromMetadata(
+  metadata: Record<string, string> | null | undefined,
+): RefundKind | null {
+  const value = metadata?.[REFUND_KIND_METADATA_KEY];
+  return REFUND_KINDS.find((k) => k === value) ?? null;
 }
 
 /** Refund against a payment intent. The webhook records it; this only asks. */
@@ -178,14 +201,23 @@ export async function refundPaymentIntent(args: {
   paymentIntentId: string;
   amountCents: number;
   reason: string | null;
+  kind: RefundKind;
+  /** One per submitted form, so a repeated click or a retry refunds once. */
+  idempotencyKey: string;
 }): Promise<{ id: string; status: string | null }> {
   const stripe = getStripe();
 
-  const refund = await stripe.refunds.create({
-    payment_intent: args.paymentIntentId,
-    amount: args.amountCents,
-    metadata: args.reason ? { reason: args.reason } : undefined,
-  });
+  const metadata: Record<string, string> = { [REFUND_KIND_METADATA_KEY]: args.kind };
+  if (args.reason) metadata.reason = args.reason;
+
+  const refund = await stripe.refunds.create(
+    {
+      payment_intent: args.paymentIntentId,
+      amount: args.amountCents,
+      metadata,
+    },
+    { idempotencyKey: args.idempotencyKey },
+  );
 
   return { id: refund.id, status: refund.status };
 }

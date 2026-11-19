@@ -391,8 +391,8 @@ describe("refunds arriving through the webhook", () => {
   it("reconciles distinct refunds once across duplicate and reverse-order notifications", async () => {
     const h = harness();
     const lookup = vi.spyOn(gateway, "listChargeRefunds").mockResolvedValue([
-      { id: "re_2", amount: 3000, status: "succeeded" },
-      { id: "re_1", amount: 2000, status: "succeeded" },
+      { id: "re_2", amount: 3000, status: "succeeded", kind: null },
+      { id: "re_1", amount: 2000, status: "succeeded", kind: null },
     ]);
     try {
       for (const event of [chargeEvent("new", 5000), chargeEvent("old", 2000), chargeEvent("new", 5000)]) {
@@ -406,11 +406,24 @@ describe("refunds arriving through the webhook", () => {
     }
   });
 
+  it("keeps the reason Management chose when the webhook records the refund first", async () => {
+    const h = harness();
+    const lookup = vi.spyOn(gateway, "listChargeRefunds").mockResolvedValue([
+      { id: "re_1", amount: 2000, status: "succeeded", kind: "goodwill" },
+    ]);
+    try {
+      expect((await handleStripeEvent(h.store, chargeEvent("first", 2000))).status).toBe(200);
+      expect(h.recorded.refundKinds).toEqual(["goodwill"]);
+    } finally {
+      lookup.mockRestore();
+    }
+  });
+
   it("retries an unavailable refund lookup without recording a cumulative amount", async () => {
     const h = harness();
     const lookup = vi.spyOn(gateway, "listChargeRefunds")
       .mockRejectedValueOnce(new Error("provider unavailable"))
-      .mockResolvedValueOnce([{ id: "re_1", amount: 2000, status: "succeeded" }]);
+      .mockResolvedValueOnce([{ id: "re_1", amount: 2000, status: "succeeded", kind: null }]);
     const event = chargeEvent("retry", 2000);
     try {
       expect((await handleStripeEvent(h.store, event)).status).toBe(500);
