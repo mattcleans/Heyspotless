@@ -48,6 +48,8 @@ export interface ImportReport {
   jobRows: number;
   jobsLinked: number;
   linkedBy: Record<LinkRule, number>;
+  /** Links where the contact matched several customers and the job's street settled it. */
+  settledByAddress: number;
   propertySource: Record<PropertySource, number>;
   propertiesFromJobs: number;
   planRows: number;
@@ -115,6 +117,7 @@ export function prepareImport(input: PrepareInput): ImportPlan {
 
   // --- jobs ------------------------------------------------------------------
   const linkedBy: Record<LinkRule, number> = { customer_id: 0, email: 0, mobile: 0, name: 0 };
+  let settledByAddress = 0;
   const propertySource: Record<PropertySource, number> = { customer: 0, job: 0, primary: 0 };
   const linked: Omit<PlannedJob, "freq" | "planId">[] = [];
 
@@ -145,6 +148,10 @@ export function prepareImport(input: PrepareInput): ImportPlan {
     }
 
     linkedBy[result.rule] += 1;
+    if (result.settledByAddress) {
+      settledByAddress += 1;
+      notices.add("job linked by its street (its email or phone is shared by several customers)", ex);
+    }
     propertySource[result.propertySource] += 1;
     linked.push({
       job,
@@ -243,6 +250,7 @@ export function prepareImport(input: PrepareInput): ImportPlan {
       jobRows: input.jobs.length,
       jobsLinked: jobs.length,
       linkedBy,
+      settledByAddress,
       propertySource,
       propertiesFromJobs: properties.filter((p) => p.origin === "job").length,
       planRows: (input.plans ?? []).length,
@@ -288,6 +296,7 @@ export function formatReport(report: ImportReport): string {
     `jobs: ${r.jobRows} rows · ${r.jobsLinked} linked · ${skippedJobs} skipped`,
     `  linked by: email ${r.linkedBy.email} · mobile ${r.linkedBy.mobile} · name ${r.linkedBy.name}` +
       (r.linkedBy.customer_id ? ` · customer id ${r.linkedBy.customer_id}` : ""),
+    `  of those, shared email or phone settled by the job's street: ${r.settledByAddress}`,
     `  property: customer's address ${r.propertySource.customer} · address from the job ${r.propertySource.job} · ` +
       `customer's primary (job had no street) ${r.propertySource.primary}`,
     `  new properties created from job addresses: ${r.propertiesFromJobs}`,

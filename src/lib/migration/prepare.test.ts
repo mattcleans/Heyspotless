@@ -52,10 +52,14 @@ describe("the fixture export", () => {
   it("links every job it can, and says by which rule", () => {
     const { report, jobs } = run();
     expect(report.jobRows).toBe(29);
-    expect(report.jobsLinked).toBe(24);
-    expect(jobs).toHaveLength(24);
-    expect(report.linkedBy).toEqual({ customer_id: 0, email: 19, mobile: 2, name: 3 });
-    expect(report.propertySource).toEqual({ customer: 22, job: 2, primary: 0 });
+    expect(report.jobsLinked).toBe(26);
+    expect(jobs).toHaveLength(26);
+    expect(report.linkedBy).toEqual({ customer_id: 0, email: 20, mobile: 2, name: 4 });
+    // Job 21 shares a family email and job 41 a name, but each job's street
+    // belongs to exactly one of the matching customers.
+    expect(report.settledByAddress).toBe(2);
+    expect(report.notices.count("job linked by its street (its email or phone is shared by several customers)")).toBe(2);
+    expect(report.propertySource).toEqual({ customer: 24, job: 2, primary: 0 });
     expect(report.propertiesFromJobs).toBe(1);
   });
 
@@ -68,8 +72,6 @@ describe("the fixture export", () => {
   it("groups every skipped job by reason", () => {
     const counts = Object.fromEntries(run().report.skipped.list().map((s) => [s.reason, s.count]));
     expect(counts).toEqual({
-      "job: ambiguous customer: email matched 2 customers": 1,
-      "job: ambiguous customer: name matched 2 customers": 1,
       "job: job address has no ZIP": 1,
       "job: no address": 1,
       "job: no matching customer": 1,
@@ -156,7 +158,8 @@ describe("the fixture export", () => {
     for (const secret of ["Paula", "Marsh", "paula@example.com", "family@example.com", "214-555-0102", "(817) 555-0104", "2145550199"]) {
       expect(text).not.toContain(secret);
     }
-    expect(text).toContain("linked by: email 19 · mobile 2 · name 3");
+    expect(text).toContain("linked by: email 20 · mobile 2 · name 4");
+    expect(text).toContain("of those, shared email or phone settled by the job's street: 2");
     expect(text).toContain("K**** W****, 4 jobs, median gap 11 days");
   });
 });
