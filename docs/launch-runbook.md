@@ -54,6 +54,16 @@ mode** with a $1 invoice on the test customer, paid with a real card and
 then refunded. The cost is the Stripe fee on $1, which a refund does not
 return.
 
+**Done 19 November 2026** for Checkout and a Stripe-dashboard refund; see
+`release-readiness.md`, Integrated verification. Still to run once: a
+refund from Management's own form (customer page → Payments → Refund),
+which needs a new live payment to refund.
+
+Before the pilot, in Stripe → Settings → Payment methods, keep cards,
+Apple Pay / Google Pay and Link, and turn off bank payments and Amazon
+Pay. A bank payment settles days later, and until then the client's
+account page reads as an unconfirmed payment.
+
 - Pay the $1 invoice through Checkout; watch the webhook settle it to paid
   with exactly one payment row.
 - Refund it from Management; watch `refund.updated` move it out of pending.
