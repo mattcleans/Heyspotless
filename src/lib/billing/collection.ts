@@ -3,6 +3,10 @@ import "server-only";
 import type { BillingStore } from "./store";
 import type { PaymentOperation } from "./store";
 import { lookUpCheckoutSession, lookUpPaymentIntent, type CollectionOutcome } from "./gateway";
+import { stripeKeyMode } from "@/lib/stripe/env";
+
+export const TEST_MODE_ATTEMPT_CLOSED =
+  "test-mode Checkout session closed under live keys; test payments never move real money";
 
 /**
  * Making sure an obligation is collected at most once.
@@ -60,6 +64,21 @@ export async function reconcileInvoiceCollection(
   if (!operation.stripeObjectId) {
     // The provider request may have succeeded before its response was saved.
     return { state: "in_flight", operation, redirectUrl: null, recoveredPayment: false, reviewRequired: true };
+  }
+
+  // A test-mode session cannot be looked up with live keys, and nothing in it
+  // can be real money, so it would otherwise block this invoice permanently
+  // after the switch to live. Only this direction is safe: a live session seen
+  // under test keys may hold real money and must stay open until it is checked
+  // in live mode. Payment intent ids carry no mode prefix, so they never take
+  // this path.
+  if (
+    operation.stripeObjectKind === "checkout_session" &&
+    operation.stripeObjectId.startsWith("cs_test_") &&
+    stripeKeyMode() === "live"
+  ) {
+    await store.resolvePaymentOperation(operation.idempotencyKey, "failed", TEST_MODE_ATTEMPT_CLOSED);
+    return { state: "cleared", operation: null, redirectUrl: null, recoveredPayment: false };
   }
 
   let outcome: CollectionOutcome;

@@ -493,6 +493,72 @@ describe("reconciling an attempt whose outcome we never learned", () => {
     error.mockRestore();
   });
 
+  describe("an attempt left over from the other Stripe mode", () => {
+    async function withSession(sessionId: string) {
+      const l = ledger();
+      await l.store.beginPaymentOperation({ invoiceId: "inv-1", channel: "checkout", idempotencyKey: "key", amountCents: 100, expectedBalanceCents: 100, expectedCustomerId: "customer" });
+      await l.store.attachPaymentOperation({ idempotencyKey: "key", stripeObjectKind: "checkout_session", stripeObjectId: sessionId });
+      return l;
+    }
+
+    it("closes a test-mode session under live keys without asking Stripe", async () => {
+      vi.stubEnv("STRIPE_SECRET_KEY", "sk_live_example");
+      const l = await withSession("cs_test_abc");
+      const look = vi.spyOn(gateway, "lookUpCheckoutSession");
+      const result = await reconcileInvoiceCollection(l.store, "inv-1");
+      expect(result.state).toBe("cleared");
+      expect(l.operations[0]?.state).toBe("failed");
+      expect(look).not.toHaveBeenCalled();
+      expect(l.payments).toHaveLength(0);
+      look.mockRestore();
+      vi.unstubAllEnvs();
+    });
+
+    it("also recognises a restricted live key", async () => {
+      vi.stubEnv("STRIPE_SECRET_KEY", "rk_live_example");
+      const l = await withSession("cs_test_abc");
+      expect((await reconcileInvoiceCollection(l.store, "inv-1")).state).toBe("cleared");
+      vi.unstubAllEnvs();
+    });
+
+    it("never closes a live session under test keys, because it may hold real money", async () => {
+      vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_example");
+      const l = await withSession("cs_live_abc");
+      const look = vi.spyOn(gateway, "lookUpCheckoutSession").mockRejectedValue(new Error("No such checkout.session"));
+      const error = vi.spyOn(console, "error").mockImplementation(() => {});
+      const result = await reconcileInvoiceCollection(l.store, "inv-1");
+      expect(result.state).toBe("in_flight");
+      expect(result.reviewRequired).toBe(true);
+      expect(l.operations[0]?.state).toBe("open");
+      look.mockRestore();
+      error.mockRestore();
+      vi.unstubAllEnvs();
+    });
+
+    it("asks Stripe as usual about a test-mode session under test keys", async () => {
+      vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_example");
+      const l = await withSession("cs_test_abc");
+      const look = vi.spyOn(gateway, "lookUpCheckoutSession").mockResolvedValue({ state: "open", url: "https://checkout.stripe.com/x" });
+      const result = await reconcileInvoiceCollection(l.store, "inv-1");
+      expect(look).toHaveBeenCalledWith("cs_test_abc");
+      expect(result.state).toBe("in_flight");
+      expect(l.operations[0]?.state).toBe("open");
+      look.mockRestore();
+      vi.unstubAllEnvs();
+    });
+
+    it("does nothing special when the key's mode is unknown", async () => {
+      vi.stubEnv("STRIPE_SECRET_KEY", "");
+      const l = await withSession("cs_test_abc");
+      const look = vi.spyOn(gateway, "lookUpCheckoutSession").mockResolvedValue({ state: "open", url: null });
+      await reconcileInvoiceCollection(l.store, "inv-1");
+      expect(look).toHaveBeenCalled();
+      expect(l.operations[0]?.state).toBe("open");
+      look.mockRestore();
+      vi.unstubAllEnvs();
+    });
+  });
+
   it("reports nothing outstanding when no attempt is open", async () => {
     const l = ledger();
     expect((await reconcileInvoiceCollection(l.store, "inv-1")).state).toBe("cleared");
