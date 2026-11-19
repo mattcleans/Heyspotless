@@ -40,6 +40,7 @@ interface Options {
   jobs: string | null;
   plans: string | null;
   dryRun: boolean;
+  historyOnly: boolean;
   limit: number | null;
   today: string | null;
 }
@@ -63,6 +64,7 @@ function parseArgs(argv: readonly string[]): Options {
     jobs: null,
     plans: null,
     dryRun: true,
+    historyOnly: false,
     limit: null,
     today: null,
   };
@@ -78,6 +80,7 @@ function parseArgs(argv: readonly string[]): Options {
     else if (arg === "--plans") options.plans = argv[++i] ?? null;
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--apply") options.dryRun = false;
+    else if (arg === "--history-only") options.historyOnly = true;
     else if (arg === "--limit") options.limit = Number(argv[++i]);
     // For re-running a dry run as of a given day; defaults to today in Dallas.
     else if (arg === "--today") options.today = argv[++i] ?? null;
@@ -111,7 +114,7 @@ function report(kind: string, counts: Counts) {
   if (counts.failed > 0) process.exitCode = 1;
 }
 
-async function write(db: SupabaseClient, plan: ImportPlan, today: CalendarDate) {
+async function write(db: SupabaseClient, plan: ImportPlan, today: CalendarDate, historyOnly: boolean) {
   // --- customers -------------------------------------------------------------
   const customerIds = new Map<string, string>();
   const customers: Counts = { written: 0, failed: 0 };
@@ -225,7 +228,31 @@ async function write(db: SupabaseClient, plan: ImportPlan, today: CalendarDate) 
   // --- plans -----------------------------------------------------------------
   const plans: Counts = { written: 0, failed: 0 };
   let linkedVisits = 0;
+
+  // A re-run must never undo a handover. import_recurring_plan overwrites
+  // `active`, so a plan already started in this app would be switched back
+  // off by a history-only re-import, and that customer's visits would quietly
+  // stop being generated. Such plans are left exactly as they are: once a
+  // customer is handed over, this app is the record of their plan.
+  const startedInApp = new Set<string>();
+  if (historyOnly && plan.plans.length > 0) {
+    const { data, error } = await db
+      .from("recurring_plans")
+      .select("hcp_plan_id")
+      .in("hcp_plan_id", plan.plans.map((p) => p.hcpPlanId))
+      .eq("active", true);
+    if (error) {
+      console.error(`  plans not written: could not check which are already started in this app (${error.message})`);
+      process.exitCode = 1;
+      return;
+    }
+    for (const row of data ?? []) {
+      if (typeof row.hcp_plan_id === "string") startedInApp.add(row.hcp_plan_id);
+    }
+  }
+
   for (const p of plan.plans) {
+    if (startedInApp.has(p.hcpPlanId)) continue;
     const customerId = customerIds.get(p.customerHcpId);
     const propertyId = propertyIds.get(p.propertyKey);
     if (!customerId || !propertyId) {
@@ -273,7 +300,11 @@ async function write(db: SupabaseClient, plan: ImportPlan, today: CalendarDate) 
     }
   }
   report("recurring plans", plans);
-  console.log(`  upcoming visits linked to their plan: ${linkedVisits}`);
+  if (historyOnly) {
+    console.log(`  already started in this app, left unchanged: ${startedInApp.size}`);
+  } else {
+    console.log(`  upcoming visits linked to their plan: ${linkedVisits}`);
+  }
 }
 
 async function main() {
@@ -282,7 +313,7 @@ async function main() {
   if (!options.customers) {
     console.error(
       "Usage: npm run import:hcp -- --customers customers.csv [--jobs jobs.csv]\n" +
-        "         [--plans plans.csv] [--dry-run | --apply] [--limit N] [--today YYYY-MM-DD]\n\n" +
+        "         [--plans plans.csv] [--history-only] [--dry-run | --apply] [--limit N] [--today YYYY-MM-DD]\n\n" +
         "Dry run is the default. Use --apply only after reviewing the report. The interesting output of a migration is\n" +
         "the list of rows it could not read, and a dry run prints exactly that.\n" +
         (options.jobs
@@ -298,6 +329,12 @@ async function main() {
     process.exit(1);
   }
 
+  if (options.historyOnly) {
+    console.log(
+      "HISTORY ONLY — finished jobs are imported; scheduled and in-progress visits\n" +
+        "stay in Housecall Pro, and every recurring plan is imported inactive.\n",
+    );
+  }
   console.log(
     options.dryRun
       ? "DRY RUN — nothing will be written.\n"
@@ -311,6 +348,7 @@ async function main() {
     jobs: options.jobs ? read(options.jobs, options.limit) : [],
     plans: options.plans ? read(options.plans, null) : [],
     today,
+    historyOnly: options.historyOnly,
   });
 
   console.log(`as of ${today}\n`);
@@ -322,6 +360,10 @@ async function main() {
     process.exitCode = 1;
     return;
   }
+
+  console.log("\nwriting:");
+  await write(client(), plan, today, options.historyOnly);
+
   console.log(
     "\nNext: check `recurring_price_audit` before anything regenerates a quote.\n" +
       "Every row in it is a customer whose agreed price differs from the book,\n" +

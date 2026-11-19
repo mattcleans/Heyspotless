@@ -163,3 +163,62 @@ describe("the fixture export", () => {
     expect(text).toContain("K**** W****, 4 jobs, median gap 11 days");
   });
 });
+
+describe("a history-only import", () => {
+  const full = () => run();
+  const history = () =>
+    prepareImport({ customers: fixture("customers.csv"), jobs: fixture("jobs.csv"), plans: [], today: TODAY, historyOnly: true });
+
+  it("writes only finished jobs, and accounts for every visit it leaves in Housecall Pro", () => {
+    const { jobs, report } = history();
+    expect(jobs.length).toBeGreaterThan(0);
+    expect(jobs.every((j) => j.job.status !== "scheduled")).toBe(true);
+    const left = report.historyOnly!;
+    expect(left.futureVisits + left.openPastVisits).toBeGreaterThan(0);
+    expect(jobs.length + left.futureVisits + left.openPastVisits).toBe(report.jobsLinked);
+    expect(report.jobsLinked).toBe(full().report.jobsLinked);
+  });
+
+  it("sorts what it leaves behind into upcoming and stale", () => {
+    const left = history().report.historyOnly!;
+    // The fixture has two Scheduled or In progress visits dated before TODAY.
+    expect(left.openPastVisits).toBe(2);
+    expect(left.futureVisits).toBe(
+      full().jobs.filter((j) => j.job.status === "scheduled").length - 2,
+    );
+  });
+
+  it("imports every plan inactive, otherwise exactly as a full import would", () => {
+    const fullPlans = full().plans;
+    const { plans, report } = history();
+    expect(plans.every((p) => !p.active)).toBe(true);
+    expect(report.plansActive).toBe(0);
+    expect(report.historyOnly!.plansMadeInactive).toBe(fullPlans.filter((p) => p.active).length);
+    expect(report.historyOnly!.plansMadeInactive).toBeGreaterThan(0);
+    const strip = (ps: typeof plans) => ps.map(({ active: _active, ...rest }) => rest);
+    expect(strip(plans)).toEqual(strip(fullPlans));
+  });
+
+  it("keeps room counts from visits it does not import", () => {
+    expect(history().properties).toEqual(full().properties);
+  });
+
+  it("lists nothing it leaves behind under 'imported, worth a look'", () => {
+    const { notices } = history().report;
+    expect(notices.count("Scheduled or In progress job dated in the past (imported as it is)")).toBe(0);
+  });
+
+  it("says so at the top of the jobs section of the report", () => {
+    const text = formatReport(history().report);
+    expect(text).toContain("HISTORY ONLY:");
+    expect(text).toContain("left in Housecall Pro:");
+    expect(text).toContain("every recurring plan is imported inactive");
+    expect(text).not.toContain("NOTE: active plans are picked up by the daily recurring generator");
+  });
+
+  it("is off unless asked for", () => {
+    const { report } = full();
+    expect(report.historyOnly).toBeNull();
+    expect(formatReport(report)).not.toContain("HISTORY ONLY");
+  });
+});

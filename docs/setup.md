@@ -221,8 +221,8 @@ jobs. `street` is needed when the customer has more than one address. Then:
 
 ```bash
 export NEXT_PUBLIC_SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=...
-npm run import:hcp -- --customers customers.csv --jobs jobs.csv --plans plans.csv --dry-run
-npm run import:hcp -- --customers customers.csv --jobs jobs.csv --plans plans.csv
+npm run import:hcp -- --customers customers.csv --jobs jobs.csv --plans plans.csv --history-only --dry-run
+npm run import:hcp -- --customers customers.csv --jobs jobs.csv --plans plans.csv --history-only --apply
 ```
 
 The service-role key only on a laptop, never in CI. It is safe to run again:
@@ -231,7 +231,24 @@ a property's customer and street), so a second run updates what the first
 wrote — and a room count somebody has since verified on site, or a note typed
 in this app, survives a re-run.
 
-**Active plans and the generator.** An imported plan with a future HCP visit is
+**History only, while Housecall Pro still runs the business (decided 19
+November 2026).** `--history-only` imports customers, properties and finished
+jobs. Scheduled and in-progress visits stay in HCP, and every recurring plan
+is imported inactive. An imported visit is `scheduled` with no cleaner, which
+is exactly what the dispatch sweep looks for, so importing HCP's upcoming
+visits would have both systems dispatching them. A customer moves to this app
+at handover: their remaining HCP visits are cancelled there and their plan is
+started here. A history-only re-run never touches a plan that is already
+active in this app, so it cannot undo a handover. Open visits dated in the
+past also stay in HCP; close or cancel them there and re-export to bring them
+across as history.
+
+`--apply` writes, and before 19 November it silently did not: a change on 9
+November dropped the call that does the writing, so `--apply` printed its
+report and wrote nothing. A test now runs the script and fails if `--apply`
+does not try to write.
+
+**Active plans and the generator (full imports only).** An imported plan with a future HCP visit is
 active, and the daily recurring generator will start materialising its visits.
 The import links HCP's upcoming visits to the plan, so a visit on the plan's own
 cadence is not booked twice — but one HCP moved off-cadence, or anything past
