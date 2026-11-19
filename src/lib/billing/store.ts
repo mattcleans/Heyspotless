@@ -3,8 +3,22 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AutochargeCandidate } from "./autocharge";
 import type { BillingTransition } from "./events";
-import type { RefundKind, RefundStatus } from "./types";
-import { BillChangedError } from "./types";
+import type { PaymentStatus, RefundKind, RefundStatus } from "./types";
+import { BillChangedError, REFUND_KINDS } from "./types";
+import { refundableCents } from "./refund-options";
+
+/** A payment as the refund screen and the refund route see it. */
+export interface CustomerPayment {
+  id: string;
+  invoiceId: string;
+  amountCents: number;
+  status: PaymentStatus;
+  stripePaymentIntentId: string | null;
+  paidAt: Date | null;
+  refunds: { amountCents: number; status: RefundStatus; kind: RefundKind; createdAt: Date | null }[];
+  /** Succeeded and pending refunds subtracted. What the form may still send back. */
+  refundableCents: number;
+}
 
 /** Which surface a collection attempt came from. */
 export type PaymentOperationChannel = "checkout" | "autocharge";
@@ -167,6 +181,34 @@ export class BillingStore {
     });
     if (error) throw new Error(`recordPayment: ${error.message}`);
     return typeof data === "string" ? data : null;
+  }
+
+  /**
+   * A customer's payments with their refunds, newest first, for the refund
+   * screen. Management only: callers check the role before constructing this
+   * store, because it reads with the service role.
+   */
+  async listCustomerPayments(customerId: string): Promise<CustomerPayment[]> {
+    const { data, error } = await this.db.from("payments")
+      .select("id,invoice_id,amount_cents,status,stripe_payment_intent_id,succeeded_at,created_at,refunds(amount_cents,status,kind,created_at)")
+      .eq("customer_id", customerId)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (error) throw new Error(`listCustomerPayments: ${error.message}`);
+    return ((data ?? []) as unknown as Record<string, unknown>[]).map(toCustomerPayment);
+  }
+
+  /** One payment by its Stripe payment intent, with its refunds. Null when unknown. */
+  async paymentForIntent(paymentIntentId: string): Promise<CustomerPayment | null> {
+    const { data, error } = await this.db.from("payments")
+      .select("id,invoice_id,amount_cents,status,stripe_payment_intent_id,succeeded_at,created_at,refunds(amount_cents,status,kind,created_at)")
+      .eq("stripe_payment_intent_id", paymentIntentId)
+      .limit(2);
+    if (error) throw new Error(`paymentForIntent: ${error.message}`);
+    const rows = (data ?? []) as unknown as Record<string, unknown>[];
+    // record_payment is unique on the intent; two rows would mean that broke.
+    if (rows.length !== 1) return null;
+    return toCustomerPayment(rows[0]!);
   }
 
   async hasUnlinkedStripeRefund(paymentIntentId: string): Promise<boolean> {
@@ -632,4 +674,30 @@ function parseDate(v: unknown): Date | null {
   if (typeof v !== "string") return null;
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? null : d;
+}
+
+const PAYMENT_STATUSES: readonly PaymentStatus[] = ["requires_payment", "processing", "succeeded", "failed", "canceled"];
+const REFUND_STATUSES: readonly RefundStatus[] = ["pending", "succeeded", "failed", "canceled"];
+
+function toCustomerPayment(row: Record<string, unknown>): CustomerPayment {
+  const refunds = (Array.isArray(row["refunds"]) ? row["refunds"] : []) as Record<string, unknown>[];
+  const mapped = refunds.map((r) => ({
+    amountCents: Number(r["amount_cents"] ?? 0),
+    // An unrecognised status is treated as pending: it may still move money.
+    status: REFUND_STATUSES.find((s) => s === r["status"]) ?? "pending",
+    kind: REFUND_KINDS.find((k) => k === r["kind"]) ?? "unattributed",
+    createdAt: parseDate(r["created_at"]),
+  }));
+  const status = PAYMENT_STATUSES.find((s) => s === row["status"]) ?? "processing";
+  const amountCents = Number(row["amount_cents"] ?? 0);
+  return {
+    id: String(row["id"]),
+    invoiceId: String(row["invoice_id"]),
+    amountCents,
+    status,
+    stripePaymentIntentId: typeof row["stripe_payment_intent_id"] === "string" ? row["stripe_payment_intent_id"] : null,
+    paidAt: parseDate(row["succeeded_at"]) ?? parseDate(row["created_at"]),
+    refunds: mapped,
+    refundableCents: status === "succeeded" ? refundableCents(amountCents, mapped) : 0,
+  };
 }

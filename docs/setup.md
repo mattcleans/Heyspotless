@@ -17,9 +17,15 @@ into `.env.local` (git-ignored) or the Vercel environment settings.
 
 ## 1. Twilio — A2P 10DLC ✅ approved 14 September 2026
 
-Done. The brand registration is **BLISS CLEANS LLC** and the customer-facing
-campaign brand is **Hey Spotless** — the same company, and the reason there is
-no second LLC named after the brand.
+Done — with one record to correct. The brand registration was **filed under
+Bliss Cleans LLC** on 14 September; the registered legal entity is
+**Hey Spotless LLC** (confirmed by Matt, 16 November 2026), and the
+customer-facing campaign brand is **Hey Spotless**. Carriers verify A2P
+brands against the legal name and EIN, so update the Twilio brand
+registration to Hey Spotless LLC — Twilio console → Messaging → Regulatory
+compliance → Brands — before high-volume sending. A mismatch between the
+registered brand and the EIN is a filtering and re-vetting risk, not a
+cosmetic one.
 
 What is left is wiring, not waiting:
 
@@ -56,10 +62,9 @@ independent of everything above.
 
 ## 2. Stripe
 
-Create a Stripe account under **BLISS CLEANS LLC** (doing business as Hey Spotless)
-and complete business verification. The customer-facing statement descriptor is
-**HEY SPOTLESS** — that is what prints on a card, so it is the brand, not Bliss
-and not a second LLC. Enable Stripe Connect if the app should handle 1099 payouts.
+Create a Stripe account under **Hey Spotless LLC** and complete business
+verification. The customer-facing statement descriptor is **HEY SPOTLESS** —
+that is what prints on a card, so it is the brand, never the entity string. Enable Stripe Connect if the app should handle 1099 payouts.
 Underwriting usually clears in a day and blocks only card-on-file and auto-charge.
 
 Needed: publishable key + secret key. Test mode is fine to start.

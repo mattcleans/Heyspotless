@@ -6,6 +6,11 @@ import { formatPhone, formatRooms } from "@/lib/format";
 import { formatCents } from "@/lib/money";
 import { formatDateTimeInZone } from "@/lib/time/zone";
 import { FREQUENCY_LABELS, SERVICE_LABELS } from "@/lib/pricing/price-book";
+import { createAdminClient } from "@/lib/supabase/admin";
+import { BillingStore, type CustomerPayment } from "@/lib/billing/store";
+import { isBillingEnabled } from "@/lib/stripe/env";
+import { refundChoice } from "@/lib/billing/refund-options";
+import { RefundAction } from "@/components/refund-action";
 import { BookingForm } from "../booking-form";
 import { CustomerForm } from "../customer-form";
 import { PropertyForm } from "../property-form";
@@ -23,10 +28,25 @@ export default async function CustomerPage({
   const customer = await repo.getCustomer(id);
   if (!customer) notFound();
 
-  const [properties, jobs] = await Promise.all([
+  const [properties, jobs, profile] = await Promise.all([
     repo.listProperties(id),
     repo.listJobs({ customerId: id }),
+    repo.getCurrentProfile(),
   ]);
+
+  // Payments are read with the service role, so the role check here is the
+  // boundary, as on the reporting page. Demo mode has no real payments.
+  let payments: CustomerPayment[] | null = null;
+  let paymentsUnavailable = false;
+  if (!repo.isDemo && profile?.role === "admin") {
+    try {
+      payments = await new BillingStore(createAdminClient()).listCustomerPayments(id);
+    } catch {
+      paymentsUnavailable = true;
+    }
+  }
+  const refundsEnabled = isBillingEnabled();
+  const customerName = `${customer.firstName} ${customer.lastName}`.trim() || "the client";
 
   return (
     <>
@@ -165,6 +185,58 @@ export default async function CustomerPage({
           </ul>
         )}
       </section>
+
+      {payments !== null || paymentsUnavailable ? (
+        <section className="mb-8">
+          <h2 className="mb-3 text-sm font-semibold text-ink">Payments</h2>
+          {paymentsUnavailable ? (
+            <div className="card p-6 text-sm text-ink-3" role="alert">
+              Payments could not be loaded. Refresh before refunding anything.
+            </div>
+          ) : payments && payments.length === 0 ? (
+            <div className="card p-6 text-center text-sm text-ink-3">No payments yet.</div>
+          ) : (
+            <ul className="space-y-2">
+              {payments?.map((p) => (
+                <li key={p.id} className="card p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <p className="nums font-semibold text-navy">{formatCents(p.amountCents)}</p>
+                      <p className="mt-0.5 text-sm text-ink-3">
+                        {p.paidAt ? formatDateTimeInZone(p.paidAt) : "Date unknown"} · invoice{" "}
+                        <span className="nums">{p.invoiceId.slice(0, 8)}</span>
+                      </p>
+                      {p.refunds.length > 0 ? (
+                        <ul className="mt-2 space-y-0.5 text-sm text-ink-2">
+                          {p.refunds.map((r, i) => (
+                            <li key={i}>
+                              Refund <span className="nums">{formatCents(r.amountCents)}</span> ·{" "}
+                              {refundChoice(r.kind)?.label ?? "No reason recorded (Stripe dashboard)"}
+                              {r.status !== "succeeded" ? ` · ${r.status}` : ""}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </div>
+                    <Pill tone={p.status === "succeeded" ? (p.refundableCents === 0 ? "warn" : "sky") : "warn"}>
+                      {p.status === "succeeded" && p.refundableCents === 0 && p.refunds.length > 0 ? "refunded" : p.status}
+                    </Pill>
+                  </div>
+                  {refundsEnabled && p.stripePaymentIntentId && p.refundableCents > 0 ? (
+                    <div className="mt-3">
+                      <RefundAction
+                        paymentIntentId={p.stripePaymentIntentId}
+                        refundableCents={p.refundableCents}
+                        customerName={customerName}
+                      />
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : null}
 
       {properties.length > 0 ? (
         <section className="mb-8">

@@ -5,18 +5,19 @@
  * codebase. This module is for strings this app itself sends or shows:
  * Stripe charge copy, card statements, SMS bodies, customer-portal copy.
  *
- * The name a customer reads is Hey Spotless. The registered company is
- * BLISS CLEANS LLC. Those are not the same string. Collapsing them either
- * markets a name customers no longer book under, or invents an LLC named
- * after the brand that is not the USPTO owner and is not what belongs on
- * a W-9. Never invent a second LLC.
+ * The name a customer reads is "Hey Spotless" — no LLC, because customers
+ * book with a brand, not a filing. The registered company is Hey Spotless
+ * LLC (confirmed by Matt, 16 November 2026 — this file previously named
+ * Bliss Cleans LLC, and anything still registered under that name, such as
+ * the Twilio A2P brand, needs updating; see docs/setup.md). The entity
+ * string belongs on a W-9 and in underwriting, never in marketing copy.
  */
 
 /** What customers, cards, and public copy call the business. */
 export const CUSTOMER_BRAND = "Hey Spotless";
 
-/** Registered company. USPTO owner of HEY SPOTLESS. Not a marketing string. */
-export const LEGAL_ENTITY = "BLISS CLEANS LLC";
+/** Registered company, as it belongs on a W-9. Not a marketing string. */
+export const LEGAL_ENTITY = "Hey Spotless LLC";
 
 /**
  * Bank-statement / Stripe descriptor. Cards cap this at 22 characters; letters

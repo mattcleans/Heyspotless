@@ -22,6 +22,19 @@ export function stripeWebhookSecret(): string | null {
   return process.env.STRIPE_WEBHOOK_SECRET || null;
 }
 
+/**
+ * Which Stripe mode this deployment's secret key belongs to, read from the
+ * key's own prefix (sk_live_/rk_live_ or sk_test_/rk_test_). Null when no key
+ * is set or the prefix is unrecognised, so callers must treat null as unknown.
+ */
+export function stripeKeyMode(): "live" | "test" | null {
+  const key = stripeSecretKey();
+  if (!key) return null;
+  if (/^(sk|rk)_live_/.test(key)) return "live";
+  if (/^(sk|rk)_test_/.test(key)) return "test";
+  return null;
+}
+
 /** True when there is a real Stripe account to talk to. */
 export function hasStripeConfig(): boolean {
   return Boolean(stripeSecretKey());

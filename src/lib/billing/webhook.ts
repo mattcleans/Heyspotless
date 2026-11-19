@@ -207,18 +207,20 @@ async function apply(store: BillingStore, transition: BillingTransition): Promis
       for (const { id, status } of refunds) {
         if (status === "failed" || status === "canceled") await store.settleRefund(id, status);
       }
-      for (const { id, amount, status } of refunds) {
+      for (const { id, amount, status, kind } of refunds) {
         if (status === "failed" || status === "canceled") continue;
         if (status !== "succeeded" && status !== "pending" && status !== "requires_action") {
           throw new Error("Stripe returned an unrecognized refund status");
         }
 
-        // Dashboard refunds lack a recorded reason. Keep any existing attribution.
+        // A refund from Management carries its stated kind in Stripe metadata,
+        // so recording it here first keeps that reason. Dashboard refunds lack
+        // one and stay unattributed. An existing row's attribution is kept.
         const recorded = await store.recordRefund({
           stripePaymentIntentId: paymentIntentId,
           amountCents: amount,
           stripeRefundId: id,
-          kind: "unattributed",
+          kind: kind ?? "unattributed",
           status: status === "succeeded" ? "succeeded" : "pending",
         });
         if (!recorded && status === "succeeded") await store.settleRefund(id, status);
