@@ -55,6 +55,7 @@ describe("the importer script", () => {
     const { status, out } = run("--history-only", "--dry-run");
     expect(status).toBe(0);
     expect(out.indexOf("HISTORY ONLY")).toBeLessThan(out.indexOf("DRY RUN"));
-    expect(out).toContain("every recurring plan is imported inactive");
+    expect(out).toContain("no recurring plan is written");
+    expect(out).toContain("no recurring plans are written");
   }, 60_000);
 });

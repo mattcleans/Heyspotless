@@ -188,15 +188,16 @@ describe("a history-only import", () => {
     );
   });
 
-  it("imports every plan inactive, otherwise exactly as a full import would", () => {
+  it("writes no plans, and lists every one a full import would as a reference", () => {
     const fullPlans = full().plans;
     const { plans, report } = history();
-    expect(plans.every((p) => !p.active)).toBe(true);
+    expect(plans).toEqual([]);
     expect(report.plansActive).toBe(0);
-    expect(report.historyOnly!.plansMadeInactive).toBe(fullPlans.filter((p) => p.active).length);
-    expect(report.historyOnly!.plansMadeInactive).toBeGreaterThan(0);
-    const strip = (ps: typeof plans) => ps.map(({ active: _active, ...rest }) => rest);
-    expect(strip(plans)).toEqual(strip(fullPlans));
+    expect(fullPlans.length).toBeGreaterThan(0);
+    expect(report.historyOnly!.plansNotWritten).toBe(fullPlans.length);
+    expect(report.planSummaries.map((p) => [p.freq, p.agreedPriceCents, p.anchorDate])).toEqual(
+      full().report.planSummaries.map((p) => [p.freq, p.agreedPriceCents, p.anchorDate]),
+    );
   });
 
   it("keeps room counts from visits it does not import", () => {
@@ -212,7 +213,8 @@ describe("a history-only import", () => {
     const text = formatReport(history().report);
     expect(text).toContain("HISTORY ONLY:");
     expect(text).toContain("left in Housecall Pro:");
-    expect(text).toContain("every recurring plan is imported inactive");
+    expect(text).toContain("no recurring plans are written");
+    expect(text).toContain("recurring plans (reference only, not written):");
     expect(text).not.toContain("NOTE: active plans are picked up by the daily recurring generator");
   });
 

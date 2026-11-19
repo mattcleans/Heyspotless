@@ -102,8 +102,9 @@ conversation with a customer, not a script. Steps: `setup.md` §§ 6–7.
 Status, 19 November 2026: exported (1,045 customers, 1,816 jobs, canceled
 jobs excluded). The second dry run linked 1,690 jobs; 126 are skipped until
 their addresses, ZIPs or duplicate customers are fixed in HCP. Decided: a
-history-only import, with each customer's future visits and plan moving to
-this app at their handover.
+history-only import of every customer and their completed jobs. Upcoming
+visits stay in HCP; at go-live, one-off cleans are booked and recurring
+schedules set up by hand here, from the plan list in the dry-run report.
 
 ## Phase D — people acceptance, on real devices
 

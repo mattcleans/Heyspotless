@@ -231,22 +231,30 @@ a property's customer and street), so a second run updates what the first
 wrote — and a room count somebody has since verified on site, or a note typed
 in this app, survives a re-run.
 
-**History only, while Housecall Pro still runs the business (decided 19
-November 2026).** `--history-only` imports customers, properties and finished
-jobs. Scheduled and in-progress visits stay in HCP, and every recurring plan
-is imported inactive. An imported visit is `scheduled` with no cleaner, which
-is exactly what the dispatch sweep looks for, so importing HCP's upcoming
-visits would have both systems dispatching them. A customer moves to this app
-at handover: their remaining HCP visits are cancelled there and their plan is
-started here. A history-only re-run never touches a plan that is already
-active in this app, so it cannot undo a handover. Open visits dated in the
-past also stay in HCP; close or cancel them there and re-export to bring them
-across as history.
+**History only (decided 19 November 2026).** `--history-only` imports every
+customer, their properties, and their finished jobs, nothing else. Scheduled
+and in-progress visits stay in HCP: an imported visit is `scheduled` with no
+cleaner, which is exactly what the dispatch sweep looks for, so importing
+HCP's upcoming visits would have both systems dispatching them. No recurring
+plan is written either. At go-live, one-off cleans are booked and recurring
+schedules set up by hand in this app (customer page → Book a clean →
+"Repeat this automatically"); the report lists every plan the importer
+inferred, with its frequency, latest HCP price and anchor date, as the
+reference for that. Open visits dated in the past also stay in HCP; close or
+cancel them there and re-export to bring them across as history.
 
-`--apply` writes, and before 19 November it silently did not: a change on 9
-November dropped the call that does the writing, so `--apply` printed its
-report and wrote nothing. A test now runs the script and fails if `--apply`
-does not try to write.
+Every imported completed job is marked as billed (`invoiced_at`, set to its
+completion time): it was billed in HCP, and any balance on it is collected
+there. Without that, each would sit in Visit review as a visit awaiting an
+invoice, and this app could draft a second bill for it.
+
+Two faults in the write path were fixed on 19 November, both found only by
+reading it: a change on 9 November dropped the call that does the writing,
+so `--apply` printed its report and wrote nothing; and a completed job's
+completion date was never passed to the database. The write step now lives
+in `src/lib/migration/write.ts` and is tested against a stand-in database,
+and a test runs the script itself and fails if `--apply` does not try to
+write.
 
 **Active plans and the generator (full imports only).** An imported plan with a future HCP visit is
 active, and the daily recurring generator will start materialising its visits.
