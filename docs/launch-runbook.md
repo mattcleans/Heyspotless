@@ -54,10 +54,9 @@ mode** with a $1 invoice on the test customer, paid with a real card and
 then refunded. The cost is the Stripe fee on $1, which a refund does not
 return.
 
-**Done 19 November 2026** for Checkout and a Stripe-dashboard refund; see
-`release-readiness.md`, Integrated verification. Still to run once: a
-refund from Management's own form (customer page → Payments → Refund),
-which needs a new live payment to refund.
+**Done 19 November 2026**: Checkout, a Stripe-dashboard refund, and a
+refund from Management's own form (customer page → Payments → Refund).
+See `release-readiness.md`, Integrated verification.
 
 Before the pilot, in Stripe → Settings → Payment methods, keep cards,
 Apple Pay / Google Pay and Link, and turn off bank payments and Amazon
