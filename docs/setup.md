@@ -221,8 +221,8 @@ jobs. `street` is needed when the customer has more than one address. Then:
 
 ```bash
 export NEXT_PUBLIC_SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=...
-npm run import:hcp -- --customers customers.csv --jobs jobs.csv --plans plans.csv --dry-run
-npm run import:hcp -- --customers customers.csv --jobs jobs.csv --plans plans.csv
+npm run import:hcp -- --customers customers.csv --jobs jobs.csv --plans plans.csv --history-only --dry-run
+npm run import:hcp -- --customers customers.csv --jobs jobs.csv --plans plans.csv --history-only --apply
 ```
 
 The service-role key only on a laptop, never in CI. It is safe to run again:
@@ -231,7 +231,32 @@ a property's customer and street), so a second run updates what the first
 wrote — and a room count somebody has since verified on site, or a note typed
 in this app, survives a re-run.
 
-**Active plans and the generator.** An imported plan with a future HCP visit is
+**History only (decided 19 November 2026).** `--history-only` imports every
+customer, their properties, and their finished jobs, nothing else. Scheduled
+and in-progress visits stay in HCP: an imported visit is `scheduled` with no
+cleaner, which is exactly what the dispatch sweep looks for, so importing
+HCP's upcoming visits would have both systems dispatching them. No recurring
+plan is written either. At go-live, one-off cleans are booked and recurring
+schedules set up by hand in this app (customer page → Book a clean →
+"Repeat this automatically"); the report lists every plan the importer
+inferred, with its frequency, latest HCP price and anchor date, as the
+reference for that. Open visits dated in the past also stay in HCP; close or
+cancel them there and re-export to bring them across as history.
+
+Every imported completed job is marked as billed (`invoiced_at`, set to its
+completion time): it was billed in HCP, and any balance on it is collected
+there. Without that, each would sit in Visit review as a visit awaiting an
+invoice, and this app could draft a second bill for it.
+
+Two faults in the write path were fixed on 19 November, both found only by
+reading it: a change on 9 November dropped the call that does the writing,
+so `--apply` printed its report and wrote nothing; and a completed job's
+completion date was never passed to the database. The write step now lives
+in `src/lib/migration/write.ts` and is tested against a stand-in database,
+and a test runs the script itself and fails if `--apply` does not try to
+write.
+
+**Active plans and the generator (full imports only).** An imported plan with a future HCP visit is
 active, and the daily recurring generator will start materialising its visits.
 The import links HCP's upcoming visits to the plan, so a visit on the plan's own
 cadence is not booked twice — but one HCP moved off-cadence, or anything past

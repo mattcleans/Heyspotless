@@ -18,8 +18,17 @@ import {
  *
  * A rule that matches MORE than one customer ends the search. Falling through
  * to a weaker rule would let a shared family email be settled by a name match,
- * which is the evidence the stronger rule just said was not enough. The job is
- * skipped and reported instead.
+ * which is the evidence the stronger rule just said was not enough.
+ *
+ * What CAN settle it is where the job happened. A property manager whose
+ * homes were each entered as a separate customer shares one email across all
+ * of them, but only one of those customers lists the job's street. So the
+ * candidates the rule matched are narrowed to the ones whose own addresses,
+ * from the customer export, include the job's street; exactly one left links
+ * the job, marked as settled by address. None or several left (a couple who
+ * share an email and a home) and the job is skipped and reported, as before.
+ * Addresses that earlier jobs created are not consulted, so the outcome never
+ * depends on the order the jobs arrive in.
  */
 
 export type LinkRule = "customer_id" | "email" | "mobile" | "name";
@@ -43,6 +52,8 @@ export type LinkResult =
       ok: true;
       customerHcpId: string;
       rule: LinkRule;
+      /** The rule matched several customers and the job's street picked one. */
+      settledByAddress?: true;
       property: KnownProperty;
       propertySource: PropertySource;
     }
@@ -67,6 +78,8 @@ export class CustomerLinker {
   private readonly byName = new Map<string, Set<string>>();
   /** Every property known for a customer, including ones jobs have added. */
   readonly properties = new Map<string, KnownProperty[]>();
+  /** Street match keys from the customer export only, for settling a shared contact. */
+  private readonly exportedStreets = new Map<string, Set<string>>();
 
   constructor(customers: readonly MappedCustomer[]) {
     for (const customer of customers) {
@@ -91,6 +104,10 @@ export class CustomerLinker {
           // Line 1 on both sides: it is what the jobs export repeats.
           matchKey: streetMatchKey(a.line1),
         })),
+      );
+      this.exportedStreets.set(
+        customer.hcpId,
+        new Set(customer.addresses.map((a) => streetMatchKey(a.line1)).filter(Boolean)),
       );
     }
   }
@@ -126,7 +143,7 @@ export class CustomerLinker {
 
   customerFor(
     job: MappedJob,
-  ): { ok: true; hcpId: string; rule: LinkRule } | { ok: false; reason: string } {
+  ): { ok: true; hcpId: string; rule: LinkRule; settledByAddress?: true } | { ok: false; reason: string } {
     if (job.hcpCustomerId) {
       return this.customers.has(job.hcpCustomerId)
         ? { ok: true, hcpId: job.hcpCustomerId, rule: "customer_id" }
@@ -148,11 +165,22 @@ export class CustomerLinker {
     for (const [rule, ids] of rules) {
       if (!ids || ids.size === 0) continue;
       if (ids.size > 1) {
+        const settled = this.settleByStreet(ids, job);
+        if (settled) return { ok: true, hcpId: settled, rule, settledByAddress: true };
         return { ok: false, reason: `ambiguous customer: ${rule} matched ${ids.size} customers` };
       }
       return { ok: true, hcpId: [...ids][0]!, rule };
     }
     return { ok: false, reason: "no matching customer" };
+  }
+
+  /** The one candidate whose exported addresses include the job's street, if exactly one does. */
+  private settleByStreet(ids: Set<string>, job: MappedJob): string | null {
+    if (!job.address) return null;
+    const key = streetMatchKey(job.address.line1);
+    if (!key) return null;
+    const hits = [...ids].filter((id) => this.exportedStreets.get(id)?.has(key));
+    return hits.length === 1 ? hits[0]! : null;
   }
 
   /**
@@ -208,6 +236,7 @@ export class CustomerLinker {
       ok: true,
       customerHcpId: customer.hcpId,
       rule: customer.rule,
+      ...(customer.settledByAddress ? { settledByAddress: true as const } : {}),
       property: property.property,
       propertySource: property.source,
     };

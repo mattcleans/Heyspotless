@@ -52,10 +52,14 @@ describe("the fixture export", () => {
   it("links every job it can, and says by which rule", () => {
     const { report, jobs } = run();
     expect(report.jobRows).toBe(29);
-    expect(report.jobsLinked).toBe(24);
-    expect(jobs).toHaveLength(24);
-    expect(report.linkedBy).toEqual({ customer_id: 0, email: 19, mobile: 2, name: 3 });
-    expect(report.propertySource).toEqual({ customer: 22, job: 2, primary: 0 });
+    expect(report.jobsLinked).toBe(26);
+    expect(jobs).toHaveLength(26);
+    expect(report.linkedBy).toEqual({ customer_id: 0, email: 20, mobile: 2, name: 4 });
+    // Job 21 shares a family email and job 41 a name, but each job's street
+    // belongs to exactly one of the matching customers.
+    expect(report.settledByAddress).toBe(2);
+    expect(report.notices.count("job linked by its street (its email or phone is shared by several customers)")).toBe(2);
+    expect(report.propertySource).toEqual({ customer: 24, job: 2, primary: 0 });
     expect(report.propertiesFromJobs).toBe(1);
   });
 
@@ -68,8 +72,6 @@ describe("the fixture export", () => {
   it("groups every skipped job by reason", () => {
     const counts = Object.fromEntries(run().report.skipped.list().map((s) => [s.reason, s.count]));
     expect(counts).toEqual({
-      "job: ambiguous customer: email matched 2 customers": 1,
-      "job: ambiguous customer: name matched 2 customers": 1,
       "job: job address has no ZIP": 1,
       "job: no address": 1,
       "job: no matching customer": 1,
@@ -156,7 +158,69 @@ describe("the fixture export", () => {
     for (const secret of ["Paula", "Marsh", "paula@example.com", "family@example.com", "214-555-0102", "(817) 555-0104", "2145550199"]) {
       expect(text).not.toContain(secret);
     }
-    expect(text).toContain("linked by: email 19 · mobile 2 · name 3");
+    expect(text).toContain("linked by: email 20 · mobile 2 · name 4");
+    expect(text).toContain("of those, shared email or phone settled by the job's street: 2");
     expect(text).toContain("K**** W****, 4 jobs, median gap 11 days");
+  });
+});
+
+describe("a history-only import", () => {
+  const full = () => run();
+  const history = () =>
+    prepareImport({ customers: fixture("customers.csv"), jobs: fixture("jobs.csv"), plans: [], today: TODAY, historyOnly: true });
+
+  it("writes only finished jobs, and accounts for every visit it leaves in Housecall Pro", () => {
+    const { jobs, report } = history();
+    expect(jobs.length).toBeGreaterThan(0);
+    expect(jobs.every((j) => j.job.status !== "scheduled")).toBe(true);
+    const left = report.historyOnly!;
+    expect(left.futureVisits + left.openPastVisits).toBeGreaterThan(0);
+    expect(jobs.length + left.futureVisits + left.openPastVisits).toBe(report.jobsLinked);
+    expect(report.jobsLinked).toBe(full().report.jobsLinked);
+  });
+
+  it("sorts what it leaves behind into upcoming and stale", () => {
+    const left = history().report.historyOnly!;
+    // The fixture has two Scheduled or In progress visits dated before TODAY.
+    expect(left.openPastVisits).toBe(2);
+    expect(left.futureVisits).toBe(
+      full().jobs.filter((j) => j.job.status === "scheduled").length - 2,
+    );
+  });
+
+  it("writes no plans, and lists every one a full import would as a reference", () => {
+    const fullPlans = full().plans;
+    const { plans, report } = history();
+    expect(plans).toEqual([]);
+    expect(report.plansActive).toBe(0);
+    expect(fullPlans.length).toBeGreaterThan(0);
+    expect(report.historyOnly!.plansNotWritten).toBe(fullPlans.length);
+    expect(report.planSummaries.map((p) => [p.freq, p.agreedPriceCents, p.anchorDate])).toEqual(
+      full().report.planSummaries.map((p) => [p.freq, p.agreedPriceCents, p.anchorDate]),
+    );
+  });
+
+  it("keeps room counts from visits it does not import", () => {
+    expect(history().properties).toEqual(full().properties);
+  });
+
+  it("lists nothing it leaves behind under 'imported, worth a look'", () => {
+    const { notices } = history().report;
+    expect(notices.count("Scheduled or In progress job dated in the past (imported as it is)")).toBe(0);
+  });
+
+  it("says so at the top of the jobs section of the report", () => {
+    const text = formatReport(history().report);
+    expect(text).toContain("HISTORY ONLY:");
+    expect(text).toContain("left in Housecall Pro:");
+    expect(text).toContain("no recurring plans are written");
+    expect(text).toContain("recurring plans (reference only, not written):");
+    expect(text).not.toContain("NOTE: active plans are picked up by the daily recurring generator");
+  });
+
+  it("is off unless asked for", () => {
+    const { report } = full();
+    expect(report.historyOnly).toBeNull();
+    expect(formatReport(report)).not.toContain("HISTORY ONLY");
   });
 });

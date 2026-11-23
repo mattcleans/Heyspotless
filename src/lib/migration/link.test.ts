@@ -137,6 +137,73 @@ describe("linking a job to its customer", () => {
   });
 });
 
+describe("settling a shared email or phone by the job's street", () => {
+  // A property manager whose homes were each entered as a separate customer.
+  const home = (id: string, street: string) =>
+    customer({ id, display_name: `Manager ${id}`, email: "manager@example.com", mobile_number: "214-555-0300", address_1_street_line_1: street, address_1_postal_code: "75201" });
+  // A couple who share an email and a home.
+  const sam = customer({ id: "s1", first_name: "Sam", last_name: "Ortiz", email: "ortiz@example.com", address_1_street_line_1: "9 Elm Ct", address_1_postal_code: "75034" });
+  const alex = customer({ id: "s2", first_name: "Alex", last_name: "Ortiz", email: "ortiz@example.com", address_1_street_line_1: "9 Elm Ct", address_1_postal_code: "75034" });
+  const settle = () => new CustomerLinker([home("m1", "1 Main St"), home("m2", "2 Main St"), home("m3", "3 Main St"), sam, alex]);
+
+  it("links to the one customer whose own address is the job's street", () => {
+    expect(settle().customerFor(job({ customer_email: "manager@example.com", street: "2 MAIN ST.", zipcode: "75201" }))).toEqual({
+      ok: true,
+      hcpId: "m2",
+      rule: "email",
+      settledByAddress: true,
+    });
+  });
+
+  it("settles a shared mobile number the same way", () => {
+    expect(settle().customerFor(job({ customer_mobile_number: "2145550300", street: "3 Main St" }))).toMatchObject({
+      ok: true,
+      hcpId: "m3",
+      rule: "mobile",
+      settledByAddress: true,
+    });
+  });
+
+  it("still refuses when the job's street is none of theirs", () => {
+    expect(settle().customerFor(job({ customer_email: "manager@example.com", street: "77 Other Rd", zipcode: "75201" }))).toEqual({
+      ok: false,
+      reason: "ambiguous customer: email matched 3 customers",
+    });
+  });
+
+  it("still refuses when the job has no street", () => {
+    expect(settle().customerFor(job({ customer_email: "manager@example.com" })).ok).toBe(false);
+  });
+
+  it("still refuses when the customers share the street too", () => {
+    expect(settle().customerFor(job({ customer_email: "ortiz@example.com", street: "9 Elm Ct" }))).toEqual({
+      ok: false,
+      reason: "ambiguous customer: email matched 2 customers",
+    });
+  });
+
+  it("ignores addresses earlier jobs created, so the order of jobs never changes the answer", () => {
+    // m1 also has an email of its own, so a job can link to m1 directly and
+    // create a property for it at a street that is not in the export.
+    const m1 = customer({ id: "m1", display_name: "Manager m1", email: "manager@example.com", additional_emails: "m1-owner@example.com", address_1_street_line_1: "1 Main St", address_1_postal_code: "75201" });
+    const m2 = customer({ id: "m2", display_name: "Manager m2", email: "manager@example.com", address_1_street_line_1: "2 Main St", address_1_postal_code: "75201" });
+    const l = new CustomerLinker([m1, m2]);
+    const direct = l.link(job({ customer_email: "m1-owner@example.com", street: "77 Other Rd", zipcode: "75201" }));
+    expect(direct).toMatchObject({ ok: true, customerHcpId: "m1", propertySource: "job" });
+    // A later job on the shared email at that street is still ambiguous: had
+    // it come first, nothing could have settled it.
+    expect(l.customerFor(job({ customer_email: "manager@example.com", street: "77 Other Rd", zipcode: "75201" }))).toEqual({
+      ok: false,
+      reason: "ambiguous customer: email matched 2 customers",
+    });
+  });
+
+  it("marks a settled link so the report can count it", () => {
+    const result = settle().link(job({ customer_email: "manager@example.com", street: "1 Main St", zipcode: "75201" }));
+    expect(result).toMatchObject({ ok: true, customerHcpId: "m1", settledByAddress: true, propertySource: "customer" });
+  });
+});
+
 describe("the property a job happened at", () => {
   it("uses the customer's own address when the street matches, ignoring punctuation and case", () => {
     const result = linker().link(job({ customer_email: "paula@example.com", street: "100 OAK ST.", zipcode: "76129" }));

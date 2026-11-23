@@ -54,10 +54,9 @@ mode** with a $1 invoice on the test customer, paid with a real card and
 then refunded. The cost is the Stripe fee on $1, which a refund does not
 return.
 
-**Done 19 November 2026** for Checkout and a Stripe-dashboard refund; see
-`release-readiness.md`, Integrated verification. Still to run once: a
-refund from Management's own form (customer page → Payments → Refund),
-which needs a new live payment to refund.
+**Done 19 November 2026**: Checkout, a Stripe-dashboard refund, and a
+refund from Management's own form (customer page → Payments → Refund).
+See `release-readiness.md`, Integrated verification.
 
 Before the pilot, in Stripe → Settings → Payment methods, keep cards,
 Apple Pay / Google Pay and Link, and turn off bank payments and Amazon
@@ -95,11 +94,17 @@ Stripe keeps test and live as two separate worlds. Each switch is:
 
 `MESSAGING_ENABLED=0` stays set throughout. Export customers, jobs and the
 price book from HCP; dry-run the import until its report is clean; add a
-plans file for any cadence it cannot infer; run it for real. Then run the
-**price audit** (`recurring_price_audit`) — the overbilling check is
-time-sensitive and every mismatched row is a conversation with a customer,
-not a script. Decide per plan whether this app or HCP owns upcoming visits.
-Steps: `setup.md` §§ 6–7.
+plans file for any cadence it cannot infer; run it for real with
+`--history-only`. Then run the **price audit** (`recurring_price_audit`) —
+the overbilling check is time-sensitive and every mismatched row is a
+conversation with a customer, not a script. Steps: `setup.md` §§ 6–7.
+
+Status, 19 November 2026: exported (1,045 customers, 1,816 jobs, canceled
+jobs excluded). The second dry run linked 1,690 jobs; 126 are skipped until
+their addresses, ZIPs or duplicate customers are fixed in HCP. Decided: a
+history-only import of every customer and their completed jobs. Upcoming
+visits stay in HCP; at go-live, one-off cleans are booked and recurring
+schedules set up by hand here, from the plan list in the dry-run report.
 
 ## Phase D — people acceptance, on real devices
 

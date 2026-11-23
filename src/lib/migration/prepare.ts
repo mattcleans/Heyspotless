@@ -48,6 +48,13 @@ export interface ImportReport {
   jobRows: number;
   jobsLinked: number;
   linkedBy: Record<LinkRule, number>;
+  /** Links where the contact matched several customers and the job's street settled it. */
+  settledByAddress: number;
+  /**
+   * Set in history-only mode: what was linked but deliberately left in
+   * Housecall Pro. Null in a full import.
+   */
+  historyOnly: { futureVisits: number; openPastVisits: number; plansNotWritten: number } | null;
   propertySource: Record<PropertySource, number>;
   propertiesFromJobs: number;
   planRows: number;
@@ -73,6 +80,20 @@ export interface PrepareInput {
   jobs: readonly Record<string, string>[];
   plans?: readonly Record<string, string>[];
   today: CalendarDate;
+  /**
+   * Import the past, and leave the future with Housecall Pro.
+   *
+   * While HCP still runs the business, a visit that exists in both systems is
+   * a visit two systems will dispatch: an imported visit is `scheduled` with
+   * no cleaner, which is exactly what the dispatch sweep looks for. So in this
+   * mode only finished jobs are written. Scheduled and in-progress visits,
+   * future or stale, stay in HCP, and no recurring plan is written: recurring
+   * schedules are set up by hand in this app when each customer moves over
+   * (decided 19 November 2026). Plans are still inferred and listed in the
+   * report as the reference for doing that. Open visits still inform plan
+   * inference and room counts; they are just not written.
+   */
+  historyOnly?: boolean;
 }
 
 function customerName(c: MappedCustomer | undefined): string {
@@ -115,6 +136,9 @@ export function prepareImport(input: PrepareInput): ImportPlan {
 
   // --- jobs ------------------------------------------------------------------
   const linkedBy: Record<LinkRule, number> = { customer_id: 0, email: 0, mobile: 0, name: 0 };
+  let settledByAddress = 0;
+  let futureVisits = 0;
+  let openPastVisits = 0;
   const propertySource: Record<PropertySource, number> = { customer: 0, job: 0, primary: 0 };
   const linked: Omit<PlannedJob, "freq" | "planId">[] = [];
 
@@ -145,6 +169,11 @@ export function prepareImport(input: PrepareInput): ImportPlan {
     }
 
     linkedBy[result.rule] += 1;
+    const leftInHcp = input.historyOnly === true && job.status === "scheduled";
+    if (result.settledByAddress) {
+      settledByAddress += 1;
+      if (!leftInHcp) notices.add("job linked by its street (its email or phone is shared by several customers)", ex);
+    }
     propertySource[result.propertySource] += 1;
     linked.push({
       job,
@@ -153,6 +182,14 @@ export function prepareImport(input: PrepareInput): ImportPlan {
       rule: result.rule,
       propertySource: result.propertySource,
     });
+
+    // Left in HCP: linked for plan inference and room counts, never written,
+    // so nothing about it belongs under "imported, worth a look".
+    if (leftInHcp) {
+      if (job.scheduledDate && job.scheduledDate < input.today) openPastVisits += 1;
+      else futureVisits += 1;
+      return;
+    }
 
     if (job.serviceDefaulted) notices.add('job service not recognised (imported as "standard")', { ...ex, raw: job.serviceRaw ?? "" });
     if (job.priceCents === 0) notices.add(`$0 job, ${job.statusRaw ?? job.status}`, ex);
@@ -200,21 +237,31 @@ export function prepareImport(input: PrepareInput): ImportPlan {
     resolved.set(property!.hcpAddressId, { ...override, customerHcpId: who.hcpId });
   }
 
-  const { plans, gaps } = buildPlans(linked, resolved, input.today);
+  const built = buildPlans(linked, resolved, input.today);
+  const gaps = built.gaps;
+  // In history-only mode nothing is written, so nothing is active; the
+  // inferred plans are reported as a reference only.
+  const inferred = input.historyOnly ? built.plans.map((p) => ({ ...p, active: false })) : built.plans;
+  const plans = input.historyOnly ? [] : inferred;
 
   const planByJob = new Map<string, PlannedPlan>();
-  for (const plan of plans) for (const id of plan.jobHcpIds) planByJob.set(id, plan);
+  for (const plan of inferred) for (const id of plan.jobHcpIds) planByJob.set(id, plan);
 
-  const jobs: PlannedJob[] = linked.map((entry) => {
+  const linkedJobs: PlannedJob[] = linked.map((entry) => {
     const plan = planByJob.get(entry.job.hcpId);
     return { ...entry, freq: plan?.freq ?? entry.job.frequency, planId: plan?.hcpPlanId ?? null };
   });
+  const jobs = input.historyOnly
+    ? linkedJobs.filter((entry) => entry.job.status !== "scheduled")
+    : linkedJobs;
 
   // --- properties ------------------------------------------------------------
   // Every customer address, plus every address a job added. Room counts from
   // the most recent job at that property whose description states them.
+  // From every linked job, written or not: in history-only mode the next HCP
+  // visit carries the most current room list.
   const rooms = new Map<string, { date: string; rooms: RoomCounts }>();
-  for (const { job, propertyKey } of jobs) {
+  for (const { job, propertyKey } of linkedJobs) {
     if (!job.rooms) continue;
     const date = job.scheduledStart ?? job.completedAt ?? "";
     const current = rooms.get(propertyKey);
@@ -227,7 +274,7 @@ export function prepareImport(input: PrepareInput): ImportPlan {
   }
 
   const plansByFreq: Partial<Record<Frequency, number>> = {};
-  for (const p of plans) plansByFreq[p.freq] = (plansByFreq[p.freq] ?? 0) + 1;
+  for (const p of inferred) plansByFreq[p.freq] = (plansByFreq[p.freq] ?? 0) + 1;
 
   return {
     customers,
@@ -241,19 +288,21 @@ export function prepareImport(input: PrepareInput): ImportPlan {
       customersWithSeveralAddresses: customers.filter((c) => c.addresses.length > 1).length,
       customerProperties: customers.reduce((n, c) => n + c.addresses.length, 0),
       jobRows: input.jobs.length,
-      jobsLinked: jobs.length,
+      jobsLinked: linkedJobs.length,
       linkedBy,
+      settledByAddress,
+      historyOnly: input.historyOnly ? { futureVisits, openPastVisits, plansNotWritten: inferred.length } : null,
       propertySource,
       propertiesFromJobs: properties.filter((p) => p.origin === "job").length,
       planRows: (input.plans ?? []).length,
       plansBySource: {
-        override: plans.filter((p) => p.source === "override").length,
-        inferred: plans.filter((p) => p.source === "inferred").length,
+        override: inferred.filter((p) => p.source === "override").length,
+        inferred: inferred.filter((p) => p.source === "inferred").length,
       },
       plansByFreq,
       plansActive: plans.filter((p) => p.active).length,
       gaps: gaps.map((g) => ({ ...g, name: customerName(linker.customers.get(g.customerHcpId)) })),
-      planSummaries: plans.map((p) => ({
+      planSummaries: inferred.map((p) => ({
         name: customerName(linker.customers.get(p.customerHcpId)),
         street: properties.find((x) => x.hcpAddressId === p.propertyKey)?.street ?? "",
         freq: p.freq,
@@ -288,10 +337,23 @@ export function formatReport(report: ImportReport): string {
     `jobs: ${r.jobRows} rows · ${r.jobsLinked} linked · ${skippedJobs} skipped`,
     `  linked by: email ${r.linkedBy.email} · mobile ${r.linkedBy.mobile} · name ${r.linkedBy.name}` +
       (r.linkedBy.customer_id ? ` · customer id ${r.linkedBy.customer_id}` : ""),
+    `  of those, shared email or phone settled by the job's street: ${r.settledByAddress}`,
     `  property: customer's address ${r.propertySource.customer} · address from the job ${r.propertySource.job} · ` +
       `customer's primary (job had no street) ${r.propertySource.primary}`,
     `  new properties created from job addresses: ${r.propertiesFromJobs}`,
   );
+
+  if (r.historyOnly) {
+    const h = r.historyOnly;
+    lines.push(
+      "",
+      `HISTORY ONLY: ${r.jobsLinked - h.futureVisits - h.openPastVisits} finished jobs will be imported.`,
+      `  left in Housecall Pro: ${h.futureVisits} upcoming visits · ${h.openPastVisits} open visits dated in the past`,
+      `  (close or cancel those in Housecall Pro and re-export to bring them across as history)`,
+      `  no recurring plans are written. The ${h.plansNotWritten} listed below are a reference`,
+      `  for setting each schedule up by hand when that customer moves to this app.`,
+    );
+  }
 
   const freq = Object.entries(r.plansByFreq)
     .map(([f, n]) => `${f} ${n}`)
@@ -299,7 +361,7 @@ export function formatReport(report: ImportReport): string {
   const total = r.plansBySource.inferred + r.plansBySource.override;
   lines.push(
     "",
-    `recurring plans: ${total} · ${r.plansBySource.inferred} from visit spacing · ${r.plansBySource.override} from the plans file` +
+    `recurring plans${r.historyOnly ? " (reference only, not written)" : ""}: ${total} · ${r.plansBySource.inferred} from visit spacing · ${r.plansBySource.override} from the plans file` +
       (r.planRows ? ` (${r.planRows} rows)` : ""),
     `  ${freq || "none"} · ${r.plansActive} active`,
   );
