@@ -388,6 +388,23 @@ explanation, rather than silently rendering empty account data. Assign roles and
 record links deliberately through trusted administration; never self-promote
 accounts based on email addresses or signup metadata.
 
+**Connecting an imported customer's sign-in.** An imported customer who signs
+up is told "Office connection required" when they add a home, because email
+equality alone never claims an existing record. The office connects them from
+the customer's page in Management → **Sign-in**: it lists sign-ups whose
+confirmed email matches the record, and connecting one requires confirming who
+the customer is (for example by calling the number on file). The database
+also insists the sign-in is a customer's, confirmed, equal to the record's
+email, and not already anyone's, and that the record has no sign-in yet;
+every connection is audited. If the customer signed up with a different email,
+update the record's email first. Several imported customers share one email
+(the Stripe Test account's address is on nine); the panel warns when a
+sign-in's email is on more than one record.
+
+This needs migration `20261123180000_connect_customer_sign_in.sql` applied to
+the database. A Vercel deploy does not apply migrations; without it the panel
+says sign-in details could not be loaded and changes nothing.
+
 For a first acceptance test, sign in as the owner and verify Management opens.
 Then use separately provisioned cleaner and customer test accounts with linked
 records. Test an expired link, a link opened in a different browser, and a new

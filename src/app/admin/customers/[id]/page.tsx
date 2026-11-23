@@ -11,6 +11,8 @@ import { BillingStore, type CustomerPayment } from "@/lib/billing/store";
 import { isBillingEnabled } from "@/lib/stripe/env";
 import { refundChoice } from "@/lib/billing/refund-options";
 import { RefundAction } from "@/components/refund-action";
+import { ConnectSignIn } from "@/components/connect-sign-in";
+import { readSignInStatus, type SignInStatus } from "@/lib/customers/sign-in-connection";
 import { BookingForm } from "../booking-form";
 import { CustomerForm } from "../customer-form";
 import { PropertyForm } from "../property-form";
@@ -43,6 +45,21 @@ export default async function CustomerPage({
       payments = await new BillingStore(createAdminClient()).listCustomerPayments(id);
     } catch {
       paymentsUnavailable = true;
+    }
+  }
+  let signIn: SignInStatus | null = null;
+  let signInUnavailable = false;
+  if (!repo.isDemo && profile?.role === "admin") {
+    try {
+      const { data, error } = await createAdminClient().rpc("customer_sign_in_status", {
+        p_customer: id,
+        p_actor: profile.id,
+      });
+      if (error) throw error;
+      signIn = readSignInStatus(data);
+      if (!signIn) signInUnavailable = true;
+    } catch {
+      signInUnavailable = true;
     }
   }
   const refundsEnabled = isBillingEnabled();
@@ -185,6 +202,19 @@ export default async function CustomerPage({
           </ul>
         )}
       </section>
+
+      {signIn || signInUnavailable ? (
+        <section className="mb-8">
+          <h2 className="mb-3 text-sm font-semibold text-ink">Sign-in</h2>
+          {signIn ? (
+            <ConnectSignIn customerId={customer.id} customerName={customerName} status={signIn} />
+          ) : (
+            <div className="card p-6 text-sm text-ink-3" role="alert">
+              Sign-in details could not be loaded. Refresh before connecting anything.
+            </div>
+          )}
+        </section>
+      ) : null}
 
       {payments !== null || paymentsUnavailable ? (
         <section className="mb-8">
