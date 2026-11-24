@@ -3245,6 +3245,8 @@ as_super $PSQL -d "$DB" -f scripts/verify-dallas-weekly-matching.sql
 # First Client/home setup, access denial, retry and existing-record preservation.
 as_super $PSQL -d "$DB" -f scripts/verify-client-home-setup.sql
 as_super bash scripts/verify-client-home-setup-races.sh "$DB"
+# Management connecting an imported customer's confirmed sign-in.
+as_super $PSQL -d "$DB" -f scripts/verify-customer-sign-in-connection.sql
 as_super $PSQL -d "$DB" -f scripts/verify-client-booking-matching.sql
 as_super $PSQL -d "$DB" -f scripts/verify-matching-worker.sql
 as_super bash scripts/verify-matching-worker-races.sh "$DB"

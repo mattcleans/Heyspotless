@@ -99,6 +99,20 @@ plans file for any cadence it cannot infer; run it for real with
 the overbilling check is time-sensitive and every mismatched row is a
 conversation with a customer, not a script. Steps: `setup.md` §§ 6–7.
 
+**Imported into production, 23 November 2026**, after a rehearsal into the
+preview project checked the same way: 1,045 customers, 486 properties and
+1,431 completed jobs ($249,674 of history), each with its completion date and
+marked billed in HCP. No upcoming visits and no plans. Four hours later, with
+50 matching runs since, nothing had reacted to it: no offers, dispatch
+decisions, invoices, payouts, messages or automations, and Visit review
+empty. The only overlap with customers created in the app before the import
+is the Stripe Test account, whose email is also on 9 HCP customers (used as a
+placeholder there); never connect that sign-in to them.
+
+`recurring_price_audit` reads imported plans, so with none imported it is
+empty: the overbilling check (`setup.md` § 7) has to be done from the plan
+list in the dry-run report against the price book instead.
+
 Status, 19 November 2026: exported (1,045 customers, 1,816 jobs, canceled
 jobs excluded). The second dry run linked 1,690 jobs; 126 are skipped until
 their addresses, ZIPs or duplicate customers are fixed in HCP. Decided: a
