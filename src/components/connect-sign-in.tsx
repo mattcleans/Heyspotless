@@ -81,7 +81,7 @@ export function ConnectSignIn({
               that email, their sign-in appears here.
             </p>
           ) : (
-            <p>This customer has no email on file. Add the email they'll sign up with, then their sign-in can appear here.</p>
+            <p>This customer has no email on file. Add the email they’ll sign up with, then their sign-in can appear here.</p>
           )}
           <p className="text-ink-3">
             If they signed up with a different email, update their contact details below to that email first.
@@ -90,7 +90,7 @@ export function ConnectSignIn({
       ) : (
         <>
           <p className="text-ink-2">
-            These sign-ups confirmed this customer's email. Before connecting, confirm it's really {customerName}, for
+            These sign-ups confirmed this customer’s email. Before connecting, confirm it’s really {customerName}, for
             example by calling the number on file. Anyone can sign up with any email; confirming it is what makes the
             connection safe.
           </p>
@@ -116,7 +116,7 @@ export function ConnectSignIn({
                     disabled={working !== null}
                     onChange={(e) => setConfirmed((m) => ({ ...m, [c.profileId]: e.target.checked }))}
                   />
-                  <span>I've confirmed this sign-in is {customerName}.</span>
+                  <span>I’ve confirmed this sign-in is {customerName}.</span>
                 </label>
                 <button
                   type="button"
