@@ -348,7 +348,8 @@ async function loadOversight(db: ReturnType<typeof createAdminClient>): Promise<
     db
       .from("jobs")
       .select("id", { count: "exact", head: true })
-      .eq("status", "completed")
+      // job_status spells it `complete`; `completed` is rejected outright.
+      .eq("status", "complete")
       .gte("completed_at", since),
   ]);
 
@@ -382,7 +383,8 @@ async function loadEscalatedPairings(
     .from("offers")
     .select(
       "cleaner_id, payout_pct, responded_at, " +
-        "cleaners(first_name, last_name), " +
+        // Cleaners carry one full_name, not first and last names.
+        "cleaners(full_name), " +
         "jobs(customer_id, customers(first_name, last_name))",
     )
     .eq("status", "accepted")
@@ -420,7 +422,7 @@ async function loadEscalatedPairings(
     pairs.set(key, {
       cleanerId,
       customerId,
-      cleanerName: personName(cleaner, "Cleaner"),
+      cleanerName: typeof cleaner?.["full_name"] === "string" && cleaner["full_name"] ? cleaner["full_name"] : "Cleaner",
       customerName: personName(customer, "Customer"),
       acceptedAboveShare: 1,
       maxPct: pct,
