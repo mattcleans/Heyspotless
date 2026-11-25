@@ -26,7 +26,8 @@ import {
   toProfile,
   toProperty,
 } from "./mappers";
-import { continuityFor, offeredUpToFor, passedOverFor } from "../dispatch/store";
+import { continuityFor, offeredUpToFor, passedOverFor, type PassedOver } from "../dispatch/store";
+import type { ContinuityContext } from "../dispatch/continuity";
 import { VISIT_ROOM_SCOPE_SELECT } from "../service/visit-room-scope";
 
 /** Jobs in these states still need a cleaner — the dispatch board's working set. */
@@ -74,6 +75,18 @@ const CLEANER_SELECT = `
 
 type Row = Record<string, unknown>;
 
+/** Rows per request: the API's own ceiling, which it applies without saying so. */
+export const JOB_PAGE = 1000;
+
+/** Job ids per lookup: about 3,700 characters of URL, well inside every limit. */
+export const JOB_ID_BATCH = 100;
+
+export function inBatches<T>(items: readonly T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
 function rows(data: unknown): Row[] {
   return Array.isArray(data) ? (data as Row[]) : [];
 }
@@ -91,23 +104,37 @@ export class SupabaseRepository implements Repository {
   constructor(private readonly db: SupabaseClient) {}
 
   async listJobs(filter: JobFilter = {}): Promise<Job[]> {
-    let query = this.db
-      .from("jobs")
-      .select(filter.cleanerId ? JOB_SELECT_FOR_CLEANER : JOB_SELECT);
+    const page = (from: number, to: number) => {
+      let query = this.db
+        .from("jobs")
+        .select(filter.cleanerId ? JOB_SELECT_FOR_CLEANER : JOB_SELECT);
+      if (filter.needingCleaner) query = query.in("status", NEEDS_CLEANER);
+      if (filter.customerId) query = query.eq("customer_id", filter.customerId);
+      if (filter.cleanerId) query = query.eq("job_assignments.cleaner_id", filter.cleanerId);
+      // Soonest first; unscheduled jobs sort last, matching dispatchBoard().
+      // The id makes the order total, so pages neither repeat nor skip a row.
+      return query
+        .order("scheduled_start", { ascending: true, nullsFirst: false })
+        .order("id", { ascending: true })
+        .range(from, to);
+    };
 
-    if (filter.needingCleaner) query = query.in("status", NEEDS_CLEANER);
-    if (filter.customerId) query = query.eq("customer_id", filter.customerId);
-    if (filter.cleanerId) query = query.eq("job_assignments.cleaner_id", filter.cleanerId);
-    if (filter.limit !== undefined) query = query.limit(filter.limit);
+    // The API returns at most JOB_PAGE rows per request, silently. Ordered
+    // soonest first, a single request would drop the NEWEST visits once
+    // there are more jobs than that, upcoming ones included, so read until a
+    // page comes back short.
+    const all: Row[] = [];
+    const wanted = filter.limit ?? Number.POSITIVE_INFINITY;
+    for (let from = 0; all.length < wanted; from += JOB_PAGE) {
+      const to = Math.min(from + JOB_PAGE, wanted) - 1;
+      const { data, error } = await page(from, to);
+      if (error) throw new Error(`listJobs: ${error.message}`);
+      const batch = rows(data);
+      all.push(...batch);
+      if (batch.length < to - from + 1) break;
+    }
 
-    // Soonest first; unscheduled jobs sort last, matching dispatchBoard().
-    const { data, error } = await query.order("scheduled_start", {
-      ascending: true,
-      nullsFirst: false,
-    });
-    if (error) throw new Error(`listJobs: ${error.message}`);
-
-    return this.withRelationships(rows(data).map(toJob));
+    return this.withRelationships(all.map(toJob));
   }
 
   /**
@@ -125,21 +152,40 @@ export class SupabaseRepository implements Repository {
   private async withRelationships(jobs: Job[]): Promise<Job[]> {
     if (jobs.length === 0) return jobs;
 
-    const ids = jobs.map((j) => j.id);
-    const [continuity, passedOver, offeredUpTo, exclusions] = await Promise.all([
-      continuityFor(this.db, ids),
-      passedOverFor(this.db, ids),
-      offeredUpToFor(this.db, ids),
-      this.db.from("visit_cleaner_exclusions").select("job_id,cleaner_id").in("job_id",ids),
-    ]);
+    // Each lookup filters by job id in the URL, and a request over a few
+    // thousand characters is refused outright. 1,000 ids made 39,000-character
+    // URLs and broke the schedule the day the Housecall Pro history arrived,
+    // so the ids go in batches.
+    const continuity = new Map<string, ContinuityContext>();
+    const passedOver = new Map<string, PassedOver[]>();
+    const offeredUpTo = new Map<string, number>();
+    const declined = new Map<string, string[]>();
+    for (const ids of inBatches(jobs.map((j) => j.id), JOB_ID_BATCH)) {
+      const [c, p, o, exclusions] = await Promise.all([
+        continuityFor(this.db, ids),
+        passedOverFor(this.db, ids),
+        offeredUpToFor(this.db, ids),
+        this.db.from("visit_cleaner_exclusions").select("job_id,cleaner_id").in("job_id", ids),
+      ]);
+      if (exclusions.error && !["42P01", "PGRST205"].includes(exclusions.error.code)) {
+        throw new Error("Unable to load client matching preferences.");
+      }
+      for (const [k, v] of c) continuity.set(k, v);
+      for (const [k, v] of p) passedOver.set(k, v);
+      for (const [k, v] of o) offeredUpTo.set(k, v);
+      for (const x of exclusions.data ?? []) {
+        const list = declined.get(String(x.job_id)) ?? [];
+        list.push(String(x.cleaner_id));
+        declined.set(String(x.job_id), list);
+      }
+    }
 
-    if (exclusions.error && !["42P01","PGRST205"].includes(exclusions.error.code)) throw new Error("Unable to load client matching preferences.");
     return jobs.map((job) => ({
       ...job,
       continuity: continuity.get(job.id),
       passedOver: passedOver.get(job.id),
       offeredUpToShare: offeredUpTo.get(job.id),
-      clientDeclinedCleanerIds: (exclusions.data ?? []).filter(x=>x.job_id===job.id).map(x=>String(x.cleaner_id)),
+      clientDeclinedCleanerIds: declined.get(job.id) ?? [],
     }));
   }
 
